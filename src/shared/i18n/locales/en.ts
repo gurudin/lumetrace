@@ -4,11 +4,17 @@ export const en = {
     title: "LumeTrace",
     subtitle: "Manage files, versions, tags, and traceable history in one place.",
     root: {
-      title: "Set a local resource storage path",
-      description: "Choose a local folder. New folders and imported files stay here while LumeTrace builds their version history and search index.",
-      privacy: "Files stay on this device by default. If the path becomes unavailable, LumeTrace asks you to recover it instead of creating a substitute folder.",
+      title: "Get started with LumeTrace",
+      description: "Create a file workspace or initialize one from the physical files and folders that already exist.",
+      privacy: "LumeTrace does not read another app's database. Initialization never moves or deletes the original files.",
       choose: "Choose Storage Path",
       choosing: "Opening folder picker…",
+      createNew: "Create File Workspace",
+      createNewDescription: "Set a storage location and start with an empty file index.",
+      choosingNew: "Choosing a new workspace…",
+      importExisting: "Import Existing Folder",
+      importExistingDescription: "Scan its hierarchy and files, then create v1 for every file.",
+      importingExisting: "Initializing existing files…",
       change: "Change Storage Path",
       cancel: "No folder was selected. You can continue setup later.",
       status: {
@@ -205,6 +211,7 @@ export const en = {
     errors: {
       load: "Unable to load File Space. Try again shortly.",
       configure: "This storage path cannot be used.",
+      initializeImport: "Unable to initialize the existing folder.",
       createFolder: "Unable to create the folder.",
       renameFolder: "Unable to rename the folder.",
       moveFolder: "Unable to move the folder.",

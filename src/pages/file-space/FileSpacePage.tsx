@@ -113,6 +113,7 @@ type SortOption = "manual" | "updatedDesc" | "updatedAsc" | "nameAsc" | "nameDes
 type FolderContextMenu = { folderId: string; x: number; y: number };
 type FileContextMenu = { fileId: string; x: number; y: number };
 type FileSpaceBusyAction = "configure" | "create" | "rename" | "delete" | "import" | "fileAction" | "reorder" | "moveFolder" | "moveFile";
+type RootSetupMode = "new" | "import";
 type FileSpaceOperation = {
   token: symbol;
   action: FileSpaceBusyAction;
@@ -749,6 +750,7 @@ export function FileSpacePage() {
   const [busyAction, setBusyAction] = useState<FileSpaceBusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setupCancelled, setSetupCancelled] = useState(false);
+  const [rootSetupMode, setRootSetupMode] = useState<RootSetupMode | null>(null);
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => (
     window.localStorage.getItem(currentFolderStorageKey)
   ));
@@ -1364,13 +1366,14 @@ export function FileSpacePage() {
     || timeFilter !== "all"
     || sortOption !== "updatedDesc"
     || searchScopes.length !== 3;
-  const chooseStorageRoot = async () => {
+  const chooseStorageRoot = async (mode: RootSetupMode) => {
     if (!isTauri()) {
       setError(`${t("fileSpace.errors.configure")} Tauri desktop runtime is required.`);
       return;
     }
     const operation = beginOperation("configure");
     if (!operation) return;
+    setRootSetupMode(mode);
     setSetupCancelled(false);
     setError(null);
     try {
@@ -1382,7 +1385,10 @@ export function FileSpacePage() {
         setSetupCancelled(true);
         return;
       }
-      const configured = await invoke<FileSpaceSnapshot>("configure_file_space_root", {
+      const command = mode === "import"
+        ? "import_existing_file_space_root"
+        : "configure_file_space_root";
+      const configured = await invoke<FileSpaceSnapshot>(command, {
         path: selected,
       });
       if (!canCommitOperation(operation)) return;
@@ -1391,10 +1397,12 @@ export function FileSpacePage() {
       setExpandedFolders(new Set(configured.folders.map((folder) => folder.id)));
     } catch (configureError) {
       if (canCommitOperation(operation)) {
-        setError(`${t("fileSpace.errors.configure")} ${errorText(configureError)}`);
+        const errorKey = mode === "import" ? "fileSpace.errors.initializeImport" : "fileSpace.errors.configure";
+        setError(`${t(errorKey)} ${errorText(configureError)}`);
       }
     } finally {
       finishOperation(operation);
+      setRootSetupMode(null);
     }
   };
 
@@ -2516,15 +2524,36 @@ export function FileSpacePage() {
               <span>{snapshot.rootPath}</span>
             </div>
           ) : null}
-          <button
-            className="file-space-primary-button"
-            type="button"
-            disabled={busyAction === "configure"}
-            onClick={() => void chooseStorageRoot()}
-          >
-            <FolderOpen size={16} />
-            {busyAction === "configure" ? t("fileSpace.root.choosing") : t("fileSpace.root.choose")}
-          </button>
+          <div className="file-space-setup-options">
+            <div>
+              <button
+                className="file-space-primary-button"
+                type="button"
+                disabled={busyAction === "configure"}
+                onClick={() => void chooseStorageRoot("new")}
+              >
+                <FolderPlus size={16} />
+                {busyAction === "configure" && rootSetupMode === "new"
+                  ? t("fileSpace.root.choosingNew")
+                  : t("fileSpace.root.createNew")}
+              </button>
+              <small>{t("fileSpace.root.createNewDescription")}</small>
+            </div>
+            <div>
+              <button
+                className="file-space-secondary-button"
+                type="button"
+                disabled={busyAction === "configure"}
+                onClick={() => void chooseStorageRoot("import")}
+              >
+                <Upload size={16} />
+                {busyAction === "configure" && rootSetupMode === "import"
+                  ? t("fileSpace.root.importingExisting")
+                  : t("fileSpace.root.importExisting")}
+              </button>
+              <small>{t("fileSpace.root.importExistingDescription")}</small>
+            </div>
+          </div>
           {setupCancelled ? <p className="file-space-setup-feedback">{t("fileSpace.root.cancel")}</p> : null}
           {error ? <p className="file-space-error" role="alert">{error}</p> : null}
           <p className="file-space-setup-privacy"><ShieldCheck size={14} />{t("fileSpace.root.privacy")}</p>
@@ -2791,7 +2820,7 @@ export function FileSpacePage() {
                         <span className="file-space-item-copy">
                           <strong>{file.name}</strong>
                           <small>
-                            {file.sourceKind === "user_import" ? t("fileSpace.content.userImport") : t("fileSpace.content.taskArtifact")}
+                            {file.sourceKind === "task_artifact" ? t("fileSpace.content.taskArtifact") : t("fileSpace.content.userImport")}
                             {file.currentVersion ? ` · v${file.currentVersion}/${file.versionCount}` : ""}
                             {" · "}{formatFileSize(file.sizeBytes)}
                             {" · "}{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(file.updatedAt)}
@@ -3004,7 +3033,7 @@ export function FileSpacePage() {
           <span className="file-space-item-copy">
             <strong>{internallyDraggedFile.name}</strong>
             <small>
-              {internallyDraggedFile.sourceKind === "user_import" ? t("fileSpace.content.userImport") : t("fileSpace.content.taskArtifact")}
+              {internallyDraggedFile.sourceKind === "task_artifact" ? t("fileSpace.content.taskArtifact") : t("fileSpace.content.userImport")}
               {internallyDraggedFile.currentVersion ? ` · v${internallyDraggedFile.currentVersion}/${internallyDraggedFile.versionCount}` : ""}
               {" · "}{formatFileSize(internallyDraggedFile.sizeBytes)}
               {" · "}{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(internallyDraggedFile.updatedAt)}

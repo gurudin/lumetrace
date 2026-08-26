@@ -134,6 +134,28 @@ pub struct FileSpaceDroppedFile {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Debug)]
+struct ExistingFolderCandidate {
+    id: String,
+    parent_id: Option<String>,
+    name: String,
+    relative_path: String,
+    created_at: i64,
+    updated_at: i64,
+}
+
+#[derive(Debug)]
+struct ExistingFileCandidate {
+    id: String,
+    folder_id: Option<String>,
+    name: String,
+    relative_path: String,
+    mime_type: Option<String>,
+    size_bytes: i64,
+    created_at: i64,
+    updated_at: i64,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 struct PendingFileMove {
@@ -1882,6 +1904,203 @@ fn load_snapshot_record(database: &Database) -> Result<FileSpaceSnapshot, String
         files,
         trashed_files,
     })
+}
+
+fn filesystem_time_millis(value: std::time::SystemTime) -> i64 {
+    value
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| i64::try_from(duration.as_millis()).ok())
+        .unwrap_or_else(now_millis)
+}
+
+fn ignore_existing_import_entry(name: &str, is_directory: bool) -> bool {
+    if is_directory {
+        matches!(name, ".lumetrace-trash" | ".virelume-trash")
+    } else {
+        matches!(name, ".DS_Store" | "Thumbs.db" | "desktop.ini")
+    }
+}
+
+fn scan_existing_directory(
+    directory: &Path,
+    parent_id: Option<&str>,
+    parent_relative_path: Option<&str>,
+    folders: &mut Vec<ExistingFolderCandidate>,
+    files: &mut Vec<ExistingFileCandidate>,
+) -> Result<(), String> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|error| format!("Unable to read {}: {error}", directory.display()))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| format!("Unable to read {}: {error}", directory.display()))?;
+    entries.sort_by_key(|entry| entry.file_name());
+
+    for entry in entries {
+        let path = entry.path();
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|error| format!("Unable to inspect {}: {error}", path.display()))?;
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "Symbolic links cannot be initialized: {}",
+                path.display()
+            ));
+        }
+        let name = entry
+            .file_name()
+            .to_str()
+            .ok_or_else(|| format!("An item has an unsupported name: {}", path.display()))
+            .and_then(validate_import_name)?;
+        if ignore_existing_import_entry(&name, metadata.is_dir()) {
+            continue;
+        }
+        let relative_path = relative_child(parent_relative_path, &name);
+        let modified = metadata
+            .modified()
+            .map(filesystem_time_millis)
+            .unwrap_or_else(|_| now_millis());
+        let created = metadata
+            .created()
+            .map(filesystem_time_millis)
+            .unwrap_or(modified);
+
+        if metadata.is_dir() {
+            let id = Uuid::new_v4().to_string();
+            folders.push(ExistingFolderCandidate {
+                id: id.clone(),
+                parent_id: parent_id.map(str::to_owned),
+                name,
+                relative_path: relative_path.clone(),
+                created_at: created,
+                updated_at: modified,
+            });
+            scan_existing_directory(&path, Some(&id), Some(&relative_path), folders, files)?;
+        } else if metadata.is_file() {
+            fs::File::open(&path)
+                .map_err(|error| format!("Unable to read {}: {error}", path.display()))?;
+            let size_bytes = i64::try_from(metadata.len())
+                .map_err(|_| format!("The file is too large: {}", path.display()))?;
+            files.push(ExistingFileCandidate {
+                id: Uuid::new_v4().to_string(),
+                folder_id: parent_id.map(str::to_owned),
+                name,
+                relative_path,
+                mime_type: mime_type_for(&path),
+                size_bytes,
+                created_at: created,
+                updated_at: modified,
+            });
+        } else {
+            return Err(format!(
+                "The item is not a regular file or folder: {}",
+                path.display()
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn import_existing_storage_root_record(
+    database: &Database,
+    artifact_store: &Path,
+    path: &str,
+) -> Result<FileSpaceSnapshot, String> {
+    let requested = PathBuf::from(path);
+    if !requested.exists() {
+        return Err("The selected folder does not exist".to_owned());
+    }
+    if !requested.is_dir() {
+        return Err("The selected path is not a folder".to_owned());
+    }
+    let root = requested
+        .canonicalize()
+        .map_err(|error| format!("Unable to resolve the selected folder: {error}"))?;
+    write_probe(&root)?;
+
+    let mut folders = Vec::new();
+    let mut files = Vec::new();
+    scan_existing_directory(&root, None, None, &mut folders, &mut files)?;
+
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access LumeTrace database".to_owned())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin existing-folder initialization: {error}"))?;
+    let managed_count = transaction
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM file_space_folders) + (SELECT COUNT(*) FROM files)",
+            [],
+            |row| row.get::<_, i64>(0),
+        )
+        .map_err(|error| format!("Unable to inspect the current file index: {error}"))?;
+    if managed_count != 0 {
+        return Err(
+            "Existing-folder initialization requires an empty LumeTrace file index".to_owned(),
+        );
+    }
+
+    let now = now_millis();
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![STORAGE_ROOT_SETTING, root.to_string_lossy(), now],
+        )
+        .map_err(|error| format!("Unable to save the File Space storage path: {error}"))?;
+
+    for folder in folders {
+        transaction
+            .execute(
+                "INSERT INTO file_space_folders
+                 (id, parent_id, name, relative_path, manual_order,
+                  created_at, updated_at, trashed_at)
+                 VALUES (?1, ?2, ?3, ?4,
+                         (SELECT COALESCE(MAX(manual_order), -1) + 1
+                          FROM file_space_folders WHERE parent_id IS ?2),
+                         ?5, ?6, NULL)",
+                params![
+                    folder.id,
+                    folder.parent_id,
+                    folder.name,
+                    folder.relative_path,
+                    folder.created_at,
+                    folder.updated_at
+                ],
+            )
+            .map_err(|error| format!("Unable to initialize a folder record: {error}"))?;
+    }
+    for file in files {
+        transaction
+            .execute(
+                "INSERT INTO files
+                 (id, original_name, storage_path, mime_type, size_bytes, folder_id,
+                  source_kind, manual_order, updated_at, trashed_at, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, 'existing_import',
+                         (SELECT COALESCE(MAX(manual_order), -1) + 1
+                          FROM files WHERE folder_id IS ?6 AND trashed_at IS NULL),
+                         ?7, NULL, ?8)",
+                params![
+                    file.id,
+                    file.name,
+                    file.relative_path,
+                    file.mime_type,
+                    file.size_bytes,
+                    file.folder_id,
+                    file.updated_at,
+                    file.created_at
+                ],
+            )
+            .map_err(|error| format!("Unable to initialize a file record: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to complete existing-folder initialization: {error}"))?;
+    drop(connection);
+
+    capture_initial_user_versions(database, artifact_store)?;
+    load_snapshot_record(database)
 }
 
 fn configure_storage_root_record(
@@ -5133,6 +5352,16 @@ pub fn configure_file_space_root(
 }
 
 #[tauri::command]
+pub fn import_existing_file_space_root<R: tauri::Runtime>(
+    path: String,
+    app: tauri::AppHandle<R>,
+    database: State<'_, Database>,
+) -> Result<FileSpaceSnapshot, String> {
+    let _operation = lock_file_space_operations()?;
+    import_existing_storage_root_record(database.inner(), &artifact_store_path(&app)?, &path)
+}
+
+#[tauri::command]
 pub fn create_file_space_folder(
     parent_id: Option<String>,
     name: String,
@@ -5671,6 +5900,63 @@ mod tests {
         .unwrap();
 
         assert_eq!(matches, vec![snapshot.files[0].id.clone()]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn existing_folder_initialization_preserves_hierarchy_and_creates_versions() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-existing-folder-{}", Uuid::new_v4()));
+        let storage = root.join("existing-files");
+        let versions = root.join("versions");
+        fs::create_dir_all(storage.join("Projects/Notes")).unwrap();
+        fs::create_dir_all(storage.join("Empty Folder")).unwrap();
+        fs::create_dir_all(storage.join(".virelume-trash")).unwrap();
+        fs::write(storage.join("overview.md"), b"existing root file").unwrap();
+        fs::write(
+            storage.join("Projects/Notes/decision.txt"),
+            b"nested existing file",
+        )
+        .unwrap();
+        fs::write(storage.join(".DS_Store"), b"system metadata").unwrap();
+        fs::write(storage.join(".virelume-trash/deleted.txt"), b"deleted").unwrap();
+        let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
+
+        let snapshot = import_existing_storage_root_record(
+            &database,
+            &versions,
+            storage.to_string_lossy().as_ref(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            snapshot.root_path.as_deref(),
+            storage.canonicalize().unwrap().to_str()
+        );
+        assert_eq!(snapshot.folders.len(), 3);
+        assert_eq!(snapshot.files.len(), 2);
+        assert!(snapshot
+            .folders
+            .iter()
+            .any(|folder| folder.relative_path == "Projects/Notes"));
+        let nested = snapshot
+            .files
+            .iter()
+            .find(|file| file.relative_path == "Projects/Notes/decision.txt")
+            .unwrap();
+        assert_eq!(nested.source_kind, "existing_import");
+        assert_eq!(nested.current_version, Some(1));
+        assert_eq!(nested.version_count, 1);
+        assert_eq!(
+            fs::read(storage.join("Projects/Notes/decision.txt")).unwrap(),
+            b"nested existing file"
+        );
+        assert!(snapshot
+            .files
+            .iter()
+            .all(|file| !file.relative_path.contains(".virelume-trash")));
+        assert!(snapshot.files.iter().all(|file| file.name != ".DS_Store"));
+
         fs::remove_dir_all(root).unwrap();
     }
 }

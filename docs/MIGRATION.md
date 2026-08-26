@@ -17,3 +17,7 @@ LumeTrace treats the migrated File Space as the application root. It does not co
 ## First migration milestone
 
 The first milestone preserves the existing file-management behavior in a standalone desktop application. Stable cross-path identity, NAS repair, AI comparison, and citation are product directions for later milestones, not completion claims for this extraction.
+
+## Initialization boundary
+
+The generic existing-folder importer reads physical directories and files only. It preserves the directory hierarchy and creates a v1 snapshot without moving or deleting the originals. It does not inspect or migrate Virelume SQLite data. Product-specific importers for Eagle and similar tools belong to later adapter milestones.

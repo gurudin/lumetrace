@@ -203,6 +203,7 @@ h1 {
 }
 
 .file-space-primary-button,
+.file-space-secondary-button,
 .file-space-header-actions > button,
 .file-space-dialog footer > button {
   display: inline-flex;
@@ -228,16 +229,44 @@ h1 {
 }
 
 .file-space-primary-button:hover:not(:disabled),
+.file-space-secondary-button:hover:not(:disabled),
 .file-space-header-actions > button:hover:not(:disabled),
 .file-space-dialog footer > button:hover:not(:disabled) {
   opacity: 0.86;
 }
 
 .file-space-primary-button:disabled,
+.file-space-secondary-button:disabled,
 .file-space-header-actions > button:disabled,
 .file-space-dialog footer > button:disabled {
   cursor: wait;
   opacity: 0.55;
+}
+
+.file-space-setup-options {
+  display: grid;
+  width: min(540px, 100%);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.file-space-setup-options > div {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.file-space-setup-options button {
+  width: 100%;
+}
+
+.file-space-setup-options small {
+  max-width: 230px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.55;
 }
 
 .file-space-setup-privacy,
@@ -2213,6 +2242,7 @@ body.is-file-space-reordering * {
 }
 
 .file-space-primary-button:focus-visible,
+.file-space-secondary-button:focus-visible,
 .file-space-header-actions > button:focus-visible,
 .file-space-quick-navigation > button:focus-visible,
 .file-space-tree button:focus-visible,
@@ -2266,6 +2296,14 @@ body.is-file-space-reordering * {
     display: none;
   }
 
+  .file-space-setup-page {
+    padding: 32px 22px;
+  }
+
+  .file-space-setup-options {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
   .file-space-workspace-toolbar {
     padding-inline: 14px;
     gap: 8px;
@@ -2315,6 +2353,7 @@ body.is-file-space-reordering * {
   }
 
   .file-space-primary-button,
+  .file-space-secondary-button,
   .file-space-header-actions > button,
   .file-space-quick-navigation > button,
   .file-space-tree-row,

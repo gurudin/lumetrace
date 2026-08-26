@@ -31,6 +31,7 @@ pub fn run() {
             file_space::set_file_space_file_tags,
             file_space::reorder_file_space_files,
             file_space::configure_file_space_root,
+            file_space::import_existing_file_space_root,
             file_space::create_file_space_folder,
             file_space::rename_file_space_folder,
             file_space::move_file_space_folder,

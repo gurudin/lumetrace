@@ -4,11 +4,17 @@ export const zh = {
     title: "LumeTrace",
     subtitle: "统一管理文件、版本、标签与可追溯历史。",
     root: {
-      title: "设置本地资源存储路径",
-      description: "选择一个本地文件夹。以后新建的文件夹和导入文件都会保存在这里，并由 LumeTrace 建立版本和索引。",
-      privacy: "文件默认只保存在这台设备上。路径失效时会要求你重新选择，不会自动创建替代目录。",
+      title: "开始使用 LumeTrace",
+      description: "新建一个文件空间，或者把已有文件夹的层级和实体文件初始化导入。",
+      privacy: "LumeTrace 不读取其他软件的数据库。初始化导入不会移动或删除原文件。",
       choose: "选择存储路径",
       choosing: "正在打开文件夹选择器…",
+      createNew: "新建文件空间",
+      createNewDescription: "只设置存储位置，从空的文件索引开始。",
+      choosingNew: "正在选择新文件空间…",
+      importExisting: "导入已有文件夹",
+      importExistingDescription: "递归检查目录层级和文件，并为每个文件建立 v1。",
+      importingExisting: "正在初始化已有文件…",
       change: "更换存储路径",
       cancel: "你尚未选择文件夹，可以稍后继续设置。",
       status: {
@@ -204,6 +210,7 @@ export const zh = {
     errors: {
       load: "无法加载文件空间，请稍后重试。",
       configure: "无法使用这个存储路径。",
+      initializeImport: "无法初始化导入已有文件夹。",
       createFolder: "无法创建文件夹。",
       renameFolder: "无法重命名文件夹。",
       moveFolder: "无法移动文件夹。",
