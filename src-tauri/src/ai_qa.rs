@@ -1,5 +1,6 @@
 use crate::{
-    agent_cli::{load_agent_cli_settings_record, resolve_agent_cli_executable},
+    agent_cli::resolve_agent_cli_executable,
+    ai_service::{load_active_ai_service_record, run_local_llm, ActiveAiService, LocalLlmSettings},
     database::{self, Database},
     file_space::{lock_file_space_operations, search_file_space_matches, FileSpaceSearchRequest},
     semantic_search::{
@@ -12,7 +13,7 @@ use serde_json::json;
 use std::{
     collections::HashSet,
     io::Read,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -91,6 +92,11 @@ struct RetrievalPlan {
     query: String,
     search_queries: Vec<String>,
     preferred_file_ids: Vec<String>,
+}
+
+enum AiExecutor {
+    Hermes(PathBuf),
+    Local(LocalLlmSettings),
 }
 
 fn now_millis() -> i64 {
@@ -788,10 +794,16 @@ fn ask_file_space_ai_blocking(
             current.workspace_id,
         )?
     };
-    let settings = load_agent_cli_settings_record(&database)?;
-    validate_hermes_settings(settings.as_ref())?;
-    let executable = resolve_agent_cli_executable("hermes")
-        .ok_or_else(|| ERROR_HERMES_UNAVAILABLE.to_owned())?;
+    let executor = match load_active_ai_service_record(&database)? {
+        Some(ActiveAiService::AgentCli(settings)) => {
+            validate_hermes_settings(Some(&settings))?;
+            let executable = resolve_agent_cli_executable("hermes")
+                .ok_or_else(|| ERROR_HERMES_UNAVAILABLE.to_owned())?;
+            AiExecutor::Hermes(executable)
+        }
+        Some(ActiveAiService::Local(settings)) => AiExecutor::Local(settings),
+        None => return Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned()),
+    };
     let history = load_ai_history_record(&database, HISTORY_RETURN_LIMIT)
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
     let turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
@@ -842,9 +854,16 @@ fn ask_file_space_ai_blocking(
             }
             (build_prompt(&question, &sources, &history), sources)
         };
-        let answer = sanitize_citations(&run_hermes(&executable, &prompt)?, sources.len());
+        let generated_answer = match &executor {
+            AiExecutor::Hermes(executable) => run_hermes(executable, &prompt)?,
+            AiExecutor::Local(settings) => run_local_llm(settings, &prompt)?,
+        };
+        let answer = sanitize_citations(&generated_answer, sources.len());
         if answer.trim().is_empty() {
-            return Err(ERROR_HERMES_EMPTY.to_owned());
+            return Err(match executor {
+                AiExecutor::Hermes(_) => ERROR_HERMES_EMPTY.to_owned(),
+                AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
+            });
         }
         Ok((answer, sources))
     })();

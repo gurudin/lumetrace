@@ -1,5 +1,6 @@
 mod agent_cli;
 mod ai_qa;
+mod ai_service;
 mod content_extractor;
 mod database;
 mod file_space;
@@ -59,6 +60,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             ai_qa::ask_file_space_ai,
             ai_qa::get_file_space_ai_history,
+            ai_service::get_ai_service_settings,
+            ai_service::check_local_llm_connection,
+            ai_service::save_local_llm_settings,
             agent_cli::check_agent_clis,
             agent_cli::check_agent_cli,
             agent_cli::get_agent_cli_settings,

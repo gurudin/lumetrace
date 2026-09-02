@@ -36,10 +36,10 @@ Lume Trace helps individuals and small teams organize files without giving up ow
 ### Lumie · AI File Assistant
 
 - Ask questions across the current file workspace instead of searching one file at a time.
-- Retrieve a bounded set of relevant local excerpts, send only those excerpts to Hermes, and show the referenced files below the answer.
+- Retrieve a bounded set of relevant local excerpts, send only those excerpts to the selected AI service, and show the referenced files below the answer.
 - Preserve file and version references with each answer.
 - Store conversation history per workspace and include recent context in follow-up questions, including after an application restart.
-- Keep the current execution path read-only: AI questions require a configured Hermes Agent CLI with read-only file permission.
+- Run questions through either an OpenAI-compatible local model service (Ollama or LM Studio) or a configured Hermes Agent CLI with read-only file permission.
 
 ### File management and recovery
 
@@ -60,8 +60,8 @@ Lume Trace helps individuals and small teams organize files without giving up ow
 The following are **not current product capabilities**:
 
 - team accounts, permissions, real-time collaboration, NAS synchronization, or cloud synchronization;
-- direct OpenAI-compatible API or local-model execution in the AI File Assistant;
-- AI execution through Claude Code, Codex CLI, or OpenCode (their local installation and configuration can be detected, but file-space Q&A currently runs through Hermes only);
+- direct cloud OpenAI-compatible API execution in the AI File Assistant;
+- AI execution through Claude Code, Codex CLI, or OpenCode (their local installation and configuration can be detected, but file-space Q&A currently runs through local models or Hermes only);
 - one-click migration from Eagle or another application's private database;
 - OCR for image-only documents.
 
@@ -71,7 +71,7 @@ The following are **not current product capabilities**:
 2. Background workers extract readable text and update the local FTS5 index.
 3. If the optional semantic model is installed, the worker also creates local embeddings.
 4. Search queries use indexed candidates instead of loading or scanning every file in the interface.
-5. AI questions retrieve relevant excerpts from the current workspace before invoking Hermes, then persist the answer and its sources locally.
+5. AI questions retrieve relevant excerpts from the current workspace before invoking the selected local model or Hermes, then persist the answer and its sources locally.
 
 ## Development
 
@@ -80,7 +80,7 @@ Requirements:
 - Node.js and npm
 - Rust toolchain
 - Tauri 2 platform prerequisites
-- Hermes Agent CLI only when testing the current AI question-answering path
+- An OpenAI-compatible local model service (Ollama or LM Studio), or Hermes Agent CLI, when testing AI question answering
 
 ```bash
 npm install

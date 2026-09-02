@@ -19,7 +19,12 @@ use uuid::Uuid;
 
 const REGISTRY_FILE_NAME: &str = "workspaces.json";
 const REGISTRY_VERSION: u32 = 1;
-const SHARED_SETTING_KEYS: [&str; 2] = ["ai.agent_cli", "semantic_search.model_id"];
+const SHARED_SETTING_KEYS: [&str; 4] = [
+    "ai.agent_cli",
+    "ai.local_llm",
+    "ai.service_mode",
+    "semantic_search.model_id",
+];
 
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -399,11 +404,19 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
             .lock()
             .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
         let mut statement = connection
-            .prepare("SELECT key, value, updated_at FROM app_settings WHERE key IN (?1, ?2)")
+            .prepare(
+                "SELECT key, value, updated_at FROM app_settings
+                 WHERE key IN (?1, ?2, ?3, ?4)",
+            )
             .map_err(|error| format!("Unable to prepare shared settings: {error}"))?;
         statement
             .query_map(
-                params![SHARED_SETTING_KEYS[0], SHARED_SETTING_KEYS[1]],
+                params![
+                    SHARED_SETTING_KEYS[0],
+                    SHARED_SETTING_KEYS[1],
+                    SHARED_SETTING_KEYS[2],
+                    SHARED_SETTING_KEYS[3]
+                ],
                 |row| {
                     Ok((
                         row.get::<_, String>(0)?,
@@ -424,8 +437,13 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
         .map_err(|error| format!("Unable to begin copying shared settings: {error}"))?;
     transaction
         .execute(
-            "DELETE FROM app_settings WHERE key IN (?1, ?2)",
-            params![SHARED_SETTING_KEYS[0], SHARED_SETTING_KEYS[1]],
+            "DELETE FROM app_settings WHERE key IN (?1, ?2, ?3, ?4)",
+            params![
+                SHARED_SETTING_KEYS[0],
+                SHARED_SETTING_KEYS[1],
+                SHARED_SETTING_KEYS[2],
+                SHARED_SETTING_KEYS[3]
+            ],
         )
         .map_err(|error| format!("Unable to synchronize shared settings: {error}"))?;
     for (key, value, updated_at) in settings {
@@ -1126,6 +1144,61 @@ mod tests {
             .unwrap();
         assert_eq!(value, "yes");
         drop(database);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn shared_ai_service_settings_are_copied_between_workspaces() {
+        let root = std::env::temp_dir().join(format!(
+            "lumetrace-shared-ai-service-settings-{}",
+            Uuid::new_v4()
+        ));
+        let source = database::open_for_test(&root.join("source.sqlite3")).unwrap();
+        let destination = database::open_for_test(&root.join("destination.sqlite3")).unwrap();
+        {
+            let connection = source.0.lock().unwrap();
+            for (key, value) in [
+                ("ai.agent_cli", "agent"),
+                ("ai.local_llm", "local"),
+                ("ai.service_mode", "local"),
+                ("semantic_search.model_id", "semantic"),
+                ("workspace.only", "private"),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, 1)",
+                        rusqlite::params![key, value],
+                    )
+                    .unwrap();
+            }
+        }
+
+        copy_shared_settings(&source, &destination).unwrap();
+
+        let copied = {
+            let connection = destination.0.lock().unwrap();
+            let mut statement = connection
+                .prepare("SELECT key, value FROM app_settings ORDER BY key")
+                .unwrap();
+            statement
+                .query_map([], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })
+                .unwrap()
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .unwrap()
+        };
+        assert_eq!(
+            copied,
+            vec![
+                ("ai.agent_cli".to_owned(), "agent".to_owned()),
+                ("ai.local_llm".to_owned(), "local".to_owned()),
+                ("ai.service_mode".to_owned(), "local".to_owned()),
+                ("semantic_search.model_id".to_owned(), "semantic".to_owned()),
+            ]
+        );
+        drop(source);
+        drop(destination);
         fs::remove_dir_all(root).unwrap();
     }
 

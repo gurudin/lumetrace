@@ -1,0 +1,533 @@
+use crate::{
+    agent_cli::{load_agent_cli_settings_record, AgentCliSettings},
+    database::Database,
+};
+use reqwest::{blocking::Client, Url};
+use rusqlite::{params, OptionalExtension};
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tauri::State;
+
+pub(crate) const AI_SERVICE_MODE_KEY: &str = "ai.service_mode";
+pub(crate) const AI_SERVICE_MODE_AGENT_CLI: &str = "agentCli";
+const AI_SERVICE_MODE_LOCAL: &str = "local";
+const LOCAL_LLM_SETTINGS_KEY: &str = "ai.local_llm";
+const LOCAL_LLM_CONNECTION_TIMEOUT: Duration = Duration::from_secs(12);
+const LOCAL_LLM_CHAT_TIMEOUT: Duration = Duration::from_secs(240);
+const LOCAL_LLM_MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
+const LOCAL_LLM_MAX_ANSWER_CHARACTERS: usize = 64_000;
+const ANSWER_START_MARKER: &str = "<LUMETRACE_ANSWER>";
+const ANSWER_END_MARKER: &str = "</LUMETRACE_ANSWER>";
+
+pub(crate) const ERROR_LOCAL_LLM_UNAVAILABLE: &str = "ai_local_llm_unavailable";
+pub(crate) const ERROR_LOCAL_LLM_TIMEOUT: &str = "ai_local_llm_timeout";
+pub(crate) const ERROR_LOCAL_LLM_FAILED: &str = "ai_local_llm_failed";
+pub(crate) const ERROR_LOCAL_LLM_EMPTY: &str = "ai_local_llm_empty";
+pub(crate) const ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE: &str = "ai_local_llm_output_too_large";
+
+const ERROR_LOCAL_LLM_INVALID_URL: &str = "local_llm_invalid_url";
+const ERROR_LOCAL_LLM_CONNECTION_FAILED: &str = "local_llm_connection_failed";
+const ERROR_LOCAL_LLM_NO_MODELS: &str = "local_llm_no_models";
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalLlmSettings {
+    pub(crate) provider: String,
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalLlmConnectionRequest {
+    provider: String,
+    base_url: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LocalLlmConnectionResult {
+    base_url: String,
+    models: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AiServiceSettingsSnapshot {
+    mode: Option<String>,
+    local: Option<LocalLlmSettings>,
+    agent_cli: Option<AgentCliSettings>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum ActiveAiService {
+    Local(LocalLlmSettings),
+    AgentCli(AgentCliSettings),
+}
+
+fn now_millis() -> i64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as i64
+}
+
+fn validate_provider(provider: String) -> Result<String, String> {
+    let provider = provider.trim();
+    matches!(provider, "ollama" | "lmStudio")
+        .then(|| provider.to_owned())
+        .ok_or_else(|| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())
+}
+
+fn normalize_base_url(value: &str) -> Result<String, String> {
+    let mut url = Url::parse(value.trim()).map_err(|_| ERROR_LOCAL_LLM_INVALID_URL.to_owned())?;
+    if !matches!(url.scheme(), "http" | "https")
+        || url.host_str().is_none()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(ERROR_LOCAL_LLM_INVALID_URL.to_owned());
+    }
+    if matches!(url.path(), "" | "/") {
+        url.set_path("/v1");
+    }
+    let normalized = url.as_str().trim_end_matches('/').to_owned();
+    if normalized.len() > 2_048 || normalized.chars().any(char::is_control) {
+        return Err(ERROR_LOCAL_LLM_INVALID_URL.to_owned());
+    }
+    Ok(normalized)
+}
+
+fn validate_model(model: String) -> Result<String, String> {
+    let model = model.trim();
+    (!model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control))
+        .then(|| model.to_owned())
+        .ok_or_else(|| ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+}
+
+fn validate_local_llm_settings(settings: LocalLlmSettings) -> Result<LocalLlmSettings, String> {
+    Ok(LocalLlmSettings {
+        provider: validate_provider(settings.provider)?,
+        base_url: normalize_base_url(&settings.base_url)?,
+        model: validate_model(settings.model)?,
+    })
+}
+
+fn read_setting(database: &Database, key: &str) -> Result<Option<String>, String> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    connection
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [key],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to load the AI service setting: {error}"))
+}
+
+fn load_service_mode_record(database: &Database) -> Result<Option<String>, String> {
+    let mode = read_setting(database, AI_SERVICE_MODE_KEY)?;
+    match mode.as_deref() {
+        Some(AI_SERVICE_MODE_LOCAL | AI_SERVICE_MODE_AGENT_CLI) | None => Ok(mode),
+        Some(_) => Err("Unsupported AI service mode".to_owned()),
+    }
+}
+
+pub(crate) fn load_local_llm_settings_record(
+    database: &Database,
+) -> Result<Option<LocalLlmSettings>, String> {
+    read_setting(database, LOCAL_LLM_SETTINGS_KEY)?
+        .map(|value| {
+            serde_json::from_str::<LocalLlmSettings>(&value)
+                .map_err(|error| format!("Unable to read the local model setting: {error}"))
+                .and_then(validate_local_llm_settings)
+        })
+        .transpose()
+}
+
+fn resolved_mode(
+    stored_mode: Option<String>,
+    local: &Option<LocalLlmSettings>,
+    agent_cli: &Option<AgentCliSettings>,
+) -> Option<String> {
+    stored_mode.or_else(|| {
+        if local.is_some() {
+            Some(AI_SERVICE_MODE_LOCAL.to_owned())
+        } else if agent_cli.is_some() {
+            Some(AI_SERVICE_MODE_AGENT_CLI.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
+pub(crate) fn load_active_ai_service_record(
+    database: &Database,
+) -> Result<Option<ActiveAiService>, String> {
+    let local = load_local_llm_settings_record(database)?;
+    let agent_cli = load_agent_cli_settings_record(database)?;
+    let mode = resolved_mode(load_service_mode_record(database)?, &local, &agent_cli);
+    Ok(match mode.as_deref() {
+        Some(AI_SERVICE_MODE_LOCAL) => local.map(ActiveAiService::Local),
+        Some(AI_SERVICE_MODE_AGENT_CLI) => agent_cli.map(ActiveAiService::AgentCli),
+        _ => None,
+    })
+}
+
+fn save_local_llm_settings_record(
+    database: &Database,
+    settings: LocalLlmSettings,
+) -> Result<LocalLlmSettings, String> {
+    let settings = validate_local_llm_settings(settings)?;
+    let value = serde_json::to_string(&settings)
+        .map_err(|error| format!("Unable to encode the local model setting: {error}"))?;
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin saving the local model setting: {error}"))?;
+    let now = now_millis();
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![LOCAL_LLM_SETTINGS_KEY, value, now],
+        )
+        .map_err(|error| format!("Unable to save the local model setting: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![AI_SERVICE_MODE_KEY, AI_SERVICE_MODE_LOCAL, now],
+        )
+        .map_err(|error| format!("Unable to activate the local model setting: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to finish saving the local model setting: {error}"))?;
+    Ok(settings)
+}
+
+fn models_endpoint(base_url: &str) -> String {
+    format!("{}/models", base_url.trim_end_matches('/'))
+}
+
+fn chat_endpoint(base_url: &str) -> String {
+    format!("{}/chat/completions", base_url.trim_end_matches('/'))
+}
+
+fn parse_model_list(body: &[u8]) -> Result<Vec<String>, String> {
+    let document = serde_json::from_slice::<Value>(body)
+        .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
+    let mut models = document
+        .get("data")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .filter_map(|model| validate_model(model.to_owned()).ok())
+        .collect::<Vec<_>>();
+    models.sort_by_key(|model| model.to_lowercase());
+    models.dedup();
+    if models.is_empty() {
+        Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+    } else {
+        models.truncate(1_000);
+        Ok(models)
+    }
+}
+
+fn read_bounded_response(
+    response: reqwest::blocking::Response,
+    limit: usize,
+    error_code: &str,
+) -> Result<Vec<u8>, String> {
+    if response
+        .content_length()
+        .is_some_and(|content_length| content_length > limit as u64)
+    {
+        return Err(error_code.to_owned());
+    }
+    let bytes = response.bytes().map_err(|_| error_code.to_owned())?;
+    if bytes.len() > limit {
+        return Err(error_code.to_owned());
+    }
+    Ok(bytes.to_vec())
+}
+
+fn request_local_models(
+    provider: String,
+    base_url: String,
+) -> Result<LocalLlmConnectionResult, String> {
+    let _provider = validate_provider(provider)?;
+    let base_url = normalize_base_url(&base_url)?;
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(LOCAL_LLM_CONNECTION_TIMEOUT)
+        .build()
+        .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
+    let response = client
+        .get(models_endpoint(&base_url))
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
+    let body = read_bounded_response(response, 1024 * 1024, ERROR_LOCAL_LLM_CONNECTION_FAILED)?;
+    Ok(LocalLlmConnectionResult {
+        base_url,
+        models: parse_model_list(&body)?,
+    })
+}
+
+fn message_content(message: &Value) -> String {
+    match message.get("content") {
+        Some(Value::String(content)) => content.clone(),
+        Some(Value::Array(parts)) => parts
+            .iter()
+            .filter_map(|part| match part {
+                Value::String(text) => Some(text.as_str()),
+                Value::Object(_) => part.get("text").and_then(Value::as_str),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
+    }
+}
+
+fn strip_think_blocks(content: &str) -> String {
+    let mut remaining = content;
+    let mut output = String::with_capacity(content.len());
+    loop {
+        let lowercase = remaining.to_ascii_lowercase();
+        let Some(start) = lowercase.find("<think>") else {
+            output.push_str(remaining);
+            break;
+        };
+        output.push_str(&remaining[..start]);
+        let reasoning = &remaining[start + "<think>".len()..];
+        let reasoning_lowercase = reasoning.to_ascii_lowercase();
+        let Some(end) = reasoning_lowercase.find("</think>") else {
+            break;
+        };
+        remaining = &reasoning[end + "</think>".len()..];
+    }
+    output.replace("</think>", "").trim().to_owned()
+}
+
+fn extract_marked_or_plain_answer(content: &str) -> Option<String> {
+    let content = strip_think_blocks(content);
+    if content.is_empty() {
+        return None;
+    }
+    if let Some(start) = content.rfind(ANSWER_START_MARKER) {
+        let answer_start = start + ANSWER_START_MARKER.len();
+        if let Some(relative_end) = content[answer_start..].find(ANSWER_END_MARKER) {
+            let answer = content[answer_start..answer_start + relative_end].trim();
+            return (!answer.is_empty()).then(|| answer.to_owned());
+        }
+    }
+    let answer = content
+        .replace(ANSWER_START_MARKER, "")
+        .replace(ANSWER_END_MARKER, "");
+    let answer = answer.trim();
+    (!answer.is_empty()).then(|| answer.to_owned())
+}
+
+fn parse_chat_answer(body: &[u8]) -> Result<String, String> {
+    let document =
+        serde_json::from_slice::<Value>(body).map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let choice = document
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .ok_or_else(|| ERROR_LOCAL_LLM_EMPTY.to_owned())?;
+    let content = choice
+        .get("message")
+        .map(message_content)
+        .filter(|content| !content.trim().is_empty())
+        .or_else(|| {
+            choice
+                .get("text")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .unwrap_or_default();
+    let answer =
+        extract_marked_or_plain_answer(&content).ok_or_else(|| ERROR_LOCAL_LLM_EMPTY.to_owned())?;
+    if answer.chars().count() > LOCAL_LLM_MAX_ANSWER_CHARACTERS {
+        return Err(ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE.to_owned());
+    }
+    Ok(answer)
+}
+
+pub(crate) fn run_local_llm(settings: &LocalLlmSettings, prompt: &str) -> Result<String, String> {
+    let settings = validate_local_llm_settings(settings.clone())
+        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(LOCAL_LLM_CHAT_TIMEOUT)
+        .build()
+        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+    let request_body = serde_json::to_vec(&json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "max_tokens": 8192,
+        "temperature": 0.2,
+        "stream": false,
+    }))
+    .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let response = client
+        .post(chat_endpoint(&settings.base_url))
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(request_body)
+        .send()
+        .map_err(|error| {
+            if error.is_timeout() {
+                ERROR_LOCAL_LLM_TIMEOUT.to_owned()
+            } else if error.is_connect() {
+                ERROR_LOCAL_LLM_UNAVAILABLE.to_owned()
+            } else {
+                ERROR_LOCAL_LLM_FAILED.to_owned()
+            }
+        })?
+        .error_for_status()
+        .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let body = read_bounded_response(
+        response,
+        LOCAL_LLM_MAX_RESPONSE_BYTES,
+        ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE,
+    )?;
+    parse_chat_answer(&body)
+}
+
+#[tauri::command]
+pub fn get_ai_service_settings(
+    database: State<'_, Database>,
+) -> Result<AiServiceSettingsSnapshot, String> {
+    let local = load_local_llm_settings_record(database.inner())?;
+    let agent_cli = load_agent_cli_settings_record(database.inner())?;
+    let mode = resolved_mode(
+        load_service_mode_record(database.inner())?,
+        &local,
+        &agent_cli,
+    );
+    Ok(AiServiceSettingsSnapshot {
+        mode,
+        local,
+        agent_cli,
+    })
+}
+
+#[tauri::command]
+pub async fn check_local_llm_connection(
+    request: LocalLlmConnectionRequest,
+) -> Result<LocalLlmConnectionResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        request_local_models(request.provider, request.base_url)
+    })
+    .await
+    .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?
+}
+
+#[tauri::command]
+pub fn save_local_llm_settings(
+    settings: LocalLlmSettings,
+    database: State<'_, Database>,
+) -> Result<LocalLlmSettings, String> {
+    save_local_llm_settings_record(database.inner(), settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use uuid::Uuid;
+
+    #[test]
+    fn base_urls_are_normalized_and_unsafe_shapes_are_rejected() {
+        assert_eq!(
+            normalize_base_url(" http://192.168.1.10:11434 ").unwrap(),
+            "http://192.168.1.10:11434/v1"
+        );
+        assert_eq!(
+            normalize_base_url("http://127.0.0.1:1234/v1/").unwrap(),
+            "http://127.0.0.1:1234/v1"
+        );
+        assert!(normalize_base_url("file:///tmp/model").is_err());
+        assert!(normalize_base_url("http://user:secret@127.0.0.1:11434/v1").is_err());
+        assert!(normalize_base_url("http://127.0.0.1:11434/v1?token=secret").is_err());
+    }
+
+    #[test]
+    fn openai_compatible_model_lists_are_sorted_and_deduplicated() {
+        let models = parse_model_list(
+            br#"{"data":[{"id":"qwen3.5:27b"},{"id":"Qwen3:4b"},{"id":"qwen3.5:27b"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(models, vec!["qwen3.5:27b", "Qwen3:4b"]);
+        assert_eq!(
+            parse_model_list(br#"{"data":[]}"#),
+            Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+        );
+    }
+
+    #[test]
+    fn chat_response_uses_final_content_and_ignores_reasoning_fields() {
+        let normal = r#"{"choices":[{"message":{"content":"<LUMETRACE_ANSWER>普通回答 [S1]</LUMETRACE_ANSWER>"}}]}"#;
+        assert_eq!(
+            parse_chat_answer(normal.as_bytes()).unwrap(),
+            "普通回答 [S1]"
+        );
+
+        let reasoning_content = r#"{"choices":[{"message":{"reasoning_content":"内部推理","content":"最终回答 [S1]"}}]}"#;
+        assert_eq!(
+            parse_chat_answer(reasoning_content.as_bytes()).unwrap(),
+            "最终回答 [S1]"
+        );
+
+        let thinking = r#"{"choices":[{"message":{"thinking":"内部思考","content":"可见正文"}}]}"#;
+        assert_eq!(parse_chat_answer(thinking.as_bytes()).unwrap(), "可见正文");
+    }
+
+    #[test]
+    fn inline_think_blocks_are_removed_without_hiding_the_final_answer() {
+        let response = r#"{"choices":[{"message":{"content":"<think>先分析来源</think>\n<LUMETRACE_ANSWER>结论 [S2]</LUMETRACE_ANSWER>"}}]}"#;
+        assert_eq!(parse_chat_answer(response.as_bytes()).unwrap(), "结论 [S2]");
+
+        let reasoning_only = r#"{"choices":[{"message":{"reasoning":"仍在思考","content":""}}]}"#;
+        assert_eq!(
+            parse_chat_answer(reasoning_only.as_bytes()),
+            Err(ERROR_LOCAL_LLM_EMPTY.to_owned())
+        );
+    }
+
+    #[test]
+    fn local_settings_persist_and_become_the_active_service() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-local-llm-settings-{}", Uuid::new_v4()));
+        let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
+        let saved = save_local_llm_settings_record(
+            &database,
+            LocalLlmSettings {
+                provider: "ollama".to_owned(),
+                base_url: "http://192.168.1.10:11434/v1/".to_owned(),
+                model: " qwen3.5:27b ".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.base_url, "http://192.168.1.10:11434/v1");
+        assert_eq!(saved.model, "qwen3.5:27b");
+        assert_eq!(
+            load_active_ai_service_record(&database).unwrap(),
+            Some(ActiveAiService::Local(saved))
+        );
+        drop(database);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+}

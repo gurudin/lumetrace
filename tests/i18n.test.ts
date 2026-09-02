@@ -151,6 +151,13 @@ test("AI waiting state exposes a live elapsed-seconds label", () => {
   assert.match(en.fileSpace.ai.waiting, /{{seconds}}/);
 });
 
+test("local model settings expose a real connection flow", () => {
+  assert.equal(zh.fileSpace.settings.aiService.modelPlaceholder, "请先测试连接");
+  assert.match(zh.fileSpace.settings.aiService.localConnection.idle.description, /测试连接/);
+  assert.match(zh.fileSpace.settings.aiService.localConnection.passed.description, /选择模型/);
+  assert.doesNotMatch(zh.fileSpace.settings.aiService.localPrivacy, /未来/);
+});
+
 test("AI no-result copy exposes an inline index-status action", () => {
   assert.equal(zh.fileSpace.ai.noSourcesBefore, "没有找到足够相关的本地文件内容，请换一种问法或");
   assert.equal(zh.fileSpace.ai.confirmIndex, "确认索引");

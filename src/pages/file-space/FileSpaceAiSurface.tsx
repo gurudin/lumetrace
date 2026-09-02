@@ -41,6 +41,18 @@ interface AgentCliSettings {
   version?: string;
 }
 
+interface LocalLlmSettings {
+  provider: "ollama" | "lmStudio";
+  baseUrl: string;
+  model: string;
+}
+
+interface AiServiceSettingsSnapshot {
+  mode: "local" | "agentCli" | null;
+  local: LocalLlmSettings | null;
+  agentCli: AgentCliSettings | null;
+}
+
 type AiConfigurationState = "loading" | "configured" | "unconfigured" | "error";
 type AiRequestState = "idle" | "asking";
 type AiTurnStatus = "pending" | "completed" | "failed";
@@ -70,6 +82,11 @@ const aiErrorKeys: Record<string, string> = {
   ai_hermes_failed: "hermesFailed",
   ai_hermes_empty: "hermesEmpty",
   ai_hermes_output_too_large: "hermesOutputTooLarge",
+  ai_local_llm_unavailable: "localLlmUnavailable",
+  ai_local_llm_timeout: "localLlmTimeout",
+  ai_local_llm_failed: "localLlmFailed",
+  ai_local_llm_empty: "localLlmEmpty",
+  ai_local_llm_output_too_large: "localLlmOutputTooLarge",
   ai_history_failed: "historyFailed",
   ai_interrupted: "interrupted",
 };
@@ -198,7 +215,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const { t } = useTranslation();
   const [panelOpen, setPanelOpen] = useState(false);
   const [configurationState, setConfigurationState] = useState<AiConfigurationState>("loading");
-  const [agentSettings, setAgentSettings] = useState<AgentCliSettings | null>(null);
+  const [serviceSettings, setServiceSettings] = useState<AiServiceSettingsSnapshot | null>(null);
   const [question, setQuestion] = useState("");
   const [requestState, setRequestState] = useState<AiRequestState>("idle");
   const [turns, setTurns] = useState<FileSpaceAiTurn[]>([]);
@@ -212,33 +229,39 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const shouldFollowConversationRef = useRef(true);
   const panelPresence = usePresence(panelOpen);
 
-  const loadAgentSettings = useCallback(async () => {
+  const loadAiServiceSettings = useCallback(async () => {
     if (!isTauri()) {
-      setAgentSettings(null);
+      setServiceSettings(null);
       setConfigurationState("unconfigured");
       return;
     }
     setConfigurationState("loading");
     try {
-      const settings = await invoke<AgentCliSettings | null>("get_agent_cli_settings");
-      setAgentSettings(settings);
-      if (settings) {
+      const settings = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
+      const configured = (settings.mode === "local" && Boolean(settings.local))
+        || (settings.mode === "agentCli" && Boolean(settings.agentCli));
+      setServiceSettings(settings);
+      if (configured) {
         const history = await invoke<FileSpaceAiTurn[]>("get_file_space_ai_history");
         setTurns(history);
       }
-      setConfigurationState(settings ? "configured" : "unconfigured");
+      setConfigurationState(configured ? "configured" : "unconfigured");
     } catch {
-      setAgentSettings(null);
+      setServiceSettings(null);
       setConfigurationState("error");
     }
   }, []);
 
   useEffect(() => {
-    void loadAgentSettings();
-    const refreshSettings = () => void loadAgentSettings();
+    void loadAiServiceSettings();
+    const refreshSettings = () => void loadAiServiceSettings();
     window.addEventListener("lumetrace:agent-cli-settings-changed", refreshSettings);
-    return () => window.removeEventListener("lumetrace:agent-cli-settings-changed", refreshSettings);
-  }, [loadAgentSettings]);
+    window.addEventListener("lumetrace:ai-service-settings-changed", refreshSettings);
+    return () => {
+      window.removeEventListener("lumetrace:agent-cli-settings-changed", refreshSettings);
+      window.removeEventListener("lumetrace:ai-service-settings-changed", refreshSettings);
+    };
+  }, [loadAiServiceSettings]);
 
   const restoreTriggerFocus = useCallback(() => {
     window.requestAnimationFrame(() => triggerRef.current?.focus());
@@ -250,8 +273,15 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   }, [restoreTriggerFocus]);
 
   const canAsk = configurationState === "configured"
-    && agentSettings?.cli === "hermes"
-    && agentSettings.permission === "readOnly";
+    && ((serviceSettings?.mode === "local" && Boolean(serviceSettings.local))
+      || (serviceSettings?.mode === "agentCli"
+        && serviceSettings.agentCli?.cli === "hermes"
+        && serviceSettings.agentCli.permission === "readOnly"));
+  const activeServiceLabel = serviceSettings?.mode === "local"
+    ? serviceSettings.local?.model
+    : serviceSettings?.mode === "agentCli" && serviceSettings.agentCli
+      ? t(`fileSpace.settings.aiService.providers.${serviceSettings.agentCli.cli}`)
+      : null;
 
   useEffect(() => {
     if (!panelPresence.mounted || !panelOpen) return undefined;
@@ -342,7 +372,9 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
         question: nextQuestion,
         retryTurnId: retryTurnId ?? null,
       });
-      if (agentSettings) recordAgentCliRuntimeSuccess(agentSettings.cli);
+      if (serviceSettings?.mode === "agentCli" && serviceSettings.agentCli) {
+        recordAgentCliRuntimeSuccess(serviceSettings.agentCli.cli);
+      }
       setTurns((current) => {
         const existingIndex = current.findIndex((turn) => turn.id === response.id);
         if (existingIndex < 0) return [...current, response].slice(-100);
@@ -365,7 +397,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       requestInFlightRef.current = false;
       setRequestState("idle");
     }
-  }, [agentSettings, canAsk, question]);
+  }, [canAsk, question, serviceSettings]);
 
   const suggestionKeys = [
     { key: "recentChanges", icon: History },
@@ -408,7 +440,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                 <LoaderCircle className="is-spinning" size={12} />
                 {t("fileSpace.ai.configurationLoadingShort")}
               </span>
-            ) : configurationState === "configured" && agentSettings ? (
+            ) : configurationState === "configured" && activeServiceLabel ? (
               <button
                 className="file-space-ai-header-service is-connected"
                 type="button"
@@ -417,7 +449,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                 onClick={openAiServiceSettings}
               >
                 <i aria-hidden="true" />
-                <span>{t(`fileSpace.settings.aiService.providers.${agentSettings.cli}`)}</span>
+                <span>{activeServiceLabel}</span>
                 <ChevronDown size={12} aria-hidden="true" />
               </button>
             ) : null}
@@ -430,7 +462,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
               <span><LoaderCircle className="is-spinning" size={22} /></span>
               <strong>{t("fileSpace.ai.configurationLoading")}</strong>
             </div>
-          ) : configurationState === "configured" && agentSettings ? (
+          ) : configurationState === "configured" && serviceSettings ? (
             !canAsk ? (
               <div className="file-space-ai-unavailable is-error" role="alert">
                 <span><CircleAlert size={22} /></span>
@@ -553,7 +585,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
               <span><CircleAlert size={22} /></span>
               <strong>{t("fileSpace.ai.configurationErrorTitle")}</strong>
               <p>{t("fileSpace.ai.configurationErrorDescription")}</p>
-              <button type="button" onClick={() => void loadAgentSettings()}>
+              <button type="button" onClick={() => void loadAiServiceSettings()}>
                 {t("fileSpace.ai.retryConfiguration")}
               </button>
             </div>

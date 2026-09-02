@@ -4965,8 +4965,15 @@ body.is-file-space-reordering * {
 
 .file-space-ai-service-form > input {
   padding: 0 9px;
+  outline: 0;
   font: inherit;
   font-size: var(--font-size-secondary);
+}
+
+.file-space-ai-service-form > input:focus-visible,
+.file-space-ai-service-secret-field:focus-within {
+  border-color: color-mix(in srgb, var(--highlight) 72%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--highlight) 22%, transparent);
 }
 
 .file-space-ai-service-form > input:disabled,
@@ -5292,6 +5299,10 @@ body.is-file-space-reordering * {
 
 .file-space-ai-agent-connection.is-passed > svg {
   color: var(--success);
+}
+
+.file-space-ai-agent-connection.is-checking > svg {
+  color: var(--highlight);
 }
 
 .file-space-ai-agent-connection.is-installed > svg {

@@ -1,4 +1,7 @@
-use crate::database::Database;
+use crate::{
+    ai_service::{AI_SERVICE_MODE_AGENT_CLI, AI_SERVICE_MODE_KEY},
+    database::Database,
+};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
@@ -133,17 +136,31 @@ fn save_agent_cli_settings_record(
     let settings = validate_agent_cli_settings(settings)?;
     let value = serde_json::to_string(&settings)
         .map_err(|error| format!("Unable to encode the Agent CLI setting: {error}"))?;
-    let connection = database
+    let mut connection = database
         .0
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-    connection
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin saving the Agent CLI setting: {error}"))?;
+    let now = now_millis();
+    transaction
         .execute(
             "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-            params![AGENT_CLI_SETTINGS_KEY, value, now_millis()],
+            params![AGENT_CLI_SETTINGS_KEY, value, now],
         )
         .map_err(|error| format!("Unable to save the Agent CLI setting: {error}"))?;
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![AI_SERVICE_MODE_KEY, AI_SERVICE_MODE_AGENT_CLI, now],
+        )
+        .map_err(|error| format!("Unable to activate the Agent CLI setting: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to finish saving the Agent CLI setting: {error}"))?;
     Ok(settings)
 }
 
@@ -528,7 +545,11 @@ mod tests {
         assert_eq!(saved.version.as_deref(), Some("codex-cli 1.2.3"));
         assert_eq!(
             load_agent_cli_settings_record(&database).unwrap(),
-            Some(saved)
+            Some(saved.clone())
+        );
+        assert_eq!(
+            crate::ai_service::load_active_ai_service_record(&database).unwrap(),
+            Some(crate::ai_service::ActiveAiService::AgentCli(saved))
         );
         drop(database);
         std::fs::remove_dir_all(root).unwrap();
