@@ -5,6 +5,8 @@ import { useTranslation } from "react-i18next";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { usePresence } from "../../shared/ui/usePresence";
+import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
+import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import "./markdown-preview-overlay.css";
 
 interface MarkdownPreviewRequest {
@@ -50,7 +52,7 @@ function isMarkdownName(name: string) {
 
 const markdownVisualFixture = `# Clipboard X 市场调研报告
 
-> 本报告用于验证 LumeTrace Markdown 阅读与编辑器在真实密度内容下的排版、滚动与交互。
+> 本报告用于验证 Lume Trace Markdown 阅读与编辑器在真实密度内容下的排版、滚动与交互。
 
 ## 核心结论
 
@@ -140,67 +142,39 @@ function createTimelineVisualFixture(target: MarkdownPreviewRequest): TaskFileTi
 }
 
 export function MarkdownPreviewOverlay() {
-  const { i18n } = useTranslation();
-  const copy = i18n.resolvedLanguage?.startsWith("zh") ? {
-    dialog: (name: string) => `预览 Markdown：${name}`,
-    preview: "预览",
-    edit: "编辑",
-    save: "保存",
-    saving: "正在保存",
-    saved: "已保存",
-    unsaved: "未保存",
-    close: "关闭 Markdown 预览",
-    loading: "正在读取 Markdown",
-    loadError: "无法读取这个 Markdown 文件。",
-    saveError: "保存失败，请重试。",
-    retry: "重新读取",
-    editorLabel: "Markdown 原文",
-    empty: "这个 Markdown 文件当前没有内容。",
-    discardTitle: "放弃未保存的修改？",
-    discardBody: "关闭后，本次修改不会保存到文件。",
-    keepEditing: "继续编辑",
-    discard: "放弃修改",
-    desktopOnly: "Markdown 文件只能在 LumeTrace 客户端中读取。",
-    versionHistory: "版本记录",
-    versionCount: (count: number) => `共 ${count} 个版本`,
-    currentVersion: "当前版本",
-    historicalVersion: "历史版本 · 只读",
-    userEdit: "用户修改",
-    timelineLoadError: "无法读取版本记录",
-    versionLoadError: "无法读取这个版本",
-    retryTimeline: "重试",
-    versionLoading: "正在读取所选版本",
-    round: (count: number) => `第 ${count} 轮`,
-  } : {
-    dialog: (name: string) => `Preview Markdown: ${name}`,
-    preview: "Preview",
-    edit: "Edit",
-    save: "Save",
-    saving: "Saving",
-    saved: "Saved",
-    unsaved: "Unsaved",
-    close: "Close Markdown preview",
-    loading: "Loading Markdown",
-    loadError: "Unable to read this Markdown file.",
-    saveError: "Save failed. Please try again.",
-    retry: "Reload",
-    editorLabel: "Markdown source",
-    empty: "This Markdown file is empty.",
-    discardTitle: "Discard unsaved changes?",
-    discardBody: "Your changes will not be written to the file.",
-    keepEditing: "Keep editing",
-    discard: "Discard changes",
-    desktopOnly: "Markdown files can only be read in the LumeTrace desktop app.",
-    versionHistory: "Version history",
-    versionCount: (count: number) => `${count} version${count === 1 ? "" : "s"}`,
-    currentVersion: "Current",
-    historicalVersion: "Historical version · Read only",
-    userEdit: "User edit",
-    timelineLoadError: "Unable to load version history",
-    versionLoadError: "Unable to load this version",
-    retryTimeline: "Retry",
-    versionLoading: "Loading selected version",
-    round: (count: number) => `Round ${count}`,
+  const { t, i18n } = useTranslation();
+  const copy = {
+    dialog: (name: string) => t("fileSpace.preview.markdown.dialog", { name }),
+    preview: t("fileSpace.preview.markdown.preview"),
+    edit: t("fileSpace.preview.markdown.edit"),
+    save: t("fileSpace.preview.markdown.save"),
+    saving: t("fileSpace.preview.markdown.saving"),
+    saved: t("fileSpace.preview.markdown.saved"),
+    unsaved: t("fileSpace.preview.markdown.unsaved"),
+    close: t("fileSpace.preview.markdown.close"),
+    loading: t("fileSpace.preview.markdown.loading"),
+    loadError: t("fileSpace.preview.markdown.loadError"),
+    saveError: t("fileSpace.preview.markdown.saveError"),
+    retry: t("fileSpace.preview.markdown.retry"),
+    editorLabel: t("fileSpace.preview.markdown.editorLabel"),
+    empty: t("fileSpace.preview.markdown.empty"),
+    discardTitle: t("fileSpace.preview.markdown.discardTitle"),
+    discardBody: t("fileSpace.preview.markdown.discardBody"),
+    keepEditing: t("fileSpace.preview.markdown.keepEditing"),
+    discard: t("fileSpace.preview.markdown.discard"),
+    desktopOnly: t("fileSpace.preview.markdown.desktopOnly"),
+    versionHistory: t("fileSpace.preview.common.versionHistory"),
+    showVersionHistory: t("fileSpace.preview.common.showVersionHistory"),
+    hideVersionHistory: t("fileSpace.preview.common.hideVersionHistory"),
+    versionCount: (count: number) => t("fileSpace.preview.common.versionCount", { count }),
+    currentVersion: t("fileSpace.preview.common.current"),
+    historicalVersion: t("fileSpace.preview.common.historical"),
+    userEdit: t("fileSpace.preview.common.userEdit"),
+    timelineLoadError: t("fileSpace.preview.common.timelineError"),
+    versionLoadError: t("fileSpace.preview.markdown.versionLoadError"),
+    retryTimeline: t("fileSpace.preview.common.retry"),
+    versionLoading: t("fileSpace.preview.markdown.versionLoading"),
+    round: (count: number) => t("fileSpace.preview.common.round", { count }),
   };
   const [request, setRequest] = useState<MarkdownPreviewRequest | null>(null);
   const [open, setOpen] = useState(false);
@@ -216,6 +190,7 @@ export function MarkdownPreviewOverlay() {
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionLoading, setVersionLoading] = useState(false);
   const [versionError, setVersionError] = useState<string | null>(null);
@@ -225,12 +200,14 @@ export function MarkdownPreviewOverlay() {
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const contentLoadSequenceRef = useRef(0);
+  const initialLoadSequenceRef = useRef(0);
   const presence = usePresence(open);
   const discardPresence = usePresence(confirmClose);
   const dirty = draft !== content;
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
   const historicalVersionSelected = Boolean(selectedVersion && !selectedVersion.isCurrent);
-  const showVersionTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const hasVersionTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const showVersionTimeline = hasVersionTimeline && timelineVisible;
 
   const loadMarkdown = useCallback(async (target: MarkdownPreviewRequest) => {
     const loadSequence = contentLoadSequenceRef.current + 1;
@@ -314,6 +291,7 @@ export function MarkdownPreviewOverlay() {
   }, [dirty, request, saving, selectedVersionId, versionLoading]);
 
   const closeImmediately = useCallback(() => {
+    initialLoadSequenceRef.current += 1;
     setConfirmClose(false);
     setOpen(false);
     window.setTimeout(() => returnFocusRef.current?.focus(), 220);
@@ -382,6 +360,9 @@ export function MarkdownPreviewOverlay() {
     const handleDoubleClick = (event: MouseEvent) => {
       const card = markdownCardFromTarget(event.target);
       if (!card || event.button !== 0) return;
+      const interactionStartedAt = performance.now();
+      const initialLoadSequence = initialLoadSequenceRef.current + 1;
+      initialLoadSequenceRef.current = initialLoadSequence;
       event.preventDefault();
       event.stopImmediatePropagation();
       returnFocusRef.current = card.button;
@@ -389,15 +370,33 @@ export function MarkdownPreviewOverlay() {
       setMode("preview");
       setContent("");
       setDraft("");
+      setLoading(true);
+      setLoadError(null);
+      setSaveError(null);
+      setSaved(false);
       setConfirmClose(false);
       setTimeline(null);
+      setTimelineLoading(false);
       setTimelineError(null);
+      const timelineInitiallyVisible = shouldShowVersionTimelineByDefault(card.request.versionCount);
+      setTimelineVisible(timelineInitiallyVisible);
       setSelectedVersionId(null);
       setVersionError(null);
       setVersionLoading(false);
       setOpen(true);
-      void loadMarkdown(card.request);
-      void loadTaskTimeline(card.request);
+      window.requestAnimationFrame(() => {
+        window.setTimeout(() => {
+          if (initialLoadSequence !== initialLoadSequenceRef.current) return;
+          if (import.meta.env.DEV) {
+            console.info(
+              `[Lume Trace preview] shell visible in ${(performance.now() - interactionStartedAt).toFixed(1)} ms`,
+              card.request.name,
+            );
+          }
+          void loadMarkdown(card.request);
+          if (timelineInitiallyVisible) void loadTaskTimeline(card.request);
+        }, 0);
+      });
     };
 
     document.addEventListener("dblclick", handleDoubleClick, true);
@@ -464,10 +463,12 @@ export function MarkdownPreviewOverlay() {
   useEffect(() => {
     if (!presence.mounted) {
       contentLoadSequenceRef.current += 1;
+      initialLoadSequenceRef.current += 1;
       setRequest(null);
       setConfirmClose(false);
       setTimeline(null);
       setTimelineError(null);
+      setTimelineVisible(false);
       setSelectedVersionId(null);
       setVersionError(null);
     }
@@ -533,9 +534,10 @@ export function MarkdownPreviewOverlay() {
         </div>
       </header>
 
-      <div className={`file-markdown-preview-workspace${showVersionTimeline ? " has-version-timeline" : ""}`}>
-        {showVersionTimeline ? (
-          <aside className="file-markdown-version-timeline" aria-label={copy.versionHistory}>
+      <div className={`file-markdown-preview-workspace file-preview-version-workspace${showVersionTimeline ? " has-version-timeline" : ""}`}>
+        {hasVersionTimeline ? (
+          <VersionTimelineRegion visible={showVersionTimeline}>
+            <aside id="file-markdown-version-timeline" className="file-markdown-version-timeline" aria-label={copy.versionHistory}>
             <header>
               <div><History size={15} /><span>{copy.versionHistory}</span></div>
               <small>{copy.versionCount(timeline?.versions.length ?? request.versionCount)}</small>
@@ -568,7 +570,7 @@ export function MarkdownPreviewOverlay() {
                     >
                       <time dateTime={new Date(version.producedAt).toISOString()}>
                         {new Intl.DateTimeFormat(
-                          i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en-US",
+                          i18n.resolvedLanguage ?? "en-US",
                           { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" },
                         ).format(version.producedAt)}
                       </time>
@@ -583,7 +585,22 @@ export function MarkdownPreviewOverlay() {
                 ))}
               </ol>
             ) : null}
-          </aside>
+            </aside>
+          </VersionTimelineRegion>
+        ) : null}
+
+        {hasVersionTimeline ? (
+          <VersionTimelineToggle
+            controlsId="file-markdown-version-timeline"
+            visible={showVersionTimeline}
+            showLabel={copy.showVersionHistory}
+            hideLabel={copy.hideVersionHistory}
+            onToggle={() => {
+              const nextVisible = !timelineVisible;
+              setTimelineVisible(nextVisible);
+              if (nextVisible && !timeline && !timelineLoading) void loadTaskTimeline(request);
+            }}
+          />
         ) : null}
 
         <main className={`file-markdown-preview-body is-${mode}`}>

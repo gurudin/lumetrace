@@ -15,6 +15,8 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVersionTimelineRail";
+import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
+import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import "./pdf-preview-overlay.css";
 
 interface PdfPreviewRequest {
@@ -64,7 +66,7 @@ function createPdfVisualFixture() {
     "",
   ];
   [1, 2, 3].forEach((pageNumber, index) => {
-    const content = `BT /F1 23 Tf 72 716 Td (LumeTrace PDF Preview) Tj 0 -36 Td /F1 14 Tf (Page ${pageNumber} of 3) Tj 0 -48 Td /F1 11 Tf (Multi-page scroll, page navigation and zoom fixture.) Tj ET`;
+    const content = `BT /F1 23 Tf 72 716 Td (Lume Trace PDF Preview) Tj 0 -36 Td /F1 14 Tf (Page ${pageNumber} of 3) Tj 0 -48 Td /F1 11 Tf (Multi-page scroll, page navigation and zoom fixture.) Tj ET`;
     objects[contentObjects[index] - 1] = `<< /Length ${content.length} >>\nstream\n${content}\nendstream`;
   });
   let output = "%PDF-1.4\n";
@@ -162,47 +164,30 @@ function PdfPageCanvas({ document, pageNumber, scale, scrollRoot }: PdfPageCanva
 }
 
 export function PdfPreviewOverlay() {
-  const { i18n } = useTranslation();
-  const copy = i18n.resolvedLanguage?.startsWith("zh") ? {
-    dialog: (name: string) => `预览 PDF：${name}`,
-    previous: "上一页",
-    next: "下一页",
-    page: "页码",
-    zoomOut: "缩小",
-    zoomIn: "放大",
-    fitWidth: "适应宽度",
-    close: "关闭 PDF 预览",
-    loading: "正在读取 PDF",
-    loadError: "无法预览这个 PDF 文件。",
-    retry: "重新读取",
-    desktopOnly: "PDF 文件只能在 LumeTrace 客户端中读取。",
-    versionHistory: "版本记录",
-    versionCount: (count: number) => `共 ${count} 个版本`,
-    current: "当前版本",
-    userEdit: "用户修改",
-    round: (count: number) => `第 ${count} 轮`,
-    timelineError: "无法读取版本记录",
-    historical: "历史版本 · 只读",
-  } : {
-    dialog: (name: string) => `Preview PDF: ${name}`,
-    previous: "Previous page",
-    next: "Next page",
-    page: "Page",
-    zoomOut: "Zoom out",
-    zoomIn: "Zoom in",
-    fitWidth: "Fit width",
-    close: "Close PDF preview",
-    loading: "Loading PDF",
-    loadError: "Unable to preview this PDF file.",
-    retry: "Reload",
-    desktopOnly: "PDF files can only be read in the LumeTrace desktop app.",
-    versionHistory: "Version history",
-    versionCount: (count: number) => `${count} version${count === 1 ? "" : "s"}`,
-    current: "Current",
-    userEdit: "User edit",
-    round: (count: number) => `Round ${count}`,
-    timelineError: "Unable to load version history",
-    historical: "Historical version · Read only",
+  const { t, i18n } = useTranslation();
+  const copy = {
+    dialog: (name: string) => t("fileSpace.preview.pdf.dialog", { name }),
+    previous: t("fileSpace.preview.pdf.previous"),
+    next: t("fileSpace.preview.pdf.next"),
+    page: t("fileSpace.preview.pdf.page"),
+    zoomOut: t("fileSpace.preview.pdf.zoomOut"),
+    zoomIn: t("fileSpace.preview.pdf.zoomIn"),
+    fitWidth: t("fileSpace.preview.pdf.fitWidth"),
+    close: t("fileSpace.preview.pdf.close"),
+    loading: t("fileSpace.preview.pdf.loading"),
+    loadError: t("fileSpace.preview.pdf.loadError"),
+    retry: t("fileSpace.preview.pdf.retry"),
+    desktopOnly: t("fileSpace.preview.pdf.desktopOnly"),
+    versionHistory: t("fileSpace.preview.common.versionHistory"),
+    showVersionHistory: t("fileSpace.preview.common.showVersionHistory"),
+    hideVersionHistory: t("fileSpace.preview.common.hideVersionHistory"),
+    versionCount: (count: number) => t("fileSpace.preview.common.versionCount", { count }),
+    current: t("fileSpace.preview.common.current"),
+    userEdit: t("fileSpace.preview.common.userEdit"),
+    round: (count: number) => t("fileSpace.preview.common.round", { count }),
+    timelineError: t("fileSpace.preview.common.timelineError"),
+    historical: t("fileSpace.preview.common.historical"),
+    timelineLoading: t("fileSpace.preview.common.loading"),
   };
   const [request, setRequest] = useState<PdfPreviewRequest | null>(null);
   const [open, setOpen] = useState(false);
@@ -217,6 +202,7 @@ export function PdfPreviewOverlay() {
   const [timeline, setTimeline] = useState<PdfTaskTimeline | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
@@ -225,9 +211,33 @@ export function PdfPreviewOverlay() {
   const loadingTaskRef = useRef<PDFDocumentLoadingTask | null>(null);
   const documentRef = useRef<PDFDocumentProxy | null>(null);
   const loadSequenceRef = useRef(0);
+  const fitScaleUpdateRef = useRef<() => void>(() => undefined);
+  const timelineMotionRef = useRef(false);
+  const timelineMotionTimerRef = useRef<number | null>(null);
   const presence = usePresence(open);
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
-  const showTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const hasTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const showTimeline = hasTimeline && timelineVisible;
+
+  const finishTimelineMotion = useCallback(() => {
+    if (timelineMotionTimerRef.current !== null) {
+      window.clearTimeout(timelineMotionTimerRef.current);
+      timelineMotionTimerRef.current = null;
+    }
+    timelineMotionRef.current = false;
+    window.requestAnimationFrame(() => fitScaleUpdateRef.current());
+  }, []);
+
+  const toggleTimeline = useCallback(() => {
+    setTimelineVisible((visible) => !visible);
+    if (window.matchMedia("(prefers-reduced-motion: reduce)").matches) {
+      window.requestAnimationFrame(() => fitScaleUpdateRef.current());
+      return;
+    }
+    timelineMotionRef.current = true;
+    if (timelineMotionTimerRef.current !== null) window.clearTimeout(timelineMotionTimerRef.current);
+    timelineMotionTimerRef.current = window.setTimeout(finishTimelineMotion, 220);
+  }, [finishTimelineMotion]);
 
   const updateDocument = useCallback((nextDocument: PDFDocumentProxy | null) => {
     documentRef.current = nextDocument;
@@ -346,6 +356,7 @@ export function PdfPreviewOverlay() {
       setRequest(card.request);
       setTimeline(null);
       setTimelineError(null);
+      setTimelineVisible(shouldShowVersionTimelineByDefault(card.request.versionCount));
       setSelectedVersionId(null);
       setOpen(true);
       void loadPdf(card.request);
@@ -406,13 +417,18 @@ export function PdfPreviewOverlay() {
     if (!scroller) return undefined;
     setScrollRoot(scroller);
     const updateFitScale = () => {
+      if (timelineMotionRef.current) return;
       const availableWidth = Math.max(240, scroller.clientWidth - 64);
       setFitScale(Math.min(2, availableWidth / firstPageWidthRef.current));
     };
+    fitScaleUpdateRef.current = updateFitScale;
     updateFitScale();
     const observer = new ResizeObserver(updateFitScale);
     observer.observe(scroller);
-    return () => observer.disconnect();
+    return () => {
+      observer.disconnect();
+      if (fitScaleUpdateRef.current === updateFitScale) fitScaleUpdateRef.current = () => undefined;
+    };
   }, [pdfDocument, presence.mounted]);
 
   useEffect(() => {
@@ -454,10 +470,15 @@ export function PdfPreviewOverlay() {
       setRequest(null);
       setScrollRoot(null);
       setTimeline(null);
+      setTimelineVisible(false);
     }
   }, [destroyDocument, presence.mounted]);
 
-  useEffect(() => () => destroyDocument(), [destroyDocument]);
+  useEffect(() => () => {
+    if (timelineMotionTimerRef.current !== null) window.clearTimeout(timelineMotionTimerRef.current);
+    timelineMotionRef.current = false;
+    destroyDocument();
+  }, [destroyDocument]);
 
   if (!presence.mounted || !request) return null;
 
@@ -519,8 +540,28 @@ export function PdfPreviewOverlay() {
         </div>
       </header>
 
-      <div className={`file-pdf-preview-workspace${showTimeline ? " has-version-timeline" : ""}`}>
-        {showTimeline ? <TaskVersionTimelineRail versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={loading} locale={i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.loading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} /> : null}
+      <div
+        className={`file-pdf-preview-workspace file-preview-version-workspace${showTimeline ? " has-version-timeline" : ""}`}
+        onTransitionEnd={(event) => {
+          if (event.target === event.currentTarget && event.propertyName === "grid-template-columns") {
+            finishTimelineMotion();
+          }
+        }}
+      >
+        {hasTimeline ? (
+          <VersionTimelineRegion visible={showTimeline}>
+            <TaskVersionTimelineRail id="file-pdf-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={loading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
+          </VersionTimelineRegion>
+        ) : null}
+        {hasTimeline ? (
+          <VersionTimelineToggle
+            controlsId="file-pdf-version-timeline"
+            visible={showTimeline}
+            showLabel={copy.showVersionHistory}
+            hideLabel={copy.hideVersionHistory}
+            onToggle={toggleTimeline}
+          />
+        ) : null}
         <main ref={scrollRef} className="file-pdf-preview-body">
         {loading ? (
           <div className="file-pdf-preview-state" role="status">

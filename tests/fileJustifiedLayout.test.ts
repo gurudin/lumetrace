@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  calculateFileListLayout,
   calculateJustifiedFileLayout,
   justifiedFileLayoutsEqual,
   reorderFileIdsForDraggedCard,
+  visibleJustifiedFileIds,
 } from "../src/pages/file-space/fileJustifiedLayout.ts";
 
 const baseOptions = {
@@ -103,6 +105,45 @@ test("detects when a calculated layout has not changed", () => {
 
   assert.equal(justifiedFileLayoutsEqual(layout, { ...layout }), true);
   assert.equal(justifiedFileLayoutsEqual(layout, { ...layout, height: layout.height + 1 }), false);
+});
+
+test("virtualizes an eighteen-thousand-file layout to the overscanned viewport", () => {
+  const ids = Array.from({ length: 18_000 }, (_, index) => `file-${index}`);
+  const layout = calculateJustifiedFileLayout({
+    ...baseOptions,
+    containerWidth: 1_000,
+    items: ids.map((id) => ({ id, aspectRatio: 1.25 })),
+  });
+  const viewportTop = Math.floor(layout.height * 0.72);
+  const visibleIds = visibleJustifiedFileIds(
+    ids,
+    layout,
+    viewportTop - 900,
+    viewportTop + 900,
+  );
+
+  assert.ok(visibleIds.length > 0);
+  assert.ok(visibleIds.length < 100);
+  assert.ok(layout.placements[visibleIds[0]].y + layout.cardHeight >= viewportTop - 900);
+  assert.ok(layout.placements[visibleIds.at(-1)!].y <= viewportTop + 900);
+});
+
+test("lays files out as one virtualized row per item in list mode", () => {
+  const ids = Array.from({ length: 18_000 }, (_, index) => `file-${index}`);
+  const layout = calculateFileListLayout({
+    containerWidth: 720,
+    rowHeight: 52,
+    verticalGap: 2,
+    previewSize: 42,
+    items: ids.map((id) => ({ id, aspectRatio: 1 })),
+  });
+  const visibleIds = visibleJustifiedFileIds(ids, layout, 90_000, 91_800);
+
+  assert.equal(layout.rowCount, ids.length);
+  assert.deepEqual(layout.placements["file-0"], { x: 0, y: 0, width: 720, previewHeight: 42 });
+  assert.deepEqual(layout.placements["file-1"], { x: 0, y: 54, width: 720, previewHeight: 42 });
+  assert.ok(visibleIds.length > 0);
+  assert.ok(visibleIds.length < 40);
 });
 
 const reorderCandidates = [

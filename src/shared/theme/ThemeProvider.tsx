@@ -3,17 +3,19 @@ import {
   ThemeContext,
   type AppearancePreferences,
   type Theme,
+  type ThemePreference,
   type UiFont,
 } from "./theme-context";
 
-const themeStorageKey = "lumetrace.theme";
+const themeStorageKey = "lumetrace.theme.preference";
+const legacyThemeStorageKey = "lumetrace.theme";
 const appearanceStorageKey = "lumetrace.appearance";
 const hexColorPattern = /^#[0-9a-f]{6}$/i;
 
 export const defaultAppearance: AppearancePreferences = {
-  highlightColor: "#3F746A",
+  highlightColor: "#0A84FF",
   uiFont: "system",
-  bodyFontSize: 14,
+  bodyFontSize: 13,
   codeFontSize: 13,
   fontSmoothing: true,
 };
@@ -47,6 +49,12 @@ function getInitialAppearance(): AppearancePreferences {
 
   try {
     const parsed = JSON.parse(savedAppearance) as Partial<AppearancePreferences>;
+    const isLegacyUntouchedDefault = parsed.highlightColor?.toUpperCase() === "#3F746A"
+      && parsed.uiFont === "system"
+      && Number(parsed.bodyFontSize) === 14
+      && Number(parsed.codeFontSize) === 13
+      && parsed.fontSmoothing === true;
+    if (isLegacyUntouchedDefault) return defaultAppearance;
     return {
       highlightColor: typeof parsed.highlightColor === "string" && hexColorPattern.test(parsed.highlightColor)
         ? parsed.highlightColor.toUpperCase()
@@ -65,23 +73,41 @@ function getInitialAppearance(): AppearancePreferences {
   }
 }
 
-function getInitialTheme(): Theme {
+function getInitialThemePreference(): ThemePreference {
   const savedTheme = localStorage.getItem(themeStorageKey);
-  if (savedTheme === "dark" || savedTheme === "light") {
+  if (savedTheme === "dark" || savedTheme === "light" || savedTheme === "system") {
     return savedTheme;
   }
-  return window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  const legacyTheme = localStorage.getItem(legacyThemeStorageKey);
+  if (legacyTheme === "dark" || legacyTheme === "light") return legacyTheme;
+  return "system";
 }
 
 export function ThemeProvider({ children }: PropsWithChildren) {
-  const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const systemThemeQuery = useMemo(() => window.matchMedia("(prefers-color-scheme: dark)"), []);
+  const previewTheme = useMemo<Theme | null>(() => {
+    if (!import.meta.env.DEV) return null;
+    const value = new URLSearchParams(window.location.search).get("theme");
+    return value === "light" || value === "dark" ? value : null;
+  }, []);
+  const [systemTheme, setSystemTheme] = useState<Theme>(() => systemThemeQuery.matches ? "dark" : "light");
+  const [themePreference, setTheme] = useState<ThemePreference>(getInitialThemePreference);
   const [appearance, setAppearance] = useState<AppearancePreferences>(getInitialAppearance);
+  const theme = previewTheme ?? (themePreference === "system" ? systemTheme : themePreference);
+
+  useEffect(() => {
+    const updateSystemTheme = (event: MediaQueryListEvent) => setSystemTheme(event.matches ? "dark" : "light");
+    systemThemeQuery.addEventListener("change", updateSystemTheme);
+    return () => systemThemeQuery.removeEventListener("change", updateSystemTheme);
+  }, [systemThemeQuery]);
 
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
+    document.documentElement.dataset.themePreference = themePreference;
     document.documentElement.style.colorScheme = theme;
-    localStorage.setItem(themeStorageKey, theme);
-  }, [theme]);
+    localStorage.setItem(themeStorageKey, themePreference);
+    localStorage.removeItem(legacyThemeStorageKey);
+  }, [theme, themePreference]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -97,8 +123,9 @@ export function ThemeProvider({ children }: PropsWithChildren) {
   const value = useMemo(
     () => ({
       theme,
+      themePreference,
       setTheme,
-      toggleTheme: () => setTheme((current) => (current === "dark" ? "light" : "dark")),
+      toggleTheme: () => setTheme(theme === "dark" ? "light" : "dark"),
       appearance,
       setHighlightColor: (highlightColor: string) => {
         if (!hexColorPattern.test(highlightColor)) return;
@@ -119,7 +146,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
       })),
       resetAppearance: () => setAppearance(defaultAppearance),
     }),
-    [appearance, theme],
+    [appearance, theme, themePreference],
   );
 
   return <ThemeContext.Provider value={value}>{children}</ThemeContext.Provider>;

@@ -1,0 +1,19 @@
+[package]
+name = "pdf-extract"
+version = "0.9.0"
+edition = "2018"
+authors = ["Jeff Muizelaar <jmuizelaar@mozilla.com>"]
+description = "A library to extract content from PDFs"
+license = "MIT"
+repository = "https://github.com/jrmuizel/pdf-extract"
+
+[dependencies]
+adobe-cmap-parser = "0.4.1"
+cff-parser = "0.1.0"
+encoding_rs = "0.8.34"
+euclid = "0.20.5"
+log = "0.4.22"
+lopdf = { version = "0.36", default-features = false }
+postscript = "0.14"
+type1-encoding-parser = "0.1.0"
+unicode-normalization = "0.1.19"

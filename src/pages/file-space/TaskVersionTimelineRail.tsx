@@ -12,6 +12,7 @@ export interface PreviewTaskFileVersion {
 }
 
 interface TaskVersionTimelineRailProps {
+  id?: string;
   versions: PreviewTaskFileVersion[] | null;
   versionCount: number;
   selectedVersionId: string | null;
@@ -35,6 +36,7 @@ interface TaskVersionTimelineRailProps {
 }
 
 export function TaskVersionTimelineRail({
+  id,
   versions,
   versionCount,
   selectedVersionId,
@@ -48,7 +50,7 @@ export function TaskVersionTimelineRail({
   tone = "default",
 }: TaskVersionTimelineRailProps) {
   return (
-    <aside className={`file-task-version-rail is-${tone}`} aria-label={copy.title}>
+    <aside id={id} className={`file-task-version-rail is-${tone}`} aria-label={copy.title}>
       <header>
         <div><History size={15} /><span>{copy.title}</span></div>
         <small>{copy.count(versions?.length ?? versionCount)}</small>

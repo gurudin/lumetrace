@@ -1,0 +1,265 @@
+.file-version-diff {
+  min-width: 0;
+}
+
+.file-version-diff > header {
+  display: flex;
+  min-width: 0;
+  margin-bottom: 12px;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.file-version-diff > header h3,
+.file-version-diff > header p {
+  margin: 0;
+}
+
+.file-version-diff > header h3 {
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.file-version-diff > header p {
+  margin-top: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.file-version-diff-stats {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
+  font-family: var(--font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+}
+
+.file-version-diff-stats .is-added { color: #258148; }
+.file-version-diff-stats .is-removed { color: #c03b36; }
+:root[data-theme="dark"] .file-version-diff-stats .is-added { color: #66d28a; }
+:root[data-theme="dark"] .file-version-diff-stats .is-removed { color: #ff827b; }
+
+.file-version-diff-controls {
+  display: grid;
+  margin-bottom: 10px;
+  align-items: center;
+  grid-template-columns: minmax(108px, 1fr) 28px minmax(108px, 1fr) auto;
+  gap: 6px;
+}
+
+.file-version-diff-version-select {
+  width: 100%;
+}
+
+.file-version-diff-swap,
+.file-version-diff-view-switch > button {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 6px;
+  color: var(--text-muted);
+  background: transparent;
+  cursor: default;
+}
+
+.file-version-diff-swap:hover,
+.file-version-diff-view-switch > button:hover,
+.file-version-diff-view-switch > button.is-active {
+  color: var(--text);
+  background: var(--control-hover);
+}
+
+.file-version-diff-view-switch {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--surface-subtle);
+}
+
+.file-version-diff-content {
+  min-height: 150px;
+  overflow: hidden;
+  border: 1px solid var(--separator);
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--surface-subtle) 58%, var(--surface));
+}
+
+.file-version-diff-state {
+  display: flex;
+  min-height: 150px;
+  padding: 24px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 7px;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.file-version-diff-state.is-error { color: var(--danger); }
+
+.file-version-diff-state > button {
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--separator);
+  border-radius: 7px;
+  color: var(--text);
+  background: var(--surface);
+  cursor: default;
+}
+
+.file-version-diff-table {
+  max-height: 52vh;
+  overflow: auto;
+  overscroll-behavior: contain;
+  color: var(--text);
+  font-family: var(--font-family-code, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: var(--font-size-code, 12px);
+  line-height: 1.55;
+  tab-size: 2;
+}
+
+.file-version-diff-unified-line {
+  display: grid;
+  min-width: max-content;
+  grid-template-columns: 42px 42px 22px minmax(400px, 1fr);
+}
+
+.file-version-diff-unified-line > span,
+.file-version-diff-split-side > span {
+  padding: 1px 8px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-subtle) 76%, transparent);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  user-select: none;
+}
+
+.file-version-diff-unified-line > b,
+.file-version-diff-split-side > b {
+  padding: 1px 4px;
+  font-weight: 650;
+  text-align: center;
+  user-select: none;
+}
+
+.file-version-diff-unified-line > code,
+.file-version-diff-split-side > code {
+  display: block;
+  min-height: calc(1.55em + 2px);
+  padding: 1px 10px;
+  white-space: pre;
+}
+
+.file-version-diff-unified-line.is-added,
+.file-version-diff-split-side.is-added {
+  background: color-mix(in srgb, #34c759 13%, transparent);
+}
+
+.file-version-diff-unified-line.is-removed,
+.file-version-diff-split-side.is-removed {
+  background: color-mix(in srgb, #ff3b30 12%, transparent);
+}
+
+.file-version-diff-unified-line.is-added > b,
+.file-version-diff-split-side.is-added > b { color: #258148; }
+.file-version-diff-unified-line.is-removed > b,
+.file-version-diff-split-side.is-removed > b { color: #c03b36; }
+
+.file-version-diff mark {
+  color: inherit;
+  background: transparent;
+}
+
+.file-version-diff .is-added mark.is-added,
+.file-version-diff mark.is-added {
+  border-radius: 3px;
+  background: color-mix(in srgb, #34c759 28%, transparent);
+}
+
+.file-version-diff .is-removed mark.is-removed,
+.file-version-diff mark.is-removed {
+  border-radius: 3px;
+  background: color-mix(in srgb, #ff3b30 25%, transparent);
+}
+
+.file-version-diff-omitted {
+  min-height: 24px;
+  padding: 4px 12px;
+  border-block: 1px solid var(--separator);
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-subtle) 86%, var(--surface));
+  font-family: var(--font-family-ui);
+  font-size: 10px;
+  text-align: center;
+}
+
+.file-version-diff-split-heading,
+.file-version-diff-split-row {
+  display: grid;
+  min-width: 580px;
+  grid-template-columns: minmax(290px, 1fr) minmax(290px, 1fr);
+}
+
+.file-version-diff-split-heading {
+  position: sticky;
+  z-index: 2;
+  top: 0;
+  border-bottom: 1px solid var(--separator);
+  background: var(--panel-surface);
+}
+
+.file-version-diff-split-heading > strong {
+  padding: 6px 10px;
+  font-family: var(--font-family-ui);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.file-version-diff-split-heading > strong + strong,
+.file-version-diff-split-side + .file-version-diff-split-side {
+  border-left: 1px solid var(--separator);
+}
+
+.file-version-diff-split-side {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 42px 22px minmax(220px, 1fr);
+}
+
+.file-version-diff-split-side.is-empty {
+  background: color-mix(in srgb, var(--surface-subtle) 72%, transparent);
+}
+
+.file-version-diff-swap:focus-visible,
+.file-version-diff-view-switch > button:focus-visible,
+.file-version-diff-state > button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--highlight) 30%, transparent);
+}
+
+@media (max-width: 760px) {
+  .file-version-diff-controls {
+    grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  }
+
+  .file-version-diff-view-switch {
+    grid-column: 1 / -1;
+    justify-self: end;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-version-diff * { scroll-behavior: auto; }
+}

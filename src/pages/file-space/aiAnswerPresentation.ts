@@ -1,0 +1,55 @@
+export interface AiCitationSource {
+  citationId: string;
+  fileId: string;
+}
+
+export interface FileSpaceAiSourceReference extends AiCitationSource {
+  fileName: string;
+  relativePath: string;
+  versionId: string | null;
+  versionNumber: number | null;
+  excerpt: string;
+  lexicalMatch: boolean;
+  semanticSimilarity: number | null;
+}
+
+export const openBackgroundStatusEventName = "lumetrace:open-background-status";
+
+export function isAiNoSourcesError(errorCode: string | null | undefined) {
+  return errorCode === "ai_no_sources";
+}
+
+export function shouldSelectAiSourceFromClickDetail(detail: number) {
+  return detail < 2;
+}
+
+export function visibleAiAnswer(answer: string) {
+  return answer
+    .replace(/[ \t]*\[S\d+\]/g, "")
+    .replace(/[ \t]+([,.;:!?，。；：！？、])/g, "$1")
+    .trim();
+}
+
+export function referencedAiFiles<T extends AiCitationSource>(sources: readonly T[]) {
+  const referencedFiles: T[] = [];
+  const seenFileIds = new Set<string>();
+
+  for (const source of sources) {
+    if (seenFileIds.has(source.fileId)) continue;
+    seenFileIds.add(source.fileId);
+    referencedFiles.push(source);
+  }
+
+  return referencedFiles;
+}
+
+export function aiAnswerDurationSeconds(
+  durationMs: number | null | undefined,
+  createdAt: number,
+  updatedAt: number,
+) {
+  const elapsedMs = typeof durationMs === "number" && Number.isFinite(durationMs)
+    ? durationMs
+    : updatedAt - createdAt;
+  return Math.max(1, Math.ceil(Math.max(0, elapsedMs) / 1_000));
+}

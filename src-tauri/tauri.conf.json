@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "LumeTrace",
+  "productName": "Lume Trace",
   "version": "0.1.0",
   "identifier": "com.lumetrace.desktop",
   "build": {
@@ -10,10 +10,11 @@
     "frontendDist": "../dist"
   },
   "app": {
-    "macOSPrivateApi": true,
     "windows": [
       {
-        "title": "LumeTrace",
+        "title": "Lume Trace",
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
         "width": 1280,
         "height": 800,
         "minWidth": 920,

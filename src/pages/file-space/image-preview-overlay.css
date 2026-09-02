@@ -1,6 +1,6 @@
 .file-image-preview {
   position: fixed;
-  z-index: 500;
+  z-index: 800;
   inset: 0;
   display: flex;
   min-width: 0;
@@ -22,7 +22,7 @@
 .file-image-preview-toolbar {
   display: flex;
   min-height: 58px;
-  padding: 10px 14px 8px 20px;
+  padding: 10px 14px 8px 76px;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -30,7 +30,10 @@
 
 .file-image-preview-toolbar > div:first-child {
   display: flex;
+  height: 32px;
+  margin-top: -10px;
   min-width: 0;
+  align-self: flex-start;
   align-items: center;
   gap: 9px;
 }
@@ -48,19 +51,6 @@
   flex: 0 0 auto;
   color: rgba(255,255,255,.58);
   font-size: var(--font-size-secondary);
-}
-
-.file-image-preview-workspace {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.file-image-preview-workspace.has-version-timeline {
-  grid-template-columns: clamp(220px, 22vw, 286px) minmax(0, 1fr);
 }
 
 .file-image-preview-controls {
@@ -154,6 +144,9 @@
 }
 
 .file-image-preview-stage > img.is-loaded { opacity: 1; }
+.file-image-preview-canvas.is-wheel-zooming .file-image-preview-stage > img {
+  transition: opacity 160ms ease;
+}
 .file-image-preview-canvas.is-dragging .file-image-preview-stage > img { transition: none; }
 
 .file-image-preview-canvas > p {
@@ -185,7 +178,7 @@
 }
 
 @media (max-width: 680px) {
-  .file-image-preview-toolbar { padding-left: 14px; }
+  .file-image-preview-toolbar { padding-left: 76px; }
   .file-image-preview-toolbar > strong { display: none; }
   .file-image-preview-controls { margin-left: auto; }
   .file-image-preview-canvas { padding: 18px; }

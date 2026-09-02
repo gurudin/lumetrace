@@ -1,6 +1,6 @@
 .file-markdown-preview {
   position: fixed;
-  z-index: 510;
+  z-index: 800;
   inset: 0;
   display: flex;
   min-width: 0;
@@ -24,7 +24,7 @@
 .file-markdown-preview-toolbar {
   display: flex;
   min-height: 60px;
-  padding: 10px 14px 8px 22px;
+  padding: 10px 14px 8px 76px;
   align-items: center;
   justify-content: space-between;
   gap: 18px;
@@ -34,7 +34,10 @@
 
 .file-markdown-preview-title {
   display: flex;
+  height: 32px;
+  margin-top: -10px;
   min-width: 0;
+  align-self: flex-start;
   align-items: center;
   gap: 9px;
 }
@@ -125,19 +128,6 @@
 .file-markdown-preview button:disabled {
   cursor: default;
   opacity: .38;
-}
-
-.file-markdown-preview-workspace {
-  display: grid;
-  min-width: 0;
-  min-height: 0;
-  flex: 1;
-  grid-template-columns: minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.file-markdown-preview-workspace.has-version-timeline {
-  grid-template-columns: clamp(220px, 22vw, 286px) minmax(0, 1fr);
 }
 
 .file-markdown-version-timeline {
@@ -613,7 +603,7 @@
 
 @keyframes file-markdown-spin { to { transform: rotate(360deg); } }
 @media (max-width: 680px) {
-  .file-markdown-preview-toolbar { padding-left: 14px; }
+  .file-markdown-preview-toolbar { padding-left: 76px; }
   .file-markdown-preview-title > small,
   .file-markdown-preview-mode button > svg { display: none; }
   .file-markdown-preview-mode > button { padding-inline: 7px; }
@@ -621,7 +611,9 @@
   .file-markdown-preview-save { font-size: 0; }
   .file-markdown-document { width: min(100% - 30px, 840px); padding-top: 26px; }
   .file-markdown-preview-body > textarea { padding: 20px 18px 56px; }
-  .file-markdown-preview-workspace.has-version-timeline { grid-template-columns: 190px minmax(0, 1fr); }
+  .file-markdown-preview-workspace {
+    --file-preview-version-timeline-target-width: 190px;
+  }
   .file-markdown-version-timeline { padding-inline: 10px 8px; }
   .file-markdown-version-timeline > header { align-items: flex-start; flex-direction: column; gap: 3px; }
 }

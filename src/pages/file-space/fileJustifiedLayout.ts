@@ -45,6 +45,14 @@ interface CalculateJustifiedFileLayoutOptions {
   items: JustifiedFileItem[];
 }
 
+interface CalculateFileListLayoutOptions {
+  containerWidth: number;
+  rowHeight: number;
+  verticalGap: number;
+  previewSize: number;
+  items: JustifiedFileItem[];
+}
+
 interface PreparedItem {
   id: string;
   width: number;
@@ -141,6 +149,40 @@ export function calculateJustifiedFileLayout({
   };
 }
 
+export function calculateFileListLayout({
+  containerWidth,
+  rowHeight,
+  verticalGap,
+  previewSize,
+  items,
+}: CalculateFileListLayoutOptions): JustifiedFileLayout {
+  const width = finiteNonNegative(containerWidth);
+  const cardHeight = finiteNonNegative(rowHeight);
+  const rowGap = finiteNonNegative(verticalGap);
+  const previewHeight = Math.min(cardHeight, finiteNonNegative(previewSize));
+  const placements: Record<string, JustifiedFilePlacement> = {};
+
+  items.forEach((item, index) => {
+    placements[item.id] = {
+      x: 0,
+      y: index * (cardHeight + rowGap),
+      width,
+      previewHeight,
+    };
+  });
+
+  return {
+    previewHeight,
+    detailsHeight: Math.max(0, cardHeight - previewHeight),
+    cardHeight,
+    height: items.length > 0
+      ? items.length * cardHeight + Math.max(0, items.length - 1) * rowGap
+      : 0,
+    rowCount: items.length,
+    placements,
+  };
+}
+
 export function justifiedFileLayoutsEqual(
   left: JustifiedFileLayout | null,
   right: JustifiedFileLayout,
@@ -163,6 +205,34 @@ export function justifiedFileLayoutsEqual(
     && left.placements[id]?.width === right.placements[id].width
     && left.placements[id]?.previewHeight === right.placements[id].previewHeight
   ));
+}
+
+export function visibleJustifiedFileIds(
+  orderedIds: string[],
+  layout: JustifiedFileLayout,
+  viewportTop: number,
+  viewportBottom: number,
+) {
+  const top = finiteNonNegative(viewportTop);
+  const bottom = Math.max(top, finiteNonNegative(viewportBottom));
+  let low = 0;
+  let high = orderedIds.length;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const placement = layout.placements[orderedIds[middle]];
+    if (placement && placement.y + layout.cardHeight < top) low = middle + 1;
+    else high = middle;
+  }
+
+  const visibleIds = [];
+  for (let index = low; index < orderedIds.length; index += 1) {
+    const id = orderedIds[index];
+    const placement = layout.placements[id];
+    if (!placement) continue;
+    if (placement.y > bottom) break;
+    visibleIds.push(id);
+  }
+  return visibleIds;
 }
 
 export function reorderFileIdsForDraggedCard({

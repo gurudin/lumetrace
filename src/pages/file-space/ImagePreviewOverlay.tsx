@@ -4,6 +4,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVersionTimelineRail";
+import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
+import { calculateWheelZoom, normalizeWheelDelta } from "./imagePreviewZoom";
+import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import "./image-preview-overlay.css";
 
 interface ImagePreviewRequest {
@@ -35,41 +38,27 @@ function clampZoom(value: number) {
 }
 
 export function ImagePreviewOverlay() {
-  const { i18n } = useTranslation();
-  const copy = i18n.resolvedLanguage?.startsWith("zh") ? {
-    preview: (name: string) => `预览图片：${name}`,
-    zoomOut: "缩小图片",
-    zoomIn: "放大图片",
-    reset: "恢复适应屏幕",
-    close: "关闭图片预览",
-    loading: "正在载入图片",
-    loadError: "无法载入这张图片。",
-    hint: "滚轮缩放 · 放大后拖动查看 · Esc 关闭",
-    versionHistory: "版本记录",
-    versionCount: (count: number) => `共 ${count} 个版本`,
-    current: "当前版本",
-    userEdit: "用户修改",
-    round: (count: number) => `第 ${count} 轮`,
-    timelineError: "无法读取版本记录",
-    retry: "重试",
-    historical: "历史版本 · 只读",
-  } : {
-    preview: (name: string) => `Preview image: ${name}`,
-    zoomOut: "Zoom out",
-    zoomIn: "Zoom in",
-    reset: "Fit to screen",
-    close: "Close image preview",
-    loading: "Loading image",
-    loadError: "Unable to load this image.",
-    hint: "Scroll to zoom · Drag when zoomed · Esc to close",
-    versionHistory: "Version history",
-    versionCount: (count: number) => `${count} version${count === 1 ? "" : "s"}`,
-    current: "Current",
-    userEdit: "User edit",
-    round: (count: number) => `Round ${count}`,
-    timelineError: "Unable to load version history",
-    retry: "Retry",
-    historical: "Historical version · Read only",
+  const { t, i18n } = useTranslation();
+  const copy = {
+    preview: (name: string) => t("fileSpace.preview.image.dialog", { name }),
+    zoomOut: t("fileSpace.preview.image.zoomOut"),
+    zoomIn: t("fileSpace.preview.image.zoomIn"),
+    reset: t("fileSpace.preview.image.reset"),
+    close: t("fileSpace.preview.image.close"),
+    loading: t("fileSpace.preview.image.loading"),
+    loadError: t("fileSpace.preview.image.loadError"),
+    hint: t("fileSpace.preview.image.hint"),
+    versionHistory: t("fileSpace.preview.common.versionHistory"),
+    showVersionHistory: t("fileSpace.preview.common.showVersionHistory"),
+    hideVersionHistory: t("fileSpace.preview.common.hideVersionHistory"),
+    versionCount: (count: number) => t("fileSpace.preview.common.versionCount", { count }),
+    current: t("fileSpace.preview.common.current"),
+    userEdit: t("fileSpace.preview.common.userEdit"),
+    round: (count: number) => t("fileSpace.preview.common.round", { count }),
+    timelineError: t("fileSpace.preview.common.timelineError"),
+    retry: t("fileSpace.preview.common.retry"),
+    historical: t("fileSpace.preview.common.historical"),
+    timelineLoading: t("fileSpace.preview.common.loading"),
   };
   const [request, setRequest] = useState<ImagePreviewRequest | null>(null);
   const [open, setOpen] = useState(false);
@@ -78,23 +67,49 @@ export function ImagePreviewOverlay() {
   const [loaded, setLoaded] = useState(false);
   const [failed, setFailed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const [wheelZooming, setWheelZooming] = useState(false);
   const [timeline, setTimeline] = useState<ImageTaskTimeline | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionLoading, setVersionLoading] = useState(false);
+  const zoomRef = useRef(1);
+  const pendingWheelDeltaRef = useRef(0);
+  const wheelFrameRef = useRef<number | null>(null);
+  const wheelIdleTimerRef = useRef<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const historicalSourceRef = useRef<string | null>(null);
   const presence = usePresence(open);
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
-  const showTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const hasTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const showTimeline = hasTimeline && timelineVisible;
+
+  const cancelPendingWheelZoom = useCallback(() => {
+    if (wheelFrameRef.current !== null) {
+      window.cancelAnimationFrame(wheelFrameRef.current);
+      wheelFrameRef.current = null;
+    }
+    if (wheelIdleTimerRef.current !== null) {
+      window.clearTimeout(wheelIdleTimerRef.current);
+      wheelIdleTimerRef.current = null;
+    }
+    pendingWheelDeltaRef.current = 0;
+  }, []);
+
+  const stopWheelGesture = useCallback(() => {
+    cancelPendingWheelZoom();
+    setWheelZooming(false);
+  }, [cancelPendingWheelZoom]);
 
   const resetView = useCallback(() => {
+    stopWheelGesture();
+    zoomRef.current = 1;
     setZoom(1);
     setOffset({ x: 0, y: 0 });
-  }, []);
+  }, [stopWheelGesture]);
 
   const loadTimeline = useCallback(async (target: ImagePreviewRequest) => {
     if (!target.hasVersionHistory || target.versionCount <= 0) return;
@@ -140,23 +155,58 @@ export function ImagePreviewOverlay() {
   }, [request, resetView, selectedVersionId, versionLoading]);
 
   const closePreview = useCallback(() => {
+    stopWheelGesture();
     dragRef.current = null;
     setDragging(false);
     setOpen(false);
     window.setTimeout(() => returnFocusRef.current?.focus(), 220);
-  }, []);
+  }, [stopWheelGesture]);
 
-  const updateZoom = useCallback((value: number) => {
-    const nextZoom = clampZoom(value);
+  const updateZoom = useCallback((value: number | ((currentZoom: number) => number)) => {
+    const candidate = typeof value === "function" ? value(zoomRef.current) : value;
+    const nextZoom = clampZoom(candidate);
+    zoomRef.current = nextZoom;
     setZoom(nextZoom);
     if (nextZoom <= 1) setOffset({ x: 0, y: 0 });
   }, []);
 
+  const updateZoomByStep = useCallback((step: number) => {
+    stopWheelGesture();
+    updateZoom((currentZoom) => currentZoom + step);
+  }, [stopWheelGesture, updateZoom]);
+
+  const queueWheelZoom = useCallback((deltaY: number, deltaMode: number) => {
+    const normalizedDelta = normalizeWheelDelta(deltaY, deltaMode);
+    if (normalizedDelta === 0) return;
+
+    pendingWheelDeltaRef.current += normalizedDelta;
+    setWheelZooming(true);
+
+    if (wheelFrameRef.current === null) {
+      wheelFrameRef.current = window.requestAnimationFrame(() => {
+        wheelFrameRef.current = null;
+        const frameDelta = pendingWheelDeltaRef.current;
+        pendingWheelDeltaRef.current = 0;
+        updateZoom((currentZoom) => calculateWheelZoom(currentZoom, frameDelta));
+      });
+    }
+
+    if (wheelIdleTimerRef.current !== null) {
+      window.clearTimeout(wheelIdleTimerRef.current);
+    }
+    wheelIdleTimerRef.current = window.setTimeout(() => {
+      wheelIdleTimerRef.current = null;
+      setWheelZooming(false);
+    }, 120);
+  }, [updateZoom]);
+
+  useEffect(() => cancelPendingWheelZoom, [cancelPendingWheelZoom]);
+
   useEffect(() => {
     const imageCardFromTarget = (target: EventTarget | null) => {
       if (!(target instanceof Element)) return null;
-      const artwork = target.closest<HTMLElement>(".file-space-file-art.has-preview");
-      const button = artwork?.closest<HTMLButtonElement>(".file-space-file-card > button:first-child");
+      const button = target.closest<HTMLButtonElement>(".file-space-file-card > button:first-child");
+      const artwork = button?.querySelector<HTMLElement>(".file-space-file-art.has-preview");
       const image = artwork?.querySelector<HTMLImageElement>("img");
       if (!artwork || !button || !image) return null;
       return { button, image };
@@ -185,6 +235,7 @@ export function ImagePreviewOverlay() {
       resetView();
       setTimeline(null);
       setTimelineError(null);
+      setTimelineVisible(shouldShowVersionTimelineByDefault(target.versionCount));
       setSelectedVersionId(null);
       void loadTimeline(target);
     };
@@ -208,18 +259,19 @@ export function ImagePreviewOverlay() {
     window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === "Escape") closePreview();
-      if (event.key === "+" || event.key === "=") updateZoom(zoom + zoomStep);
-      if (event.key === "-") updateZoom(zoom - zoomStep);
+      if (event.key === "+" || event.key === "=") updateZoomByStep(zoomStep);
+      if (event.key === "-") updateZoomByStep(-zoomStep);
       if (event.key === "0") resetView();
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [closePreview, open, resetView, updateZoom, zoom]);
+  }, [closePreview, open, resetView, updateZoomByStep]);
 
   useEffect(() => {
     if (!presence.mounted) {
       setRequest(null);
       setTimeline(null);
+      setTimelineVisible(false);
       if (historicalSourceRef.current) URL.revokeObjectURL(historicalSourceRef.current);
       historicalSourceRef.current = null;
     }
@@ -272,7 +324,7 @@ export function ImagePreviewOverlay() {
           <button
             type="button"
             disabled={!loaded || failed || zoom <= zoomMin}
-            onClick={() => updateZoom(zoom - zoomStep)}
+            onClick={() => updateZoomByStep(-zoomStep)}
             aria-label={copy.zoomOut}
             title={copy.zoomOut}
           >
@@ -291,7 +343,7 @@ export function ImagePreviewOverlay() {
           <button
             type="button"
             disabled={!loaded || failed || zoom >= zoomMax}
-            onClick={() => updateZoom(zoom + zoomStep)}
+            onClick={() => updateZoomByStep(zoomStep)}
             aria-label={copy.zoomIn}
             title={copy.zoomIn}
           >
@@ -319,13 +371,27 @@ export function ImagePreviewOverlay() {
         </div>
       </header>
 
-      <div className={`file-image-preview-workspace${showTimeline ? " has-version-timeline" : ""}`}>
-        {showTimeline ? <TaskVersionTimelineRail versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={versionLoading} locale={i18n.resolvedLanguage?.startsWith("zh") ? "zh-CN" : "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} tone="dark" copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.loading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} /> : null}
+      <div className={`file-image-preview-workspace file-preview-version-workspace${showTimeline ? " has-version-timeline" : ""}`}>
+        {hasTimeline ? (
+          <VersionTimelineRegion visible={showTimeline}>
+            <TaskVersionTimelineRail id="file-image-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={versionLoading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} tone="dark" copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
+          </VersionTimelineRegion>
+        ) : null}
+        {hasTimeline ? (
+          <VersionTimelineToggle
+            controlsId="file-image-version-timeline"
+            visible={showTimeline}
+            showLabel={copy.showVersionHistory}
+            hideLabel={copy.hideVersionHistory}
+            onToggle={() => setTimelineVisible((visible) => !visible)}
+          />
+        ) : null}
         <div
-        className={`file-image-preview-canvas${zoom > 1 ? " is-zoomed" : ""}${dragging ? " is-dragging" : ""}`}
+        className={`file-image-preview-canvas${zoom > 1 ? " is-zoomed" : ""}${dragging ? " is-dragging" : ""}${wheelZooming ? " is-wheel-zooming" : ""}`}
         onWheel={(event) => {
+          if (!loaded || failed || event.deltaY === 0) return;
           event.preventDefault();
-          updateZoom(zoom + (event.deltaY < 0 ? zoomStep : -zoomStep));
+          queueWheelZoom(event.deltaY, event.deltaMode);
         }}
         onPointerDown={startDrag}
         onPointerMove={moveDrag}

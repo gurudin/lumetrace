@@ -1,0 +1,62 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  aiAnswerDurationSeconds,
+  isAiNoSourcesError,
+  openBackgroundStatusEventName,
+  referencedAiFiles,
+  shouldSelectAiSourceFromClickDetail,
+  visibleAiAnswer,
+} from "../src/pages/file-space/aiAnswerPresentation.ts";
+
+const sources = [
+  { citationId: "S1", fileId: "file-a", fileName: "A.md" },
+  { citationId: "S2", fileId: "file-a", fileName: "A.md" },
+  { citationId: "S3", fileId: "file-b", fileName: "B.docx" },
+];
+
+test("removes citation markers from the visible AI answer", () => {
+  assert.equal(
+    visibleAiAnswer("第一项 [S1][S2]，第二项 [S3]。"),
+    "第一项，第二项。",
+  );
+});
+
+test("lists every retrieved file and deduplicates chunks from the same file", () => {
+  assert.deepEqual(
+    referencedAiFiles(sources).map((source) => source.fileName),
+    ["A.md", "B.docx"],
+  );
+});
+
+test("keeps retrieved files visible even when the model cites only one", () => {
+  assert.deepEqual(
+    referencedAiFiles(sources).map((source) => source.fileName),
+    ["A.md", "B.docx"],
+  );
+});
+
+test("rounds answer processing time up to whole seconds", () => {
+  assert.equal(aiAnswerDurationSeconds(1_001, 0, 0), 2);
+  assert.equal(aiAnswerDurationSeconds(0, 0, 0), 1);
+});
+
+test("falls back to turn timestamps for legacy answers", () => {
+  assert.equal(aiAnswerDurationSeconds(null, 1_000, 3_400), 3);
+});
+
+test("treats no relevant sources as a non-retryable empty answer state", () => {
+  assert.equal(isAiNoSourcesError("ai_no_sources"), true);
+  assert.equal(isAiNoSourcesError("ai_search_failed"), false);
+  assert.equal(isAiNoSourcesError(null), false);
+});
+
+test("uses one event contract to open background task status", () => {
+  assert.equal(openBackgroundStatusEventName, "lumetrace:open-background-status");
+});
+
+test("AI source clicks select once while leaving double-click to open", () => {
+  assert.equal(shouldSelectAiSourceFromClickDetail(0), true);
+  assert.equal(shouldSelectAiSourceFromClickDetail(1), true);
+  assert.equal(shouldSelectAiSourceFromClickDetail(2), false);
+});

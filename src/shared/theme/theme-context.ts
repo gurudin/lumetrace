@@ -1,6 +1,7 @@
 import { createContext } from "react";
 
 export type Theme = "dark" | "light";
+export type ThemePreference = Theme | "system";
 export type UiFont = "system" | "inter" | "pingfang" | "microsoft-yahei";
 
 export interface AppearancePreferences {
@@ -13,7 +14,8 @@ export interface AppearancePreferences {
 
 export interface ThemeContextValue {
   theme: Theme;
-  setTheme: (theme: Theme) => void;
+  themePreference: ThemePreference;
+  setTheme: (theme: ThemePreference) => void;
   toggleTheme: () => void;
   appearance: AppearancePreferences;
   setHighlightColor: (color: string) => void;

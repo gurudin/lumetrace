@@ -1,0 +1,153 @@
+# Lume Trace Development Guide
+
+This document describes the code paths that exist today. It is an implementation guide, not a roadmap.
+
+## Product and storage boundary
+
+Lume Trace is a local-first desktop file workspace. A workspace points to a user-owned physical file root. Lume Trace stores its own SQLite database and immutable version snapshots in the application data directory; these managed files must not replace the user's physical root.
+
+Each workspace has an independent:
+
+- SQLite database;
+- version-snapshot directory;
+- file, folder, Tag, Trash, and manual-order records;
+- extracted-text, FTS5, and semantic-index records;
+- AI turns and source references.
+
+The selected Agent CLI and installed semantic-model setting are copied when a new workspace is created because they are application-level service choices. Workspace content and AI history remain isolated.
+
+## Main implementation areas
+
+| Area | Main files | Current responsibility |
+| --- | --- | --- |
+| Desktop commands and startup | `src-tauri/src/lib.rs` | Registers Tauri commands, background workers, watchers, and plugins. |
+| File operations and versions | `src-tauri/src/file_space.rs` | Physical-file operations, snapshots, version timeline, watcher, Trash, backup, import, search commands, and background status. |
+| Workspace isolation | `src-tauri/src/workspace.rs` | Workspace registry, creation, switching, rename, removal, and managed-data safety checks. |
+| Content extraction | `src-tauri/src/content_extractor.rs` | Plain-text, PDF, DOCX, XLSX, and PPTX text extraction with size limits. |
+| Semantic indexing | `src-tauri/src/semantic_search.rs` | Optional model installation, embedding queue, semantic ranking, status, pause, and retry. |
+| Agent CLI configuration | `src-tauri/src/agent_cli.rs` | CLI discovery, health checks, status classification, and persisted service settings. |
+| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, Hermes execution, history, follow-up context, and citations. |
+| File-space interface | `src/pages/file-space/` | Browser, previews, selection, drag/drop, search, settings, background status, version Diff, Trash, workspaces, and AI panel. |
+| Localization | `src/shared/i18n/locales/` | Eight synchronized language dictionaries. |
+
+## Import and indexing pipeline
+
+File registration and knowledge indexing are intentionally separate:
+
+1. Create or import registers the physical hierarchy and initial file versions.
+2. The user-facing file operation completes without waiting for content extraction.
+3. A background worker extracts readable text from supported formats.
+4. The FTS5 document is updated from the file name, extracted body, Tags, and available trace fields.
+5. If the optional semantic model is installed, a queued worker creates embeddings from the extracted content.
+6. Background status exposes queued, running, completed, failed, paused, and retry states.
+
+Do not move extraction, embedding generation, or recursive whole-workspace work onto the main UI thread. Import progress must remain observable, and large queries must remain bounded.
+
+Hidden directories whose names start with `.` are excluded during recursive folder initialization. The generic importer reads physical files only; it does not inspect another application's SQLite database.
+
+## Search pipeline
+
+Search is index-backed:
+
+1. The frontend sends a query and selected scopes to `search_file_space_files`.
+2. SQLite FTS5 produces a bounded lexical candidate set from filename, body text, and Tags.
+3. When the local semantic model is available, semantic scores can rerank the bounded candidate set.
+4. The frontend receives identifiers and scores, then renders only the required file page/viewport.
+
+Never reintroduce whole-workspace loading, unbounded result returns, or one-DOM-node-per-file rendering. The existing paginated backend and viewport virtualization are stability requirements, not optional optimizations.
+
+## Version tracking
+
+Version creation currently comes from:
+
+- initial registration during existing-folder import;
+- edits saved inside Lume Trace;
+- same-name imports explicitly merged as the latest version;
+- physical-file changes detected by the native watcher or reconciliation scan.
+
+External changes are captured in the background and queued for a user notification. A version records immutable snapshot content and participates in historical preview, current-version switching, Diff, search extraction, and AI source attribution.
+
+When changing file-card click, double-click, selection, or drag behavior, preserve the shared DOM and event contracts used by preview routing, manual ordering, folder moves, and native drag-out.
+
+## AI File Assistant
+
+The current supported execution path is:
+
+```text
+question + recent workspace history
+  -> indexed lexical candidate retrieval
+  -> optional local semantic chunk ranking
+  -> bounded source excerpts with file/version IDs
+  -> read-only Hermes Agent CLI invocation
+  -> persisted answer, duration, and source references
+```
+
+Important boundaries:
+
+- Only Hermes currently executes file-space questions.
+- Claude Code, Codex CLI, and OpenCode can be detected and saved by the service UI, but they are not AI File Assistant runtimes yet.
+- Cloud API and local-model configuration screens are placeholders; their execution and credential-storage paths are not implemented.
+- Only retrieved excerpts are included in the Hermes prompt; the entire workspace is not sent.
+- Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
+- AI execution currently requires the stored permission to be `readOnly`.
+
+## Workspace removal safety
+
+Removing a workspace has two explicit scopes:
+
+1. Remove only the registry entry and leave all Lume Trace-managed data in place.
+2. Remove the registry entry plus that workspace's managed SQLite files and version-snapshot directory.
+
+The physical file root is never a managed-data deletion target. Deletion code validates canonical paths, rejects symbolic links and overlapping workspace storage, removes SQLite sidecars, and cleans the empty managed UUID directory when safe.
+
+## Trash and recovery
+
+Normal deletion moves a file or folder into Lume Trace Trash. Restore targets the recorded original location and requires confirmation. Manual emptying is a separate permanent operation with its own confirmation. Entries are eligible for automatic permanent purge 30 days after deletion.
+
+Changes to this area must keep database state and physical files transactionally consistent and preserve recovery behavior after interruption.
+
+## Desktop UI rules
+
+Read `AGENTS.md` before changing a screen or interaction. Every UI change must be checked against current macOS conventions, including light/dark appearance, keyboard focus, Escape behavior, reduced motion, native-sized controls, selection, drag behavior, scrolling ownership, and dense realistic data.
+
+The interface supports eight synchronized locales:
+
+`zh`, `zhTW`, `en`, `ja`, `ko`, `de`, `fr`, and `es`.
+
+Any user-facing string must be added to all eight dictionaries. Run the localization parity test before claiming completion.
+
+The current sidebar interaction keeps Favorites and My Folders in one scroll owner, alternates the sticky group heading at the section boundary, and supports recursive expand-all/collapse-all for folder subtrees. Preserve these behaviors when changing navigation layout or folder disclosure.
+
+## Development and verification
+
+Run the desktop app only in development mode:
+
+```bash
+npm install
+npm run tauri:dev
+```
+
+Do not install a development build into `/Applications`.
+
+Run the checks appropriate to the change:
+
+```bash
+npm test
+npm run typecheck
+npm run build
+cd src-tauri
+cargo fmt --check
+cargo test --lib
+cargo check
+```
+
+OS-owned interactions such as Finder-to-app drag/drop, app-to-app drag-out, native file dialogs, and macOS permission prompts require a short manual verification when reliable automation is unavailable.
+
+## Not implemented yet
+
+- team identity, roles, permissions, sharing, or concurrent collaboration;
+- NAS or cloud synchronization and conflict resolution;
+- direct OpenAI-compatible API and local-model execution;
+- file-space Q&A through Agent CLIs other than Hermes;
+- Eagle-specific or other application-specific database migration;
+- OCR for image-only documents.

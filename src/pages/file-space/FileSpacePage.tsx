@@ -3,41 +3,112 @@ import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toBlob } from "html-to-image";
 import {
-  ChevronDown,
+  ArrowDownWideNarrow,
+  ArrowUpDown,
+  ArrowUpNarrowWide,
+  ChevronLeft,
   ChevronRight,
   Check,
   Clock3,
   Copy,
+  ChevronsDownUp,
+  ChevronsUpDown,
   File,
   FileImage,
+  FilePlus2,
   FileSpreadsheet,
   FileText,
   Filter,
   Folder,
   FolderPlus,
   FolderOpen,
-  HardDrive,
   LoaderCircle,
+  LayoutGrid,
   Minus,
   Pencil,
+  PanelLeft,
   Plus,
   Search,
   ShieldCheck,
   Tag,
   Trash2,
   Upload,
+  Info,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
 import {
+  FileSpaceAiSurface,
+  type FileSpaceAiSourceReference,
+} from "./FileSpaceAiSurface";
+import { FileSpaceInspector } from "./FileSpaceInspector";
+import {
+  FileSpaceSearchPanel,
+  type FileSpaceSearchFile,
+  type FileSpaceSearchMatch,
+} from "./FileSpaceSearchPanel";
+import { FileSpaceSettingsMenu } from "./FileSpaceSettingsMenu";
+import { FileSpaceTrashView, type FileSpaceTrashItemRecord } from "./FileSpaceTrashView";
+import {
+  FileSpaceWorkspaceStatus,
+  type FileSpaceWorkspaceDirectory,
+  type FileSpaceWorkspaceMutation,
+} from "./FileSpaceWorkspaceMenu";
+import { FileVersionDiff, type VersionDiffStatus } from "./FileVersionDiff";
+import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
+import { SetupPreferences } from "./SetupPreferences";
+import { globalSearchShortcutLabel } from "./globalSearchShortcut";
+import {
+  calculateFileListLayout,
   calculateJustifiedFileLayout,
   justifiedFileLayoutsEqual,
   reorderFileIdsForDraggedCard,
+  visibleJustifiedFileIds,
   type JustifiedFileLayout,
 } from "./fileJustifiedLayout";
+import {
+  fileCardMetadataText,
+  fileDocumentArtworkFormat,
+  shouldShowFileVersionBadge,
+  type FileDocumentArtworkFormat,
+  type FileImageDimensions,
+} from "./fileCardPresentation";
+import {
+  combineMarqueeSelection,
+  normalizeSelectionRectangle,
+  orderedSelection,
+  pointInScrollContent,
+  pruneSelection,
+  rectanglesIntersect,
+  resolveFileClickSelection,
+  selectionVisibilityWithPendingReveal,
+  setsEqual,
+  type FileSelectionMode,
+} from "./fileSelection";
+import {
+  canActivateFileReorder,
+  decideFileDragHandoff,
+  hasMeaningfulFileReorderMovement,
+} from "./fileDragRouting";
+import {
+  expandableFolderIdsInSubtree,
+  isFolderSubtreeFullyExpanded,
+  setFolderSubtreeExpanded,
+  toggleFolderOnDoubleClick,
+} from "./folderTreeExpansion";
+import {
+  defaultVersionComparison,
+  diffTextVersions,
+  type VersionDiffResult,
+} from "./versionDiff";
+import {
+  mergeVersionNotifications,
+  type FileSpaceVersionNotification,
+} from "./versionNotification";
 
 interface FileSpaceFolderRecord {
   id: string;
@@ -45,6 +116,9 @@ interface FileSpaceFolderRecord {
   name: string;
   relativePath: string;
   manualOrder: number;
+  directFileCount?: number;
+  fileCount?: number;
+  childFolderCount?: number;
   createdAt: number;
   updatedAt: number;
 }
@@ -102,17 +176,43 @@ interface FileSpaceSnapshot {
   rootPath: string | null;
   rootName: string | null;
   rootStatus: "unconfigured" | "ready" | "missing" | "notDirectory" | "notWritable";
+  fileCount: number;
+  tags: string[];
   folders: FileSpaceFolderRecord[];
   files: FileSpaceFileRecord[];
+  trashItems: FileSpaceTrashItemRecord[];
 }
 
+interface FileSpaceFilePageCursor {
+  sort: SortOption;
+  number: number | null;
+  text: string | null;
+  secondaryText: string | null;
+  id: string;
+}
+
+interface FileSpaceFilePage {
+  files: FileSpaceFileRecord[];
+  totalCount: number;
+  nextCursor: FileSpaceFilePageCursor | null;
+}
+
+interface FileSpaceCreatedFileResult {
+  file: FileSpaceFileRecord;
+  snapshot: FileSpaceSnapshot;
+}
+
+type FileSpaceCollection = "files" | "trash";
 type TypeFilter = "all" | "document" | "image" | "sheet";
 type SearchScope = "name" | "content" | "tag";
 type TimeFilter = "all" | "today" | "week" | "month" | "year";
 type SortOption = "manual" | "updatedDesc" | "updatedAsc" | "nameAsc" | "nameDesc" | "sizeDesc" | "typeAsc";
+type FileLayoutMode = "adaptive" | "list";
 type FolderContextMenu = { folderId: string; x: number; y: number };
 type FileContextMenu = { fileId: string; x: number; y: number };
-type FileSpaceBusyAction = "configure" | "create" | "rename" | "delete" | "import" | "fileAction" | "reorder" | "moveFolder" | "moveFile";
+type ContentContextMenu = { x: number; y: number };
+type NewTextFileFormat = "md" | "txt";
+type FileSpaceBusyAction = "configure" | "create" | "rename" | "delete" | "restore" | "purgeTrash" | "import" | "fileAction" | "reorder" | "moveFolder" | "moveFile";
 type RootSetupMode = "new" | "import";
 type FileSpaceOperation = {
   token: symbol;
@@ -130,9 +230,29 @@ interface FileSpaceImportFeedback {
 }
 
 interface FileMoveFeedback {
-  fileName: string;
+  fileName: string | null;
+  fileCount: number;
   destinationName: string;
   status: "moved" | "unchanged";
+}
+
+interface FileMoveFailure {
+  fileId: string;
+  message: string;
+}
+
+interface FileMoveResult {
+  snapshot: FileSpaceSnapshot;
+  movedIds: string[];
+  unchangedIds: string[];
+  failed: FileMoveFailure[];
+}
+
+interface FileSpaceTrashPurgeResult {
+  snapshot: FileSpaceSnapshot;
+  purgedCount: number;
+  failedCount: number;
+  failureMessage: string | null;
 }
 
 interface BrowserDroppedFile {
@@ -145,8 +265,44 @@ interface FileSpaceDroppedFilePayload {
   bytes: number[];
 }
 
+interface FileSpaceDroppedFileConflict {
+  relativePath: string;
+  fileName: string;
+  existingFileId: string;
+  existingVersion: number;
+  existingSizeBytes: number;
+  incomingSizeBytes: number;
+  identical: boolean;
+}
+
+interface FileSpaceDroppedFileConflictInspection {
+  conflicts: FileSpaceDroppedFileConflict[];
+}
+
+interface IdenticalImportFile {
+  fileId: string;
+  fileName: string;
+}
+
+interface IdenticalImportNotice {
+  files: IdenticalImportFile[];
+}
+
+interface PendingFileImportConflict {
+  requestId: string;
+  folderId: string | null;
+  source:
+    | { kind: "paths"; paths: string[] }
+    | { kind: "droppedFiles"; files: FileSpaceDroppedFilePayload[] };
+  conflicts: FileSpaceDroppedFileConflict[];
+  identicalFiles: IdenticalImportFile[];
+}
+
+type FileImportConflictAction = "rename" | "latestVersion";
+
 interface FileDragGesture {
   fileId: string;
+  fileIds: string[];
   pointerId: number;
   startX: number;
   startY: number;
@@ -157,10 +313,17 @@ interface FileDragGesture {
   target: HTMLButtonElement;
   orderedIds: string[];
   phase: "pending" | "reordering";
+  preview: PreparedFileDragPreview | null;
+}
+
+interface PreparedFileDragPreview {
+  immediateBytes: number[] | null;
+  promise: Promise<number[] | null>;
 }
 
 interface InternalFileDrag {
   fileId: string;
+  fileIds: string[];
   pointerId: number;
   pointerX: number;
   pointerY: number;
@@ -171,6 +334,32 @@ interface InternalFileDrag {
   originalIds: string[];
   orderedIds: string[];
   folderTarget: FileFolderDropTarget | null;
+}
+
+interface FileMarqueeGesture {
+  pointerId: number;
+  startX: number;
+  startY: number;
+  startClientX: number;
+  startClientY: number;
+  lastClientX: number;
+  lastClientY: number;
+  baselineIds: Set<string>;
+  baselineAnchorId: string | null;
+  mode: FileSelectionMode;
+  phase: "pending" | "selecting";
+}
+
+interface FileSelectionMarquee {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
+interface PointerSelectionIntent {
+  fileId: string;
+  collapseOnClick: boolean;
 }
 
 interface FileFolderDropTarget {
@@ -217,12 +406,19 @@ const emptySnapshot: FileSpaceSnapshot = {
   rootPath: null,
   rootName: null,
   rootStatus: "unconfigured",
+  fileCount: 0,
+  tags: [],
   folders: [],
   files: [],
+  trashItems: [],
 };
 const currentFolderStorageKey = "lumetrace.file-space.current-folder";
 const previewSizeStorageKey = "lumetrace.file-space.preview-size";
 const sortOptionStorageKey = "lumetrace.file-space.sort-option";
+const fileLayoutModeStorageKey = "lumetrace.file-space.layout-mode";
+const inspectorVisibilityStorageKey = "lumetrace.file-space.inspector-visible";
+const trashRetentionMs = 30 * 24 * 60 * 60 * 1000;
+const maxTrashCleanupTimerMs = 2_147_000_000;
 const folderDragThreshold = 5;
 const previewSizeMin = 120;
 const previewSizeMax = 260;
@@ -231,9 +427,20 @@ const previewSizeDefault = 155;
 const fileLayoutHorizontalGap = 15;
 const fileLayoutVerticalGap = 18;
 const filePreviewDetailsGap = 9;
+const filePageLimit = 160;
+const fileVirtualOverscan = 900;
+const fileDetailsHeightFallback = 38;
+const fileListPreviewSize = 42;
+const fileListRowHeight = 52;
+const fileListVerticalGap = 2;
 const fileDragThreshold = 6;
+const fileReorderCommitThreshold = 24;
+const fileMarqueeThreshold = 5;
+const fileMarqueeScrollInset = 34;
+const fileMarqueeMaxScrollSpeed = 18;
 const fileDragWindowExitMargin = 1;
 const fileDragPreviewMaxSize = 160;
+const maxVersionDiffTextBytes = 5 * 1024 * 1024;
 
 function pngDataUrlBytes(dataUrl: string) {
   const encoded = dataUrl.split(",")[1];
@@ -262,6 +469,83 @@ function imageDragPreviewBytes(target: HTMLButtonElement) {
   }
 }
 
+function fallbackFileDragPreviewBytes(target: HTMLButtonElement) {
+  const artwork = target.querySelector<HTMLElement>(".file-space-file-art");
+  if (!artwork) return null;
+  const { width, height } = artwork.getBoundingClientRect();
+  if (width <= 0 || height <= 0) return null;
+  const scale = Math.min(1, fileDragPreviewMaxSize / Math.max(width, height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.round(width * scale));
+  canvas.height = Math.max(1, Math.round(height * scale));
+  const context = canvas.getContext("2d");
+  if (!context) return null;
+
+  const dark = document.documentElement.dataset.theme === "dark";
+  const inset = Math.max(1, Math.round(Math.min(canvas.width, canvas.height) * 0.025));
+  const radius = Math.max(7, Math.round(Math.min(canvas.width, canvas.height) * 0.065));
+  const extension = target.title.includes(".")
+    ? target.title.split(".").pop()?.toUpperCase().slice(0, 5) ?? "FILE"
+    : "FILE";
+  const label = artwork.querySelector<HTMLElement>(
+    ".file-space-format-kicker, .file-space-archive-document > em, small",
+  )?.textContent?.trim() || extension;
+  const title = artwork.querySelector<HTMLElement>(".file-space-format-title")
+    ?.textContent?.trim() || target.title.replace(/\.[^.]+$/, "");
+
+  try {
+    context.beginPath();
+    context.roundRect(
+      inset,
+      inset,
+      canvas.width - inset * 2,
+      canvas.height - inset * 2,
+      radius,
+    );
+    context.fillStyle = dark ? "#303136" : "#f7f7f6";
+    context.fill();
+    context.lineWidth = Math.max(1, Math.round(scale));
+    context.strokeStyle = dark ? "#515259" : "#d6d6d8";
+    context.stroke();
+
+    const padding = Math.max(10, Math.round(canvas.width * 0.1));
+    context.fillStyle = dark ? "#d6b3bf" : "#98697a";
+    context.font = `700 ${Math.max(11, Math.round(canvas.height * 0.09))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    context.textBaseline = "top";
+    context.fillText(label.slice(0, 5), padding, padding, canvas.width - padding * 2);
+
+    context.fillStyle = dark ? "#ececef" : "#343438";
+    context.font = `600 ${Math.max(10, Math.round(canvas.height * 0.075))}px -apple-system, BlinkMacSystemFont, sans-serif`;
+    const titleY = Math.round(canvas.height * 0.36);
+    const maxTitleWidth = canvas.width - padding * 2;
+    const originalTitle = title || target.title || extension;
+    let displayTitle = originalTitle;
+    while (displayTitle.length > 1 && context.measureText(displayTitle).width > maxTitleWidth) {
+      displayTitle = displayTitle.slice(0, -1);
+    }
+    if (displayTitle !== originalTitle && displayTitle.length > 1) {
+      displayTitle = `${displayTitle.slice(0, -1)}…`;
+    }
+    context.fillText(displayTitle, padding, titleY, maxTitleWidth);
+
+    context.fillStyle = dark ? "#5c5d63" : "#d9d9dc";
+    const lineHeight = Math.max(3, Math.round(canvas.height * 0.025));
+    const lineGap = Math.max(6, Math.round(canvas.height * 0.065));
+    const lineTop = Math.round(canvas.height * 0.62);
+    [1, 0.78, 0.9].forEach((lineScale, index) => {
+      context.fillRect(
+        padding,
+        lineTop + index * lineGap,
+        Math.round(maxTitleWidth * lineScale),
+        lineHeight,
+      );
+    });
+    return pngDataUrlBytes(canvas.toDataURL("image/png"));
+  } catch {
+    return null;
+  }
+}
+
 async function fileDragPreviewBytes(target: HTMLButtonElement) {
   const imagePreview = imageDragPreviewBytes(target);
   if (imagePreview) return imagePreview;
@@ -283,6 +567,19 @@ async function fileDragPreviewBytes(target: HTMLButtonElement) {
   } catch {
     return null;
   }
+}
+
+function prepareFileDragPreview(target: HTMLButtonElement): PreparedFileDragPreview {
+  const immediateBytes = imageDragPreviewBytes(target) ?? fallbackFileDragPreviewBytes(target);
+  const preview: PreparedFileDragPreview = {
+    immediateBytes,
+    promise: Promise.resolve(immediateBytes),
+  };
+  preview.promise = fileDragPreviewBytes(target).then((bytes) => {
+    if (bytes) preview.immediateBytes = bytes;
+    return bytes ?? preview.immediateBytes;
+  });
+  return preview;
 }
 
 function createImportRequestId() {
@@ -420,7 +717,11 @@ const sortOptions: SortOption[] = [
 
 function storedSortOption(): SortOption {
   const value = window.localStorage.getItem(sortOptionStorageKey) as SortOption | null;
-  return value && sortOptions.includes(value) ? value : "updatedDesc";
+  return value && sortOptions.includes(value) ? value : "manual";
+}
+
+function storedFileLayoutMode(): FileLayoutMode {
+  return window.localStorage.getItem(fileLayoutModeStorageKey) === "list" ? "list" : "adaptive";
 }
 
 function sameOrder(left: string[], right: string[]) {
@@ -445,10 +746,12 @@ function reorderedIdsAtPointer(
   cardWidth: number,
   cardHeight: number,
 ) {
-  const withoutDragged = orderedIds.filter((id) => id !== draggedId);
-  const candidates = withoutDragged.flatMap((id) => {
+  const candidateIds = new Set<string>();
+  const candidates = orderedIds.flatMap((id) => {
+    if (id === draggedId) return [];
     const card = grid.querySelector<HTMLElement>(`.file-space-file-card[data-file-id="${CSS.escape(id)}"]`);
     if (!card) return [];
+    candidateIds.add(id);
     const rect = card.getBoundingClientRect();
     return [{
       id,
@@ -458,13 +761,20 @@ function reorderedIdsAtPointer(
       bottom: rect.bottom,
     }];
   });
-  return reorderFileIdsForDraggedCard({
-    orderedIds,
+  const windowIds = orderedIds.filter((id) => id === draggedId || candidateIds.has(id));
+  if (windowIds.length < 2) return orderedIds;
+  const reorderedWindowIds = reorderFileIdsForDraggedCard({
+    orderedIds: windowIds,
     draggedId,
     candidates,
     draggedCenterX: clientX - offsetX + cardWidth / 2,
     draggedCenterY: clientY - offsetY + cardHeight / 2,
   });
+  const windowIdSet = new Set(windowIds);
+  let windowIndex = 0;
+  return orderedIds.map((id) => (
+    windowIdSet.has(id) ? reorderedWindowIds[windowIndex++] : id
+  ));
 }
 
 function optimisticManualOrder(snapshot: FileSpaceSnapshot, orderedIds: string[]) {
@@ -533,13 +843,85 @@ function createVisualFixture(): FileSpaceSnapshot {
     createdAt: now - index * 86_400_000,
     updatedAt: now - index * 86_400_000,
   }));
+  const trashItems = Array.from({ length: 12 }, (_, index): FileSpaceTrashItemRecord => ({
+    id: `fixture-trash-${index}`,
+    rootId: `fixture-trash-root-${index}`,
+    itemType: index % 3 === 0 ? "folder" : "file",
+    name: index % 3 === 0
+      ? `归档项目 ${String(index + 1).padStart(2, "0")}`
+      : `已删除的研究资料-${String(index + 1).padStart(2, "0")}.${extensions[index % extensions.length]}`,
+    originalRelativePath: index % 3 === 0
+      ? `Clipboard X/归档项目 ${String(index + 1).padStart(2, "0")}`
+      : `Clipboard X/市场调研/已删除的研究资料-${String(index + 1).padStart(2, "0")}.${extensions[index % extensions.length]}`,
+    sizeBytes: (index + 1) * 148_000,
+    fileCount: index % 3 === 0 ? index + 2 : 1,
+    folderCount: index % 3 === 0 ? 2 + (index % 4) : 0,
+    versionCount: index % 3 === 0 ? index + 2 : 1 + (index % 4),
+    trashedAt: now - index * 4_200_000,
+  }));
   return {
-    rootPath: "/Users/example/Documents/LumeTrace",
-    rootName: "LumeTrace",
+    rootPath: "/Users/example/Documents/Lume Trace",
+    rootName: "Lume Trace",
     rootStatus: "ready",
+    fileCount: files.length,
+    tags: [...new Set(files.flatMap((file) => file.tags))],
     folders,
     files,
+    trashItems,
   };
+}
+
+function createVisualTimeline(file: FileSpaceFileRecord): TaskFileTimelineRecord | null {
+  if (file.versionCount < 1) return null;
+  const versions = Array.from({ length: file.versionCount }, (_, index): TaskFileVersionRecord => {
+    const versionNumber = file.versionCount - index;
+    return {
+      id: `${file.id}-version-${versionNumber}`,
+      versionNumber,
+      name: file.name,
+      mimeType: file.mimeType,
+      sizeBytes: file.sizeBytes,
+      origin: versionNumber % 2 === 0 ? "user_edit" : "task",
+      taskId: versionNumber % 2 === 0 ? null : "fixture-task",
+      taskTitle: versionNumber % 2 === 0 ? null : "产品调研任务",
+      roundNumber: versionNumber % 2 === 0 ? null : versionNumber,
+      cellId: versionNumber % 2 === 0 ? null : "fixture-cell",
+      cellName: versionNumber % 2 === 0 ? null : "Research Cell",
+      producedAt: file.updatedAt - index * 86_400_000,
+      isCurrent: versionNumber === file.currentVersion,
+    };
+  });
+  return {
+    fileId: file.id,
+    logicalKey: file.relativePath,
+    currentVersionId: versions.find((version) => version.isCurrent)?.id ?? versions[0].id,
+    versions,
+    events: [],
+  };
+}
+
+function createVisualVersionContent(file: FileSpaceFileRecord, version: TaskFileVersionRecord) {
+  const lines = [
+    `# ${file.name}`,
+    "",
+    `版本：v${version.versionNumber}`,
+    "状态：整理中",
+    "",
+    "## 研究目标",
+    "确认目标用户最常见的文件版本管理问题。",
+    "",
+    "## 结论",
+    "文件需要保留来源、修改历史和当前版本。",
+  ];
+  if (version.versionNumber >= 2) {
+    lines[3] = "状态：已完成初步验证";
+    lines.push("", "新增：版本比较需要明确标记增加、删除和修改内容。");
+  }
+  if (version.versionNumber >= 3) {
+    lines[6] = "确认小团队在共享文件时最常见的版本冲突问题。";
+    lines.push("新增：比较结果必须能够定位到具体行。", "待办：补充真实用户案例。");
+  }
+  return `${lines.join("\n")}\n`;
 }
 
 function errorText(error: unknown) {
@@ -572,9 +954,22 @@ function fileCategory(file: FileSpaceFileRecord): Exclude<TypeFilter, "all"> | "
     mime.startsWith("text/") ||
     mime.includes("pdf") ||
     mime.includes("word") ||
-    ["md", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(extension)
+    ["md", "markdown", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(extension)
   ) return "document";
   return "other";
+}
+
+function fileCardMetadata(file: FileSpaceFileRecord, imageDimensions?: FileImageDimensions) {
+  return fileCardMetadataText(
+    formatFileSize(file.sizeBytes),
+    fileCategory(file) === "image",
+    file.updatedAt,
+    imageDimensions,
+  );
+}
+
+function imageDimensionsKey(fileId: string, fileUpdatedAt: number) {
+  return `${fileId}:${fileUpdatedAt}`;
 }
 
 function fileIcon(file: FileSpaceFileRecord) {
@@ -585,7 +980,7 @@ function fileIcon(file: FileSpaceFileRecord) {
   return File;
 }
 
-type FileArtworkFormat = "md" | "pdf" | "html" | "xlsx" | "csv" | "docx" | "txt" | "archive";
+type FileArtworkFormat = FileDocumentArtworkFormat | "archive";
 type ArchiveArtworkExtension = "zip" | "zipx" | "7z" | "rar" | "tar";
 
 const archiveArtworkExtensions: ArchiveArtworkExtension[] = ["zip", "zipx", "7z", "rar", "tar"];
@@ -602,7 +997,7 @@ function fileArchiveExtension(file: FileSpaceFileRecord): ArchiveArtworkExtensio
 function fileArtworkFormat(file: FileSpaceFileRecord): FileArtworkFormat | null {
   const extension = fileExtension(file);
   if (fileArchiveExtension(file)) return "archive";
-  return (["md", "pdf", "html", "xlsx", "csv", "docx", "txt"] as const).find((format) => format === extension) ?? null;
+  return fileDocumentArtworkFormat(extension);
 }
 
 function defaultFilePreviewAspectRatio(file: FileSpaceFileRecord) {
@@ -641,7 +1036,13 @@ function filePreviewSource(file: FileSpaceFileRecord) {
   return convertFileSrc(file.id, "lumetrace-file-preview");
 }
 
-function FileArtwork({ file }: { file: FileSpaceFileRecord }) {
+function FileArtwork({
+  file,
+  onImageDimensions,
+}: {
+  file: FileSpaceFileRecord;
+  onImageDimensions?: (fileId: string, fileUpdatedAt: number, width: number, height: number) => void;
+}) {
   const { t } = useTranslation();
   const Icon = fileIcon(file);
   const artworkFormat = fileArtworkFormat(file);
@@ -649,6 +1050,9 @@ function FileArtwork({ file }: { file: FileSpaceFileRecord }) {
   const artworkTitle = fileArtworkTitle(file);
   const previewSource = filePreviewSource(file);
   const [previewFailed, setPreviewFailed] = useState(false);
+  useEffect(() => {
+    setPreviewFailed(false);
+  }, [file.id, file.updatedAt, previewSource]);
   const showPreview = Boolean(previewSource) && !previewFailed;
   return (
     <span className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}`}>
@@ -660,13 +1064,19 @@ function FileArtwork({ file }: { file: FileSpaceFileRecord }) {
           loading="lazy"
           decoding="async"
           draggable={false}
+          onLoad={(event) => {
+            const { naturalWidth, naturalHeight } = event.currentTarget;
+            if (naturalWidth > 0 && naturalHeight > 0) {
+              onImageDimensions?.(file.id, file.updatedAt, naturalWidth, naturalHeight);
+            }
+          }}
           onError={() => setPreviewFailed(true)}
         />
       ) : artworkFormat ? (
         <span className={`file-space-format-art is-${artworkFormat}`}>
           {artworkFormat !== "archive" ? (
             <span className="file-space-format-kicker">
-              {artworkFormat === "md" ? "MARKDOWN" : artworkFormat.toUpperCase()}
+              {artworkFormat === "md" ? "MD" : artworkFormat.toUpperCase()}
             </span>
           ) : null}
           {artworkFormat === "md" || artworkFormat === "pdf" ? (
@@ -710,7 +1120,7 @@ function FileArtwork({ file }: { file: FileSpaceFileRecord }) {
           <small>{file.name.split(".").pop()?.toUpperCase().slice(0, 5)}</small>
         </>
       )}
-      {file.versionCount > 0 ? (
+      {shouldShowFileVersionBadge(file.versionCount) ? (
         <span className="file-space-file-version-count">
           {t("fileSpace.content.versionCount", { count: file.versionCount })}
         </span>
@@ -743,9 +1153,31 @@ function compareFiles(left: FileSpaceFileRecord, right: FileSpaceFileRecord, sor
   return left.name.localeCompare(right.name, locale);
 }
 
+function FolderTreeChildren({
+  expanded,
+  renderChildren,
+}: {
+  expanded: boolean;
+  renderChildren: () => React.ReactNode;
+}) {
+  const presence = usePresence(expanded, 140);
+  if (!presence.mounted) return null;
+  return (
+    <div
+      className="file-space-tree-children"
+      data-state={presence.state}
+      aria-hidden={presence.state === "closed"}
+    >
+      <div>{renderChildren()}</div>
+    </div>
+  );
+}
+
 export function FileSpacePage() {
   const { t, i18n } = useTranslation();
   const [snapshot, setSnapshot] = useState<FileSpaceSnapshot>(emptySnapshot);
+  const [workspaceDirectory, setWorkspaceDirectory] = useState<FileSpaceWorkspaceDirectory | null>(null);
+  const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
   const [busyAction, setBusyAction] = useState<FileSpaceBusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -754,8 +1186,10 @@ export function FileSpacePage() {
   const [currentFolderId, setCurrentFolderId] = useState<string | null>(() => (
     window.localStorage.getItem(currentFolderStorageKey)
   ));
+  const [activeCollection, setActiveCollection] = useState<FileSpaceCollection>("files");
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(new Set());
   const [query, setQuery] = useState("");
+  const [isGlobalSearchOpen, setGlobalSearchOpen] = useState(false);
   const [typeFilter, setTypeFilter] = useState<TypeFilter>("all");
   const [searchScopes, setSearchScopes] = useState<SearchScope[]>(["name", "content", "tag"]);
   const [searchResult, setSearchResult] = useState<{ key: string; ids: Set<string> } | null>(null);
@@ -763,8 +1197,16 @@ export function FileSpacePage() {
   const [tagFilter, setTagFilter] = useState("all");
   const [timeFilter, setTimeFilter] = useState<TimeFilter>("all");
   const [sortOption, setSortOption] = useState<SortOption>(storedSortOption);
+  const [fileLayoutMode, setFileLayoutMode] = useState<FileLayoutMode>(storedFileLayoutMode);
   const [previewSize, setPreviewSize] = useState(storedPreviewSize);
   const [fileJustifiedLayout, setFileJustifiedLayout] = useState<JustifiedFileLayout | null>(null);
+  const [filePageCursor, setFilePageCursor] = useState<FileSpaceFilePageCursor | null>(null);
+  const [filePageTotal, setFilePageTotal] = useState(0);
+  const [filePageLoading, setFilePageLoading] = useState(false);
+  const [filePageRevision, setFilePageRevision] = useState(0);
+  const [fileRevealRevision, setFileRevealRevision] = useState(0);
+  const [fileVirtualViewport, setFileVirtualViewport] = useState({ top: 0, bottom: 2_000 });
+  const [imageDimensionsByFileVersion, setImageDimensionsByFileVersion] = useState<Record<string, FileImageDimensions>>({});
   const [isFilterMenuOpen, setFilterMenuOpen] = useState(false);
   const [isCreateFolderOpen, setCreateFolderOpen] = useState(false);
   const [createParentId, setCreateParentId] = useState<string | null>(null);
@@ -774,6 +1216,10 @@ export function FileSpacePage() {
   const [deleteFolderId, setDeleteFolderId] = useState<string | null>(null);
   const [folderContextMenu, setFolderContextMenu] = useState<FolderContextMenu | null>(null);
   const [fileContextMenu, setFileContextMenu] = useState<FileContextMenu | null>(null);
+  const [contentContextMenu, setContentContextMenu] = useState<ContentContextMenu | null>(null);
+  const [createFileFormat, setCreateFileFormat] = useState<NewTextFileFormat | null>(null);
+  const [createFileParentId, setCreateFileParentId] = useState<string | null>(null);
+  const [createFileName, setCreateFileName] = useState("");
   const [renameFileId, setRenameFileId] = useState<string | null>(null);
   const [renameFileName, setRenameFileName] = useState("");
   const [deleteFileId, setDeleteFileId] = useState<string | null>(null);
@@ -784,45 +1230,273 @@ export function FileSpacePage() {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionPreview, setVersionPreview] = useState<string | null>(null);
   const [timelineBusy, setTimelineBusy] = useState(false);
+  const [isTimelinePanelOpen, setTimelinePanelOpen] = useState(false);
+  const [diffBeforeVersionId, setDiffBeforeVersionId] = useState<string | null>(null);
+  const [diffAfterVersionId, setDiffAfterVersionId] = useState<string | null>(null);
+  const [versionDiffStatus, setVersionDiffStatus] = useState<VersionDiffStatus>("idle");
+  const [versionDiffResult, setVersionDiffResult] = useState<VersionDiffResult | null>(null);
+  const [versionDiffError, setVersionDiffError] = useState<string | null>(null);
+  const [versionDiffRetryToken, setVersionDiffRetryToken] = useState(0);
   const [isFileDragOver, setFileDragOver] = useState(false);
   const [internalFileDrag, setInternalFileDrag] = useState<InternalFileDrag | null>(null);
   const [internalFolderDrag, setInternalFolderDrag] = useState<InternalFolderDrag | null>(null);
   const [importFeedback, setImportFeedback] = useState<FileSpaceImportFeedback | null>(null);
   const [fileMoveFeedback, setFileMoveFeedback] = useState<FileMoveFeedback | null>(null);
+  const [trashFeedback, setTrashFeedback] = useState<string | null>(null);
+  const [importConflictFeedback, setImportConflictFeedback] = useState<IdenticalImportNotice | null>(null);
+  const [versionNotifications, setVersionNotifications] = useState<FileSpaceVersionNotification[]>([]);
+  const versionNotification = versionNotifications[0] ?? null;
+  const [restoreConfirmationEntryId, setRestoreConfirmationEntryId] = useState<string | null>(null);
+  const [isEmptyTrashConfirmationOpen, setEmptyTrashConfirmationOpen] = useState(false);
+  const [emptyTrashEntryIds, setEmptyTrashEntryIds] = useState<string[]>([]);
+  const [restoringTrashEntryId, setRestoringTrashEntryId] = useState<string | null>(null);
+  const [selectedFileIds, setSelectedFileIds] = useState<Set<string>>(new Set());
+  const [selectionMarquee, setSelectionMarquee] = useState<FileSelectionMarquee | null>(null);
+  const [selectionAnnouncement, setSelectionAnnouncement] = useState("");
+  const [inspectorTimeline, setInspectorTimeline] = useState<TaskFileTimelineRecord | null>(null);
+  const [inspectorTimelineLoading, setInspectorTimelineLoading] = useState(false);
+  const [isSidebarVisible, setSidebarVisible] = useState(() => window.matchMedia("(min-width: 981px)").matches);
+  const [isInspectorVisible, setInspectorVisible] = useState(() => (
+    window.localStorage.getItem(inspectorVisibilityStorageKey) !== "false"
+  ));
+  const [pendingImportPath, setPendingImportPath] = useState<string | null>(null);
+  const [pendingFileImportConflict, setPendingFileImportConflict] = useState<PendingFileImportConflict | null>(null);
+  const recordImageDimensions = useCallback((fileId: string, fileUpdatedAt: number, width: number, height: number) => {
+    setImageDimensionsByFileVersion((current) => {
+      const key = imageDimensionsKey(fileId, fileUpdatedAt);
+      const previous = current[key];
+      if (
+        previous?.fileUpdatedAt === fileUpdatedAt
+        && previous.width === width
+        && previous.height === height
+      ) return current;
+      return { ...current, [key]: { fileUpdatedAt, width, height } };
+    });
+  }, []);
   const folderNameRef = useRef<HTMLInputElement>(null);
+  const createFileNameRef = useRef<HTMLInputElement>(null);
   const renameFolderNameRef = useRef<HTMLInputElement>(null);
   const renameFileNameRef = useRef<HTMLInputElement>(null);
   const tagDraftRef = useRef<HTMLInputElement>(null);
+  const deleteFolderCancelRef = useRef<HTMLButtonElement>(null);
+  const deleteFileCancelRef = useRef<HTMLButtonElement>(null);
+  const restoreTrashCancelRef = useRef<HTMLButtonElement>(null);
+  const emptyTrashCancelRef = useRef<HTMLButtonElement>(null);
+  const importConflictCancelRef = useRef<HTMLButtonElement>(null);
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null);
+  const dialogFallbackFocusRef = useRef<HTMLElement | null>(null);
+  const dialogWasOpenRef = useRef(false);
+  const dialogRestorePendingRef = useRef(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const contentDropZoneRef = useRef<HTMLDivElement>(null);
   const fileGridRef = useRef<HTMLDivElement>(null);
+  const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const folderTreeRef = useRef<HTMLDivElement>(null);
+  const timelinePanelRef = useRef<HTMLElement>(null);
+  const importExistingTriggerRef = useRef<HTMLElement | null>(null);
   const operationRef = useRef<FileSpaceOperation | null>(null);
   const lifecycleRef = useRef({ mounted: false, generation: 0 });
   const nativeDropBlockedRef = useRef(false);
   const externalDragDepthRef = useRef(0);
   const searchSequenceRef = useRef(0);
+  const filePageSequenceRef = useRef(0);
+  const filePageLoadingRef = useRef(false);
+  const fileVirtualViewportFrameRef = useRef<number | null>(null);
+  const pendingFileRevealRef = useRef<FileSpaceSearchFile | null>(null);
+  const pendingFileOpenRef = useRef<string | null>(null);
+  const aiSourceNavigationSequenceRef = useRef(0);
   const importRequestRef = useRef<string | null>(null);
+  const autoTrashCleanupRetryAtRef = useRef(0);
+  const autoTrashCleanupErrorRef = useRef<string | null>(null);
+  const timelineRequestRef = useRef(0);
+  const timelineMutationRequestRef = useRef(0);
+  const versionPreviewRequestRef = useRef(0);
+  const versionDiffRequestRef = useRef(0);
   const fileDragGestureRef = useRef<FileDragGesture | null>(null);
   const internalFileDragRef = useRef<InternalFileDrag | null>(null);
+  const selectedFileIdsRef = useRef<Set<string>>(new Set());
+  const selectionAnchorRef = useRef<string | null>(null);
+  const pointerSelectionIntentRef = useRef<PointerSelectionIntent | null>(null);
+  const suppressNextFileClickRef = useRef(false);
+  const marqueeGestureRef = useRef<FileMarqueeGesture | null>(null);
+  const marqueeAutoScrollFrameRef = useRef<number | null>(null);
   const folderDragGestureRef = useRef<FolderDragGesture | null>(null);
   const internalFolderDragRef = useRef<InternalFolderDrag | null>(null);
   const suppressFolderClickRef = useRef(false);
   const folderClickReleaseTimerRef = useRef<number | null>(null);
   const fileDragStartingRef = useRef(false);
   const fileDragReleaseTimerRef = useRef<number | null>(null);
+  const fileDragCancelTimerRef = useRef<number | null>(null);
   const createDialogPresence = usePresence(isCreateFolderOpen);
+  const createFileDialogPresence = usePresence(Boolean(createFileFormat));
   const renameDialogPresence = usePresence(Boolean(renameFolderId));
   const deleteDialogPresence = usePresence(Boolean(deleteFolderId));
   const renameFileDialogPresence = usePresence(Boolean(renameFileId));
   const deleteFileDialogPresence = usePresence(Boolean(deleteFileId));
+  const restoreTrashDialogPresence = usePresence(Boolean(restoreConfirmationEntryId));
+  const emptyTrashDialogPresence = usePresence(isEmptyTrashConfirmationOpen);
   const tagDialogPresence = usePresence(Boolean(tagFileId));
+  const importConflictDialogPresence = usePresence(Boolean(pendingFileImportConflict));
   const filterMenuPresence = usePresence(isFilterMenuOpen, 140);
+  const timelinePanelPresence = usePresence(isTimelinePanelOpen, 140);
+  const isFileSpaceDialogOpen = Boolean(
+    isCreateFolderOpen
+    || createFileFormat
+    || renameFolderId
+    || deleteFolderId
+    || renameFileId
+    || deleteFileId
+    || restoreConfirmationEntryId
+    || isEmptyTrashConfirmationOpen
+    || tagFileId
+    || pendingFileImportConflict
+  );
+  const isFileSpaceDialogMounted = Boolean(
+    createDialogPresence.mounted
+    || createFileDialogPresence.mounted
+    || renameDialogPresence.mounted
+    || deleteDialogPresence.mounted
+    || renameFileDialogPresence.mounted
+    || deleteFileDialogPresence.mounted
+    || restoreTrashDialogPresence.mounted
+    || emptyTrashDialogPresence.mounted
+    || tagDialogPresence.mounted
+    || importConflictDialogPresence.mounted
+  );
 
-  const isChinese = i18n.resolvedLanguage?.startsWith("zh") ?? true;
-  const locale = isChinese ? "zh-CN" : "en-US";
+  const locale = i18n.resolvedLanguage ?? "en-US";
+  const fileListDateFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }), [locale]);
   const searchKey = `${query.trim()}\u0000${[...searchScopes].sort().join(",")}`;
+  const globalSearchShortcut = globalSearchShortcutLabel();
+
+  const closeTimelinePanel = useCallback(() => {
+    timelineRequestRef.current += 1;
+    versionPreviewRequestRef.current += 1;
+    versionDiffRequestRef.current += 1;
+    setTimelineBusy(false);
+    setTimelinePanelOpen(false);
+  }, []);
+
+  const openGlobalSearch = useCallback(() => {
+    const activeModal = document.querySelector<HTMLElement>('[aria-modal="true"]');
+    if (activeModal && !activeModal.classList.contains("file-space-global-search-panel")) return;
+    setFilterMenuOpen(false);
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    setGlobalSearchOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isTimelinePanelOpen) return undefined;
+    const closeOnOutsidePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".mac-select-menu")) return;
+      if (!timelinePanelRef.current?.contains(target as Node)) {
+        closeTimelinePanel();
+      }
+    };
+    window.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
+    return () => window.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
+  }, [closeTimelinePanel, isTimelinePanelOpen]);
+
+  useEffect(() => {
+    if (timelinePanelPresence.mounted) return;
+    setTimeline(null);
+    setTimelineFile(null);
+    setSelectedVersionId(null);
+    setVersionPreview(null);
+    setDiffBeforeVersionId(null);
+    setDiffAfterVersionId(null);
+    setVersionDiffStatus("idle");
+    setVersionDiffResult(null);
+    setVersionDiffError(null);
+  }, [timelinePanelPresence.mounted]);
+
+  useEffect(() => {
+    if (
+      !isTimelinePanelOpen
+      || !timeline
+      || !timelineFile
+      || !diffBeforeVersionId
+      || !diffAfterVersionId
+    ) {
+      setVersionDiffStatus("idle");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      return undefined;
+    }
+
+    const beforeVersion = timeline.versions.find((version) => version.id === diffBeforeVersionId);
+    const afterVersion = timeline.versions.find((version) => version.id === diffAfterVersionId);
+    if (!beforeVersion || !afterVersion) {
+      setVersionDiffStatus("idle");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      return undefined;
+    }
+    if (!supportsTextPreview(beforeVersion) || !supportsTextPreview(afterVersion)) {
+      setVersionDiffStatus("unsupported");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      return undefined;
+    }
+    if (beforeVersion.sizeBytes > maxVersionDiffTextBytes || afterVersion.sizeBytes > maxVersionDiffTextBytes) {
+      setVersionDiffStatus("tooLarge");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      return undefined;
+    }
+
+    const requestId = versionDiffRequestRef.current + 1;
+    versionDiffRequestRef.current = requestId;
+    setVersionDiffStatus("loading");
+    setVersionDiffResult(null);
+    setVersionDiffError(null);
+
+    const readVersionText = async (version: TaskFileVersionRecord) => {
+      if (!isTauri()) return createVisualVersionContent(timelineFile, version);
+      const bytes = await invoke<number[]>("read_task_file_version", {
+        fileId: timeline.fileId,
+        versionId: version.id,
+      });
+      return new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes));
+    };
+
+    void (async () => {
+      try {
+        const [beforeText, afterText] = await Promise.all([
+          readVersionText(beforeVersion),
+          readVersionText(afterVersion),
+        ]);
+        if (requestId !== versionDiffRequestRef.current || !lifecycleRef.current.mounted) return;
+        setVersionDiffResult(diffTextVersions(beforeText, afterText));
+        setVersionDiffStatus("ready");
+      } catch (diffError) {
+        if (requestId !== versionDiffRequestRef.current || !lifecycleRef.current.mounted) return;
+        setVersionDiffResult(null);
+        setVersionDiffError(errorText(diffError));
+        setVersionDiffStatus("error");
+      }
+    })();
+
+    return () => {
+      if (versionDiffRequestRef.current === requestId) versionDiffRequestRef.current += 1;
+    };
+  }, [
+    diffAfterVersionId,
+    diffBeforeVersionId,
+    isTimelinePanelOpen,
+    timeline,
+    timelineFile,
+    versionDiffRetryToken,
+  ]);
 
   useEffect(() => {
     const normalized = query.trim();
@@ -837,8 +1511,8 @@ export function FileSpacePage() {
     const timer = window.setTimeout(() => {
       void (async () => {
         try {
-          const ids = isTauri()
-            ? await invoke<string[]>("search_file_space_files", {
+          const matches = isTauri()
+            ? await invoke<FileSpaceSearchMatch[]>("search_file_space_files", {
                 request: { query: normalized, scopes: searchScopes },
               })
             : snapshot.files
@@ -846,9 +1520,16 @@ export function FileSpacePage() {
                   (searchScopes.includes("name") && matchesSearch(file.name, normalized))
                   || (searchScopes.includes("tag") && file.tags.some((tag) => matchesSearch(tag, normalized)))
                 ))
-                .map((file) => file.id);
+                .map((file) => ({
+                  fileId: file.id,
+                  lexicalMatch: true,
+                  semanticSimilarity: null,
+                }));
           if (sequence !== searchSequenceRef.current) return;
-          setSearchResult({ key: searchKey, ids: new Set(ids) });
+          setSearchResult({
+            key: searchKey,
+            ids: new Set(matches.slice(0, 500).map((match) => match.fileId)),
+          });
         } catch (searchError) {
           if (sequence !== searchSequenceRef.current) return;
           setSearchResult({ key: searchKey, ids: new Set() });
@@ -859,7 +1540,7 @@ export function FileSpacePage() {
       })();
     }, 180);
     return () => window.clearTimeout(timer);
-  }, [query, searchKey, searchScopes, snapshot.files, t]);
+  }, [query, searchKey, searchScopes, t]);
 
   const updatePreviewSize = (value: number) => {
     const nextSize = clampPreviewSize(value);
@@ -872,9 +1553,108 @@ export function FileSpacePage() {
     window.localStorage.setItem(sortOptionStorageKey, value);
   };
 
+  const updateFileLayoutMode = (value: FileLayoutMode) => {
+    setFileLayoutMode(value);
+    window.localStorage.setItem(fileLayoutModeStorageKey, value);
+  };
+
+  const toggleSidebarVisibility = () => {
+    setSidebarVisible((visible) => !visible);
+    setContentContextMenu(null);
+  };
+
+  const toggleInspectorVisibility = () => {
+    setInspectorVisible((visible) => !visible);
+    setContentContextMenu(null);
+  };
+
+  const rememberDialogReturnFocus = (fallback: HTMLElement | null = null) => {
+    dialogReturnFocusRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    dialogFallbackFocusRef.current = fallback;
+    dialogRestorePendingRef.current = false;
+  };
+
   const updateInternalFileDrag = (value: InternalFileDrag | null) => {
     internalFileDragRef.current = value;
     setInternalFileDrag(value);
+  };
+
+  const updateSelectedFiles = (value: Set<string>, anchorId?: string | null) => {
+    if (anchorId !== undefined) selectionAnchorRef.current = anchorId;
+    if (setsEqual(value, selectedFileIdsRef.current)) return;
+    selectedFileIdsRef.current = value;
+    setSelectedFileIds(value);
+  };
+
+  const clearSelectedFiles = () => {
+    updateSelectedFiles(new Set(), null);
+    setInspectorTimeline(null);
+  };
+
+  const revealFileInWorkspace = (file: FileSpaceSearchFile, openAfterReveal = false) => {
+    pendingFileRevealRef.current = file;
+    pendingFileOpenRef.current = openAfterReveal ? file.id : null;
+    setGlobalSearchOpen(false);
+    setActiveCollection("files");
+    setCurrentFolderId(file.folderId);
+    setQuery("");
+    setSearchResult(null);
+    setTypeFilter("all");
+    setTagFilter("all");
+    setTimeFilter("all");
+    setFilterMenuOpen(false);
+    setInspectorVisible(true);
+    updateSelectedFiles(new Set([file.id]), file.id);
+    setFileRevealRevision((revision) => revision + 1);
+    setFilePageRevision((revision) => revision + 1);
+    if (file.folderId) {
+      setExpandedFolders((current) => {
+        const next = new Set(current);
+        let folderId: string | null = file.folderId;
+        while (folderId) {
+          next.add(folderId);
+          folderId = snapshot.folders.find((folder) => folder.id === folderId)?.parentId ?? null;
+        }
+        return next;
+      });
+    }
+  };
+
+  const openFileFromGlobalSearch = (file: FileSpaceSearchFile) => {
+    revealFileInWorkspace(file);
+  };
+
+  const openFileFromAiSource = async (
+    source: FileSpaceAiSourceReference,
+    action: "select" | "open",
+  ) => {
+    const sequence = aiSourceNavigationSequenceRef.current + 1;
+    aiSourceNavigationSequenceRef.current = sequence;
+    let file = snapshot.files.find((candidate) => candidate.id === source.fileId);
+    if (!file && isTauri()) {
+      try {
+        const page = await invoke<FileSpaceFilePage>("list_file_space_files", {
+          request: {
+            folderId: null,
+            sort: "updatedDesc",
+            typeFilter: "all",
+            tagFilter: null,
+            updatedAfter: null,
+            matchIds: [source.fileId],
+            cursor: null,
+            limit: 1,
+          },
+        });
+        [file] = page.files;
+      } catch {
+        file = undefined;
+      }
+    }
+    if (sequence !== aiSourceNavigationSequenceRef.current) return;
+    if (file) revealFileInWorkspace(file, action === "open");
+    else setError(t("fileSpace.ai.errors.sourceUnavailable"));
   };
 
   const updateInternalFolderDrag = (value: InternalFolderDrag | null) => {
@@ -919,13 +1699,19 @@ export function FileSpacePage() {
     setLoading(true);
     setError(null);
     try {
-      const loaded = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
+      const [loaded, loadedWorkspaceDirectory] = await Promise.all([
+        invoke<FileSpaceSnapshot>("get_file_space_snapshot"),
+        invoke<FileSpaceWorkspaceDirectory>("get_file_space_workspaces"),
+      ]);
       if (
         !lifecycleRef.current.mounted ||
         lifecycleRef.current.generation !== generation
       ) return;
       setSnapshot(loaded);
-      setExpandedFolders(new Set(loaded.folders.map((folder) => folder.id)));
+      setFilePageTotal(loaded.fileCount);
+      setFilePageCursor(null);
+      setWorkspaceDirectory(loadedWorkspaceDirectory);
+      setExpandedFolders(new Set());
       setCurrentFolderId((current) => (
         current && loaded.folders.some((folder) => folder.id === current) ? current : null
       ));
@@ -957,11 +1743,26 @@ export function FileSpacePage() {
         window.clearTimeout(fileDragReleaseTimerRef.current);
         fileDragReleaseTimerRef.current = null;
       }
+      if (fileDragCancelTimerRef.current !== null) {
+        window.clearTimeout(fileDragCancelTimerRef.current);
+        fileDragCancelTimerRef.current = null;
+      }
+      if (fileVirtualViewportFrameRef.current !== null) {
+        window.cancelAnimationFrame(fileVirtualViewportFrameRef.current);
+        fileVirtualViewportFrameRef.current = null;
+      }
       fileDragStartingRef.current = false;
       fileDragGestureRef.current = null;
       internalFileDragRef.current = null;
+      marqueeGestureRef.current = null;
+      if (marqueeAutoScrollFrameRef.current !== null) {
+        window.cancelAnimationFrame(marqueeAutoScrollFrameRef.current);
+        marqueeAutoScrollFrameRef.current = null;
+      }
       folderDragGestureRef.current = null;
       internalFolderDragRef.current = null;
+      timelineRequestRef.current += 1;
+      versionPreviewRequestRef.current += 1;
       if (folderClickReleaseTimerRef.current !== null) {
         window.clearTimeout(folderClickReleaseTimerRef.current);
         folderClickReleaseTimerRef.current = null;
@@ -980,12 +1781,89 @@ export function FileSpacePage() {
   }, [internalFolderDrag]);
 
   useEffect(() => {
+    const narrowWindow = window.matchMedia("(max-width: 980px)");
+    const collapseSidebar = (event: MediaQueryListEvent) => {
+      if (event.matches) setSidebarVisible(false);
+    };
+    narrowWindow.addEventListener("change", collapseSidebar);
+    return () => narrowWindow.removeEventListener("change", collapseSidebar);
+  }, []);
+
+  useEffect(() => {
     if (!isTauri()) {
-      if (import.meta.env.DEV && new URLSearchParams(window.location.search).has("fileSpacePreview")) {
-        const fixture = createVisualFixture();
-        setSnapshot(fixture);
-        setExpandedFolders(new Set(fixture.folders.map((folder) => folder.id)));
-        setCurrentFolderId("fixture-research");
+      if (import.meta.env.DEV) {
+        const previewParameters = new URLSearchParams(window.location.search);
+        if (previewParameters.has("fileSpacePreview") || previewParameters.has("trashPreview")) {
+          const fixture = createVisualFixture();
+          if (previewParameters.get("trashPreview") === "empty") {
+            fixture.trashItems = [];
+          }
+          setSnapshot(fixture);
+          setWorkspaceDirectory({
+            currentWorkspaceId: "fixture-workspace",
+            workspaces: [{
+              id: "fixture-workspace",
+              name: fixture.rootName ?? "Lume Trace",
+              kind: "local",
+              rootPath: fixture.rootPath,
+              memberCount: 0,
+              current: true,
+              createdAt: Date.now(),
+              lastOpenedAt: Date.now(),
+            }],
+          });
+          setExpandedFolders(new Set(fixture.folders.map((folder) => folder.id)));
+          setCurrentFolderId("fixture-research");
+          if (previewParameters.has("trashPreview")) setActiveCollection("trash");
+          if (previewParameters.has("versionNotificationPreview")) {
+            const file = fixture.files[0];
+            if (file) {
+              setVersionNotifications([{
+                versionId: "fixture-external-version",
+                fileId: file.id,
+                fileName: file.name,
+                versionNumber: Math.max(2, file.versionCount + 1),
+                createdAt: Date.now(),
+              }]);
+            }
+          }
+          if (previewParameters.has("importConflictPreview")) {
+            const count = previewParameters.get("importConflictPreview") === "multiple" ? 3 : 1;
+            const conflicts = fixture.files.slice(0, count).map((file, index) => ({
+              relativePath: file.name,
+              fileName: index === 0 ? "常用.md" : file.name,
+              existingFileId: file.id,
+              existingVersion: Math.max(1, file.currentVersion ?? 1),
+              existingSizeBytes: file.sizeBytes,
+              incomingSizeBytes: file.sizeBytes + ((index + 1) * 1_024),
+              identical: false,
+            }));
+            setPendingFileImportConflict({
+              requestId: "fixture-import-conflict",
+              folderId: "fixture-research",
+              source: {
+                kind: "droppedFiles",
+                files: conflicts.map((conflict) => ({
+                  relativePath: conflict.relativePath,
+                  bytes: [],
+                })),
+              },
+              conflicts,
+              identicalFiles: [],
+            });
+          }
+          if (previewParameters.has("identicalImportPreview")) {
+            const file = fixture.files[0];
+            if (file) {
+              setImportConflictFeedback({
+                files: [{ fileId: file.id, fileName: file.name }],
+              });
+            }
+          }
+        }
+        if (previewParameters.has("importSheetPreview")) {
+          setPendingImportPath("/Volumes/NAS Studio/产品资料");
+        }
       }
       setLoading(false);
       return;
@@ -1004,9 +1882,20 @@ export function FileSpacePage() {
   }, [currentFolderId]);
 
   useEffect(() => {
+    window.localStorage.setItem(inspectorVisibilityStorageKey, String(isInspectorVisible));
+  }, [isInspectorVisible]);
+
+  useEffect(() => {
     const applySavedMarkdownSnapshot = (event: Event) => {
       const next = (event as CustomEvent<FileSpaceSnapshot>).detail;
-      if (next) setSnapshot(next);
+      if (next) {
+        setSnapshot(next);
+        if (isTauri()) {
+          void invoke<FileSpaceWorkspaceDirectory>("get_file_space_workspaces")
+            .then(setWorkspaceDirectory)
+            .catch(() => undefined);
+        }
+      }
     };
     window.addEventListener("lumetrace:file-space-snapshot", applySavedMarkdownSnapshot);
     return () => window.removeEventListener("lumetrace:file-space-snapshot", applySavedMarkdownSnapshot);
@@ -1037,6 +1926,81 @@ export function FileSpacePage() {
   }, []);
 
   useEffect(() => {
+    if (!isTauri()) return undefined;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    let scanInFlight = false;
+    let drainInFlight = false;
+    let drainAgain = false;
+
+    const applyNotifications = async (notifications: FileSpaceVersionNotification[]) => {
+      if (disposed || notifications.length === 0) return;
+      setVersionNotifications((current) => mergeVersionNotifications(current, notifications));
+      try {
+        const refreshed = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
+        if (!disposed) setSnapshot(refreshed);
+      } catch {
+        // The version notification remains actionable even if this visual refresh is delayed.
+      }
+    };
+
+    const drainNotifications = async () => {
+      if (drainInFlight) {
+        drainAgain = true;
+        return;
+      }
+      drainInFlight = true;
+      try {
+        do {
+          drainAgain = false;
+          const queued = await invoke<FileSpaceVersionNotification[]>(
+            "drain_file_space_version_notifications",
+          );
+          await applyNotifications(queued);
+        } while (!disposed && drainAgain);
+      } catch {
+        // A focus scan below provides a second chance to discover the same content change.
+      } finally {
+        drainInFlight = false;
+      }
+    };
+
+    const scanExternalChanges = async () => {
+      if (disposed || scanInFlight) return;
+      scanInFlight = true;
+      try {
+        const discovered = await invoke<FileSpaceVersionNotification[]>(
+          "scan_file_space_external_changes",
+        );
+        await applyNotifications(discovered);
+      } catch {
+        // Missing or disconnected workspaces are already represented by the main snapshot state.
+      } finally {
+        scanInFlight = false;
+      }
+    };
+
+    const handleWindowFocus = () => void scanExternalChanges();
+    window.addEventListener("focus", handleWindowFocus);
+    void listen<FileSpaceVersionNotification>("file-space-version-created", () => {
+      void drainNotifications();
+    }).then((unlisten) => {
+      if (disposed) {
+        unlisten();
+        return;
+      }
+      stop = unlisten;
+      void drainNotifications().then(() => scanExternalChanges());
+    });
+
+    return () => {
+      disposed = true;
+      stop?.();
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, []);
+
+  useEffect(() => {
     if (!importFeedback || !["completed", "cancelled"].includes(importFeedback.phase)) return undefined;
     const timer = window.setTimeout(() => setImportFeedback(null), 3200);
     return () => window.clearTimeout(timer);
@@ -1049,61 +2013,272 @@ export function FileSpacePage() {
   }, [fileMoveFeedback]);
 
   useEffect(() => {
-    if (!isCreateFolderOpen) return;
-    window.requestAnimationFrame(() => folderNameRef.current?.focus());
-  }, [isCreateFolderOpen]);
+    if (!trashFeedback) return undefined;
+    const timer = window.setTimeout(() => setTrashFeedback(null), 2800);
+    return () => window.clearTimeout(timer);
+  }, [trashFeedback]);
 
   useEffect(() => {
-    if (!renameFolderId) return;
+    if (
+      !isTauri()
+      || snapshot.rootStatus !== "ready"
+      || snapshot.trashItems.length === 0
+    ) return undefined;
+    let cancelled = false;
+    let timer: number | null = null;
+    const schedule = (delay: number) => {
+      if (cancelled) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => void runCleanup(), Math.min(delay, maxTrashCleanupTimerMs));
+    };
+    const runCleanup = async () => {
+      timer = null;
+      if (operationRef.current || dialogWasOpenRef.current) {
+        schedule(1_000);
+        return;
+      }
+      const operation = beginOperation("purgeTrash");
+      if (!operation) {
+        schedule(1_000);
+        return;
+      }
+      try {
+        const result = await invoke<FileSpaceTrashPurgeResult>("purge_expired_file_space_trash");
+        if (!canCommitOperation(operation)) return;
+        setSnapshot(result.snapshot);
+        if (result.failedCount > 0 || result.failureMessage) {
+          autoTrashCleanupRetryAtRef.current = Date.now() + 60_000;
+          const summary = t("fileSpace.trash.partialPurge", {
+            failed: result.failedCount,
+            purged: result.purgedCount,
+          });
+          const message = `${t("fileSpace.errors.autoCleanupTrash")} ${summary}${result.failureMessage ? ` ${result.failureMessage}` : ""}`;
+          autoTrashCleanupErrorRef.current = message;
+          setError(message);
+        } else {
+          autoTrashCleanupRetryAtRef.current = 0;
+          const previousCleanupError = autoTrashCleanupErrorRef.current;
+          autoTrashCleanupErrorRef.current = null;
+          if (previousCleanupError) {
+            setError((current) => current === previousCleanupError ? null : current);
+          }
+          if (result.purgedCount > 0) {
+            setTrashFeedback(t("fileSpace.trash.autoDeleted", { count: result.purgedCount }));
+          }
+        }
+      } catch (cleanupError) {
+        if (canCommitOperation(operation)) {
+          autoTrashCleanupRetryAtRef.current = Date.now() + 60_000;
+          const message = `${t("fileSpace.errors.autoCleanupTrash")} ${errorText(cleanupError)}`;
+          autoTrashCleanupErrorRef.current = message;
+          setError(message);
+          schedule(60_000);
+        }
+      } finally {
+        finishOperation(operation);
+      }
+    };
+    const nextExpiration = Math.min(
+      ...snapshot.trashItems.map((item) => item.trashedAt + trashRetentionMs),
+    );
+    const nextAttempt = Math.max(nextExpiration, autoTrashCleanupRetryAtRef.current);
+    schedule(Math.max(0, nextAttempt - Date.now()));
+    return () => {
+      cancelled = true;
+      if (timer !== null) window.clearTimeout(timer);
+    };
+  }, [snapshot.rootPath, snapshot.rootStatus, snapshot.trashItems, t]);
+
+  useEffect(() => {
+    if (!isCreateFolderOpen || !createDialogPresence.mounted) return;
+    window.requestAnimationFrame(() => folderNameRef.current?.focus());
+  }, [createDialogPresence.mounted, isCreateFolderOpen]);
+
+  useEffect(() => {
+    if (!renameFolderId || !renameDialogPresence.mounted) return;
     window.requestAnimationFrame(() => {
       renameFolderNameRef.current?.focus();
       renameFolderNameRef.current?.select();
     });
-  }, [renameFolderId]);
+  }, [renameDialogPresence.mounted, renameFolderId]);
 
   useEffect(() => {
-    if (!renameFileId) return;
+    if (!renameFileId || !renameFileDialogPresence.mounted) return;
     window.requestAnimationFrame(() => {
       renameFileNameRef.current?.focus();
       renameFileNameRef.current?.select();
     });
-  }, [renameFileId]);
+  }, [renameFileDialogPresence.mounted, renameFileId]);
 
   useEffect(() => {
-    if (!tagFileId) return;
+    if (!createFileFormat || !createFileDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => {
+      const input = createFileNameRef.current;
+      if (!input) return;
+      input.focus();
+      input.select();
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, [createFileDialogPresence.mounted, createFileFormat]);
+
+  useEffect(() => {
+    if (!tagFileId || !tagDialogPresence.mounted) return;
     window.requestAnimationFrame(() => {
       tagDraftRef.current?.focus();
       tagDraftRef.current?.select();
     });
-  }, [tagFileId]);
+  }, [tagDialogPresence.mounted, tagFileId]);
+
+  useEffect(() => {
+    if (!deleteFolderId || !deleteDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => deleteFolderCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [deleteDialogPresence.mounted, deleteFolderId]);
+
+  useEffect(() => {
+    if (!deleteFileId || !deleteFileDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => deleteFileCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [deleteFileDialogPresence.mounted, deleteFileId]);
+
+  useEffect(() => {
+    if (!restoreConfirmationEntryId || !restoreTrashDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => restoreTrashCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [restoreConfirmationEntryId, restoreTrashDialogPresence.mounted]);
+
+  useEffect(() => {
+    if (!isEmptyTrashConfirmationOpen || !emptyTrashDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => emptyTrashCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [emptyTrashDialogPresence.mounted, isEmptyTrashConfirmationOpen]);
+
+  useEffect(() => {
+    if (!pendingFileImportConflict || !importConflictDialogPresence.mounted) return undefined;
+    const frame = window.requestAnimationFrame(() => importConflictCancelRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [importConflictDialogPresence.mounted, pendingFileImportConflict]);
+
+  useEffect(() => {
+    if (isEmptyTrashConfirmationOpen || emptyTrashDialogPresence.mounted) return;
+    setEmptyTrashEntryIds([]);
+  }, [emptyTrashDialogPresence.mounted, isEmptyTrashConfirmationOpen]);
+
+  useEffect(() => {
+    if (isFileSpaceDialogOpen) {
+      if (!dialogWasOpenRef.current) {
+        dialogWasOpenRef.current = true;
+        dialogRestorePendingRef.current = false;
+        if (!dialogReturnFocusRef.current) {
+          dialogReturnFocusRef.current = document.activeElement instanceof HTMLElement
+            ? document.activeElement
+            : null;
+        }
+      }
+      return;
+    }
+    if (dialogWasOpenRef.current) {
+      dialogWasOpenRef.current = false;
+      dialogRestorePendingRef.current = true;
+    }
+    if (isFileSpaceDialogMounted || !dialogRestorePendingRef.current) return;
+    dialogRestorePendingRef.current = false;
+    const target = dialogReturnFocusRef.current?.isConnected
+      ? dialogReturnFocusRef.current
+      : dialogFallbackFocusRef.current?.isConnected
+        ? dialogFallbackFocusRef.current
+        : document.querySelector<HTMLElement>(".file-space-search-trigger");
+    dialogReturnFocusRef.current = null;
+    dialogFallbackFocusRef.current = null;
+    if (target) window.requestAnimationFrame(() => target.focus());
+  }, [isFileSpaceDialogMounted, isFileSpaceDialogOpen]);
+
+  useEffect(() => {
+    if (!isFileSpaceDialogOpen) return undefined;
+    const trapDialogFocus = (event: KeyboardEvent) => {
+      if (event.key !== "Tab") return;
+      const dialog = document.querySelector<HTMLElement>(".file-space-dialog-backdrop.is-open .file-space-dialog");
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), input:not(:disabled), textarea:not(:disabled), select:not(:disabled), a[href]',
+      )).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        dialog.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialog.contains(active)) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", trapDialogFocus, true);
+    return () => window.removeEventListener("keydown", trapDialogFocus, true);
+  }, [isFileSpaceDialogOpen]);
 
   useEffect(() => {
     if (
       !isCreateFolderOpen &&
+      !createFileFormat &&
       !renameFolderId &&
       !deleteFolderId &&
       !renameFileId &&
       !deleteFileId &&
+      !restoreConfirmationEntryId &&
+      !isEmptyTrashConfirmationOpen &&
+      !pendingFileImportConflict &&
       !tagFileId &&
       !isFilterMenuOpen &&
       !folderContextMenu &&
-      !fileContextMenu
+      !fileContextMenu &&
+      !contentContextMenu &&
+      !isTimelinePanelOpen
     ) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
-      setCreateFolderOpen(false);
-      setRenameFolderId(null);
-      setDeleteFolderId(null);
-      setRenameFileId(null);
-      setDeleteFileId(null);
-      setTagFileId(null);
-      setFilterMenuOpen(false);
-      setFolderContextMenu(null);
-      setFileContextMenu(null);
+      const activeModal = document.querySelector<HTMLElement>('[aria-modal="true"]');
+      const ownsActiveModal = activeModal?.classList.contains("file-space-dialog") ?? false;
+      if (activeModal && !ownsActiveModal) return;
+      if (!ownsActiveModal && document.querySelector(".file-space-ai-popover, .file-space-ai-panel")) return;
+      event.preventDefault();
+      if (restoreConfirmationEntryId && busyAction === "restore") return;
+      if (isEmptyTrashConfirmationOpen && busyAction === "purgeTrash") return;
+      if (pendingFileImportConflict && busyAction === "import") return;
+      if (isCreateFolderOpen) setCreateFolderOpen(false);
+      else if (createFileFormat) {
+        if (busyAction === "create") return;
+        setCreateFileFormat(null);
+      }
+      else if (renameFolderId) setRenameFolderId(null);
+      else if (deleteFolderId) setDeleteFolderId(null);
+      else if (renameFileId) setRenameFileId(null);
+      else if (deleteFileId) setDeleteFileId(null);
+      else if (restoreConfirmationEntryId) setRestoreConfirmationEntryId(null);
+      else if (isEmptyTrashConfirmationOpen) setEmptyTrashConfirmationOpen(false);
+      else if (pendingFileImportConflict) setPendingFileImportConflict(null);
+      else if (tagFileId) setTagFileId(null);
+      else if (isFilterMenuOpen) setFilterMenuOpen(false);
+      else if (folderContextMenu) setFolderContextMenu(null);
+      else if (fileContextMenu) setFileContextMenu(null);
+      else if (contentContextMenu) setContentContextMenu(null);
+      else if (isTimelinePanelOpen) closeTimelinePanel();
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [deleteFileId, deleteFolderId, fileContextMenu, folderContextMenu, isCreateFolderOpen, isFilterMenuOpen, renameFileId, renameFolderId, tagFileId]);
+  }, [busyAction, closeTimelinePanel, contentContextMenu, createFileFormat, deleteFileId, deleteFolderId, fileContextMenu, folderContextMenu, isCreateFolderOpen, isEmptyTrashConfirmationOpen, isFilterMenuOpen, isTimelinePanelOpen, pendingFileImportConflict, renameFileId, renameFolderId, restoreConfirmationEntryId, tagFileId]);
 
   useEffect(() => {
     if (!isFilterMenuOpen) return undefined;
@@ -1115,16 +2290,18 @@ export function FileSpacePage() {
   }, [isFilterMenuOpen]);
 
   useEffect(() => {
-    if (!folderContextMenu && !fileContextMenu) return undefined;
+    if (!folderContextMenu && !fileContextMenu && !contentContextMenu) return undefined;
     const closeContextMenu = (event: PointerEvent) => {
       if (!contextMenuRef.current?.contains(event.target as Node)) {
         setFolderContextMenu(null);
         setFileContextMenu(null);
+        setContentContextMenu(null);
       }
     };
     const closeForLayoutChange = () => {
       setFolderContextMenu(null);
       setFileContextMenu(null);
+      setContentContextMenu(null);
     };
     window.addEventListener("pointerdown", closeContextMenu);
     window.addEventListener("resize", closeForLayoutChange);
@@ -1134,7 +2311,7 @@ export function FileSpacePage() {
       window.removeEventListener("resize", closeForLayoutChange);
       window.removeEventListener("scroll", closeForLayoutChange, true);
     };
-  }, [fileContextMenu, folderContextMenu]);
+  }, [contentContextMenu, fileContextMenu, folderContextMenu]);
 
   const foldersByParent = useMemo(() => {
     const groups = new Map<string | null, FileSpaceFolderRecord[]>();
@@ -1152,18 +2329,18 @@ export function FileSpacePage() {
   }, [locale, snapshot.folders]);
 
   const folderCounts = useMemo(() => {
-    const counts = new Map<string, number>();
-    const countFolder = (folderId: string): number => {
-      const directFiles = snapshot.files.filter((file) => file.folderId === folderId).length;
-      const childCount = (foldersByParent.get(folderId) ?? [])
-        .reduce((total, child) => total + countFolder(child.id), 0);
-      const total = directFiles + childCount;
-      counts.set(folderId, total);
-      return total;
-    };
-    (foldersByParent.get(null) ?? []).forEach((folder) => countFolder(folder.id));
-    return counts;
-  }, [foldersByParent, snapshot.files]);
+    return new Map(snapshot.folders.map((folder) => [folder.id, folder.fileCount ?? 0]));
+  }, [snapshot.folders]);
+
+  const folderContextMenuExpandableIds = useMemo(() => (
+    folderContextMenu
+      ? expandableFolderIdsInSubtree(snapshot.folders, folderContextMenu.folderId)
+      : []
+  ), [folderContextMenu, snapshot.folders]);
+  const isFolderContextSubtreeFullyExpanded = isFolderSubtreeFullyExpanded(
+    expandedFolders,
+    folderContextMenuExpandableIds,
+  );
 
   const folderDisplayDetails = useMemo(() => {
     const filesByFolder = new Map<string, FileSpaceFileRecord[]>();
@@ -1177,8 +2354,8 @@ export function FileSpacePage() {
     snapshot.folders.forEach((folder) => {
       const directFiles = filesByFolder.get(folder.id) ?? [];
       details.set(folder.id, {
-        fileCount: directFiles.length,
-        folderCount: (foldersByParent.get(folder.id) ?? []).length,
+        fileCount: folder.directFileCount ?? directFiles.length,
+        folderCount: folder.childFolderCount ?? (foldersByParent.get(folder.id) ?? []).length,
         previews: directFiles.slice(0, 4),
       });
     });
@@ -1186,48 +2363,184 @@ export function FileSpacePage() {
   }, [foldersByParent, snapshot.files, snapshot.folders]);
 
   const currentFolder = snapshot.folders.find((folder) => folder.id === currentFolderId) ?? null;
+  const isTrashView = activeCollection === "trash";
   const folderBeingDragged = internalFolderDrag
     ? snapshot.folders.find((folder) => folder.id === internalFolderDrag.folderId) ?? null
     : null;
   const deletedFile = snapshot.files.find((file) => file.id === deleteFileId) ?? null;
+  const trashItemPendingRestore = snapshot.trashItems.find(
+    (item) => item.id === restoreConfirmationEntryId,
+  ) ?? null;
   const childFolders = foldersByParent.get(currentFolder?.id ?? null) ?? [];
-  const allTags = [...new Set(snapshot.files.flatMap((file) => file.tags))]
+  const allTags = [...snapshot.tags]
     .sort((left, right) => left.localeCompare(right, locale));
-  const directFiles = currentFolder
-    ? snapshot.files.filter((file) => file.folderId === currentFolder.id)
-    : snapshot.files;
+  const directFiles = useMemo(() => (
+    currentFolder
+      ? snapshot.files.filter((file) => file.folderId === currentFolder.id)
+      : snapshot.files
+  ), [currentFolder, snapshot.files]);
   const normalizedQuery = query.trim();
   const activeSearchResult = searchResult?.key === searchKey ? searchResult.ids : null;
   const updatedAfter = timeFilterStart(timeFilter);
+  const matchedFileIds = useMemo(
+    () => normalizedQuery && activeSearchResult ? [...activeSearchResult] : [],
+    [activeSearchResult, normalizedQuery],
+  );
+  const createFilePageRequest = useCallback((cursor: FileSpaceFilePageCursor | null) => ({
+    folderId: currentFolder?.id ?? null,
+    sort: sortOption,
+    typeFilter,
+    tagFilter: tagFilter === "all" ? null : tagFilter,
+    updatedAfter,
+    matchIds: matchedFileIds,
+    cursor,
+    limit: filePageLimit,
+  }), [currentFolder?.id, matchedFileIds, sortOption, tagFilter, typeFilter, updatedAfter]);
+
+  useEffect(() => {
+    if (!isTauri() || snapshot.rootStatus !== "ready" || isTrashView) return undefined;
+    if (normalizedQuery && !activeSearchResult) {
+      setFilePageLoading(searchLoading);
+      return undefined;
+    }
+    const sequence = filePageSequenceRef.current + 1;
+    filePageSequenceRef.current = sequence;
+    filePageLoadingRef.current = true;
+    setFilePageLoading(true);
+    setFilePageCursor(null);
+    const scroll = contentDropZoneRef.current;
+    if (scroll) scroll.scrollTop = 0;
+    void invoke<FileSpaceFilePage>("list_file_space_files", {
+      request: createFilePageRequest(null),
+    }).then((page) => {
+      if (sequence !== filePageSequenceRef.current || !lifecycleRef.current.mounted) return;
+      const pendingReveal = pendingFileRevealRef.current;
+      const revealFile = pendingReveal?.folderId === (currentFolder?.id ?? null)
+        ? pendingReveal
+        : null;
+      const files = revealFile && !page.files.some((file) => file.id === revealFile.id)
+        ? [revealFile, ...page.files]
+        : page.files;
+      setSnapshot((current) => ({ ...current, files }));
+      setFilePageTotal(page.totalCount);
+      setFilePageCursor(page.nextCursor);
+      setFileVirtualViewport({ top: 0, bottom: 2_000 });
+    }).catch((pageError) => {
+      if (sequence === filePageSequenceRef.current && lifecycleRef.current.mounted) {
+        setError(`${t("fileSpace.errors.load")} ${errorText(pageError)}`);
+      }
+    }).finally(() => {
+      if (sequence === filePageSequenceRef.current && lifecycleRef.current.mounted) {
+        filePageLoadingRef.current = false;
+        setFilePageLoading(false);
+      }
+    });
+    return () => {
+      if (filePageSequenceRef.current === sequence) filePageSequenceRef.current += 1;
+    };
+  }, [
+    activeCollection,
+    activeSearchResult,
+    createFilePageRequest,
+    filePageRevision,
+    isTrashView,
+    normalizedQuery,
+    searchLoading,
+    snapshot.folders,
+    snapshot.rootStatus,
+    t,
+    workspaceGeneration,
+  ]);
+
+  const loadMoreFilePage = useCallback(() => {
+    if (
+      !isTauri()
+      || !filePageCursor
+      || filePageLoadingRef.current
+      || snapshot.files.length >= filePageTotal
+    ) return;
+    const sequence = filePageSequenceRef.current;
+    filePageLoadingRef.current = true;
+    setFilePageLoading(true);
+    void invoke<FileSpaceFilePage>("list_file_space_files", {
+      request: createFilePageRequest(filePageCursor),
+    }).then((page) => {
+      if (sequence !== filePageSequenceRef.current || !lifecycleRef.current.mounted) return;
+      setSnapshot((current) => {
+        const existing = new Set(current.files.map((file) => file.id));
+        const appended = page.files.filter((file) => !existing.has(file.id));
+        return appended.length > 0
+          ? { ...current, files: [...current.files, ...appended] }
+          : current;
+      });
+      setFilePageTotal(page.totalCount);
+      setFilePageCursor(page.nextCursor);
+    }).catch((pageError) => {
+      if (sequence === filePageSequenceRef.current && lifecycleRef.current.mounted) {
+        setError(`${t("fileSpace.errors.load")} ${errorText(pageError)}`);
+      }
+    }).finally(() => {
+      if (sequence === filePageSequenceRef.current && lifecycleRef.current.mounted) {
+        filePageLoadingRef.current = false;
+        setFilePageLoading(false);
+      }
+    });
+  }, [createFilePageRequest, filePageCursor, filePageTotal, snapshot.files.length, t]);
   const visibleFolders = childFolders.filter((folder) => (
     !normalizedQuery || (searchScopes.includes("name") && matchesSearch(folder.name, normalizedQuery))
   ));
-  const sortedVisibleFiles = directFiles
+  const sortedVisibleFiles = useMemo(() => directFiles
     .filter((file) => (
       (!normalizedQuery || activeSearchResult?.has(file.id))
       && (typeFilter === "all" || fileCategory(file) === typeFilter)
       && (tagFilter === "all" || file.tags.includes(tagFilter))
       && (updatedAfter === null || file.updatedAt >= updatedAfter)
     ))
-    .sort((left, right) => compareFiles(left, right, sortOption, locale));
-  const visibleFileById = new Map(sortedVisibleFiles.map((file) => [file.id, file]));
-  const visibleFiles = internalFileDrag
+    .sort((left, right) => compareFiles(left, right, sortOption, locale)), [
+      activeSearchResult,
+      directFiles,
+      locale,
+      normalizedQuery,
+      sortOption,
+      tagFilter,
+      timeFilter,
+      typeFilter,
+      updatedAfter,
+    ]);
+  const visibleFileById = useMemo(
+    () => new Map(sortedVisibleFiles.map((file) => [file.id, file])),
+    [sortedVisibleFiles],
+  );
+  const visibleFiles = useMemo(() => internalFileDrag
     ? internalFileDrag.orderedIds.flatMap((id) => {
         const file = visibleFileById.get(id);
         return file ? [file] : [];
       })
-    : sortedVisibleFiles;
-  const canReorderVisibleFiles = !normalizedQuery
-    && typeFilter === "all"
-    && tagFilter === "all"
-    && timeFilter === "all"
-    && sortedVisibleFiles.length > 1;
+    : sortedVisibleFiles, [internalFileDrag, sortedVisibleFiles, visibleFileById]);
+  const selectedFiles = sortedVisibleFiles.filter((file) => selectedFileIds.has(file.id));
+  const selectedFile = selectedFiles.length === 1 ? selectedFiles[0] : null;
+  const canReorderVisibleFiles = canActivateFileReorder({
+    hasSearch: Boolean(normalizedQuery),
+    hasFilters: typeFilter !== "all" || tagFilter !== "all" || timeFilter !== "all",
+    usesAutomaticOrder: sortOption === "manual",
+    visibleFileCount: sortedVisibleFiles.length,
+  });
   const internallyDraggedFile = internalFileDrag
     ? snapshot.files.find((file) => file.id === internalFileDrag.fileId) ?? null
     : null;
-  const visibleFileLayoutKey = visibleFiles
-    .map((file) => `${file.id}:${file.name}:${file.updatedAt}`)
-    .join("\u0000");
+  const visibleFileIds = useMemo(
+    () => visibleFiles.map((file) => file.id),
+    [visibleFiles],
+  );
+  const fileLayoutItems = useMemo(() => visibleFiles.map((file) => {
+    const dimensions = imageDimensionsByFileVersion[imageDimensionsKey(file.id, file.updatedAt)];
+    return {
+      id: file.id,
+      aspectRatio: dimensions?.width && dimensions.height
+        ? dimensions.width / dimensions.height
+        : defaultFilePreviewAspectRatio(file),
+    };
+  }), [imageDimensionsByFileVersion, visibleFiles]);
 
   useLayoutEffect(() => {
     const grid = fileGridRef.current;
@@ -1235,44 +2548,29 @@ export function FileSpacePage() {
 
     let animationFrame = 0;
     let disposed = false;
-    const cardElements = Array.from(
-      grid.querySelectorAll<HTMLElement>(".file-space-file-card"),
-    );
-    const detailElements = cardElements.flatMap((card) => {
-      const details = card.querySelector<HTMLElement>(".file-space-item-copy");
-      return details ? [details] : [];
-    });
-    const imageElements = cardElements.flatMap((card) => {
-      const image = card.querySelector<HTMLImageElement>(".file-space-file-art img");
-      return image ? [image] : [];
-    });
     const measure = () => {
       animationFrame = 0;
       if (disposed) return;
       const containerWidth = grid.getBoundingClientRect().width;
       if (containerWidth <= 0) return;
 
-      const items = cardElements.flatMap((card) => {
-        const id = card.dataset.fileId;
-        const fallbackRatio = Number(card.dataset.previewAspectRatio) || 1;
-        const image = card.querySelector<HTMLImageElement>(".file-space-file-art img");
-        const imageRatio = image?.naturalWidth && image.naturalHeight
-          ? image.naturalWidth / image.naturalHeight
-          : fallbackRatio;
-        return id ? [{ id, aspectRatio: imageRatio }] : [];
-      });
-      const detailsHeight = Math.ceil(detailElements.reduce((maximum, details) => (
-        Math.max(maximum, details.getBoundingClientRect().height)
-      ), 0));
-      const nextLayout = calculateJustifiedFileLayout({
-        containerWidth,
-        targetPreviewHeight: previewSize,
-        horizontalGap: fileLayoutHorizontalGap,
-        verticalGap: fileLayoutVerticalGap,
-        previewDetailsGap: filePreviewDetailsGap,
-        detailsHeight,
-        items,
-      });
+      const nextLayout = fileLayoutMode === "list"
+        ? calculateFileListLayout({
+            containerWidth,
+            rowHeight: fileListRowHeight,
+            verticalGap: fileListVerticalGap,
+            previewSize: fileListPreviewSize,
+            items: fileLayoutItems,
+          })
+        : calculateJustifiedFileLayout({
+            containerWidth,
+            targetPreviewHeight: previewSize,
+            horizontalGap: fileLayoutHorizontalGap,
+            verticalGap: fileLayoutVerticalGap,
+            previewDetailsGap: filePreviewDetailsGap,
+            detailsHeight: fileDetailsHeightFallback,
+            items: fileLayoutItems,
+          });
       setFileJustifiedLayout((current) => (
         justifiedFileLayoutsEqual(current, nextLayout) ? current : nextLayout
       ));
@@ -1284,89 +2582,437 @@ export function FileSpacePage() {
     const resizeObserver = new ResizeObserver(scheduleMeasure);
 
     resizeObserver.observe(grid);
-    detailElements.forEach((details) => resizeObserver.observe(details));
-    imageElements.forEach((image) => image.addEventListener("load", scheduleMeasure));
     measure();
 
     return () => {
       disposed = true;
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
-      imageElements.forEach((image) => image.removeEventListener("load", scheduleMeasure));
       resizeObserver.disconnect();
     };
-  }, [previewSize, visibleFileLayoutKey]);
+  }, [fileLayoutItems, fileLayoutMode, previewSize]);
+
+  const updateFileVirtualViewport = useCallback(() => {
+    const scroll = contentDropZoneRef.current;
+    const grid = fileGridRef.current;
+    if (!scroll || !grid) return;
+    const scrollRect = scroll.getBoundingClientRect();
+    const gridRect = grid.getBoundingClientRect();
+    const top = Math.max(0, scrollRect.top - gridRect.top - fileVirtualOverscan);
+    const bottom = Math.max(top, scrollRect.bottom - gridRect.top + fileVirtualOverscan);
+    setFileVirtualViewport((current) => (
+      Math.abs(current.top - top) < 1 && Math.abs(current.bottom - bottom) < 1
+        ? current
+        : { top, bottom }
+    ));
+    if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= fileVirtualOverscan * 1.5) {
+      loadMoreFilePage();
+    }
+  }, [loadMoreFilePage]);
+
+  const scheduleFileVirtualViewportUpdate = useCallback(() => {
+    if (fileVirtualViewportFrameRef.current !== null) return;
+    fileVirtualViewportFrameRef.current = window.requestAnimationFrame(() => {
+      fileVirtualViewportFrameRef.current = null;
+      updateFileVirtualViewport();
+    });
+  }, [updateFileVirtualViewport]);
+
+  useLayoutEffect(() => {
+    const scroll = contentDropZoneRef.current;
+    const grid = fileGridRef.current;
+    if (!scroll || !grid) return undefined;
+    scheduleFileVirtualViewportUpdate();
+    const resizeObserver = new ResizeObserver(scheduleFileVirtualViewportUpdate);
+    resizeObserver.observe(scroll);
+    resizeObserver.observe(grid);
+    return () => resizeObserver.disconnect();
+  }, [fileJustifiedLayout?.height, scheduleFileVirtualViewportUpdate]);
+
+  const renderedFiles = useMemo(() => {
+    if (!fileJustifiedLayout) return [];
+    return visibleJustifiedFileIds(
+      visibleFileIds,
+      fileJustifiedLayout,
+      fileVirtualViewport.top,
+      fileVirtualViewport.bottom,
+    ).flatMap((id) => {
+      const file = visibleFileById.get(id);
+      return file ? [file] : [];
+    });
+  }, [fileJustifiedLayout, fileVirtualViewport, visibleFileById, visibleFileIds]);
+
+  useLayoutEffect(() => {
+    const revealFile = pendingFileRevealRef.current;
+    const scroll = contentDropZoneRef.current;
+    const grid = fileGridRef.current;
+    const placement = revealFile ? fileJustifiedLayout?.placements[revealFile.id] : null;
+    if (!revealFile || !scroll || !grid || !placement || !fileJustifiedLayout) return;
+    const scrollRect = scroll.getBoundingClientRect();
+    const gridRect = grid.getBoundingClientRect();
+    const targetTop = gridRect.top - scrollRect.top + scroll.scrollTop + placement.y;
+    scroll.scrollTop = Math.max(0, targetTop - Math.max(24, (scroll.clientHeight - fileJustifiedLayout.cardHeight) / 2));
+    pendingFileRevealRef.current = null;
+    updateFileVirtualViewport();
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      const cardButton = document.querySelector<HTMLButtonElement>(
+        `.file-space-file-card[data-file-id="${CSS.escape(revealFile.id)}"] > button:first-child`,
+      );
+      cardButton?.focus({ preventScroll: true });
+      if (cardButton && pendingFileOpenRef.current === revealFile.id) {
+        pendingFileOpenRef.current = null;
+        cardButton.dispatchEvent(new MouseEvent("dblclick", {
+          bubbles: true,
+          cancelable: true,
+          button: 0,
+          view: window,
+        }));
+      }
+    }));
+  }, [fileJustifiedLayout, fileRevealRevision, updateFileVirtualViewport]);
+
+  useEffect(() => {
+    const visibleIds = selectionVisibilityWithPendingReveal(
+      sortedVisibleFiles.map((file) => file.id),
+      pendingFileRevealRef.current?.id,
+    );
+    const nextSelection = pruneSelection(selectedFileIdsRef.current, visibleIds);
+    if (!setsEqual(nextSelection, selectedFileIdsRef.current)) {
+      updateSelectedFiles(nextSelection);
+    }
+    if (selectionAnchorRef.current && !nextSelection.has(selectionAnchorRef.current)) {
+      selectionAnchorRef.current = null;
+    }
+    if (nextSelection.size !== 1) {
+      setInspectorTimeline(null);
+      setInspectorTimelineLoading(false);
+    }
+  }, [visibleFileIds]);
+
+  useEffect(() => {
+    let cancelled = false;
+    setInspectorTimeline(null);
+    if (!selectedFile || selectedFile.versionCount < 1) {
+      setInspectorTimelineLoading(false);
+      return () => { cancelled = true; };
+    }
+    if (!isTauri()) {
+      setInspectorTimeline(createVisualTimeline(selectedFile));
+      setInspectorTimelineLoading(false);
+      return () => { cancelled = true; };
+    }
+    setInspectorTimelineLoading(true);
+    void (async () => {
+      try {
+        const loaded = await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: selectedFile.id });
+        // Selection only loads inspector data. Replacing the workspace snapshot
+        // here also replaces the current paged file window with the root page;
+        // that retriggers pagination, resets scrollTop, and makes a click look
+        // like a file reorder. Workspace mutations refresh the snapshot through
+        // their own explicit paths.
+        if (!cancelled && lifecycleRef.current.mounted) setInspectorTimeline(loaded);
+      } catch {
+        if (!cancelled) setInspectorTimeline(null);
+      } finally {
+        if (!cancelled) setInspectorTimelineLoading(false);
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [selectedFile?.id, selectedFile?.updatedAt, selectedFile?.versionCount]);
 
   const openTimeline = async (file: FileSpaceFileRecord) => {
-    if (file.versionCount < 1 || !isTauri()) return;
+    if (file.versionCount < 1 && inspectorTimeline?.fileId !== file.id) return;
+    const requestId = timelineRequestRef.current + 1;
+    timelineRequestRef.current = requestId;
+    versionPreviewRequestRef.current += 1;
     setFileContextMenu(null);
     setTimelineBusy(true);
     setError(null);
     try {
-      const loaded = await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: file.id });
-      setTimelineFile(file);
+      let timelineFileRecord = file;
+      const loaded = !isTauri()
+        ? createVisualTimeline(file)
+        : await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: file.id });
+      if (!loaded || requestId !== timelineRequestRef.current || !lifecycleRef.current.mounted) return;
+      if (isTauri()) {
+        const refreshedSnapshot = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
+        if (requestId !== timelineRequestRef.current || !lifecycleRef.current.mounted) return;
+        setSnapshot(refreshedSnapshot);
+        timelineFileRecord = refreshedSnapshot.files.find((candidate) => candidate.id === file.id) ?? file;
+      }
+      setInspectorTimeline(loaded);
+      setTimelineFile(timelineFileRecord);
       setTimeline(loaded);
       setSelectedVersionId(loaded.currentVersionId);
       setVersionPreview(null);
+      const comparison = defaultVersionComparison(loaded.versions, loaded.currentVersionId);
+      setDiffBeforeVersionId(comparison?.beforeVersionId ?? null);
+      setDiffAfterVersionId(comparison?.afterVersionId ?? null);
+      setVersionDiffStatus(comparison ? "loading" : "idle");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      setTimelinePanelOpen(true);
     } catch (timelineError) {
-      setError(errorText(timelineError));
+      if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
+        setError(errorText(timelineError));
+      }
     } finally {
-      setTimelineBusy(false);
+      if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
+        setTimelineBusy(false);
+      }
     }
   };
 
   const selectTimelineVersion = async (version: TaskFileVersionRecord) => {
+    if (!timeline) return;
+    const fileId = timeline.fileId;
+    const timelineRequestId = timelineRequestRef.current;
+    const previewRequestId = versionPreviewRequestRef.current + 1;
+    versionPreviewRequestRef.current = previewRequestId;
     setSelectedVersionId(version.id);
+    const currentVersion = timeline.versions.find((candidate) => candidate.id === timeline.currentVersionId);
+    if (currentVersion && version.id !== currentVersion.id) {
+      if (version.versionNumber < currentVersion.versionNumber) {
+        setDiffBeforeVersionId(version.id);
+        setDiffAfterVersionId(currentVersion.id);
+      } else {
+        setDiffBeforeVersionId(currentVersion.id);
+        setDiffAfterVersionId(version.id);
+      }
+    } else {
+      const comparison = defaultVersionComparison(timeline.versions, timeline.currentVersionId);
+      setDiffBeforeVersionId(comparison?.beforeVersionId ?? null);
+      setDiffAfterVersionId(comparison?.afterVersionId ?? null);
+    }
+    if (!isTauri()) {
+      setVersionPreview(null);
+      setTimelineBusy(false);
+      return;
+    }
     if (!supportsTextPreview(version)) {
       setVersionPreview(null);
+      setTimelineBusy(false);
       return;
     }
     setTimelineBusy(true);
     try {
       const bytes = await invoke<number[]>("read_task_file_version", {
-        fileId: timeline?.fileId,
+        fileId,
         versionId: version.id,
       });
-      setVersionPreview(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)));
+      if (
+        previewRequestId === versionPreviewRequestRef.current
+        && timelineRequestId === timelineRequestRef.current
+        && lifecycleRef.current.mounted
+      ) {
+        setVersionPreview(new TextDecoder("utf-8", { fatal: true }).decode(new Uint8Array(bytes)));
+      }
     } catch {
-      setVersionPreview(null);
+      if (
+        previewRequestId === versionPreviewRequestRef.current
+        && timelineRequestId === timelineRequestRef.current
+        && lifecycleRef.current.mounted
+      ) {
+        setVersionPreview(null);
+      }
     } finally {
-      setTimelineBusy(false);
+      if (
+        previewRequestId === versionPreviewRequestRef.current
+        && timelineRequestId === timelineRequestRef.current
+        && lifecycleRef.current.mounted
+      ) {
+        setTimelineBusy(false);
+      }
     }
+  };
+
+  const dismissVersionNotification = () => {
+    setVersionNotifications((current) => current.slice(1));
+  };
+
+  const viewVersionNotification = async () => {
+    const notification = versionNotifications[0];
+    if (!notification) return;
+    dismissVersionNotification();
+    let latestSnapshot = snapshot;
+    let file = latestSnapshot.files.find((candidate) => candidate.id === notification.fileId);
+    if (!file && isTauri()) {
+      try {
+        latestSnapshot = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
+        setSnapshot(latestSnapshot);
+        file = latestSnapshot.files.find((candidate) => candidate.id === notification.fileId);
+      } catch {
+        file = undefined;
+      }
+    }
+    if (!file) {
+      setError(t("fileSpace.versionNotification.unavailable"));
+      return;
+    }
+    setActiveCollection("files");
+    setCurrentFolderId(file.folderId);
+    setQuery("");
+    updateSelectedFiles(new Set([file.id]), file.id);
+    await openTimeline(file);
+  };
+
+  const viewIdenticalImportFile = async () => {
+    const notice = importConflictFeedback;
+    const target = notice?.files[0];
+    if (!target) return;
+
+    let latestSnapshot = snapshot;
+    let file = latestSnapshot.files.find((candidate) => candidate.id === target.fileId);
+    if (!file && isTauri()) {
+      try {
+        latestSnapshot = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
+        setSnapshot(latestSnapshot);
+        file = latestSnapshot.files.find((candidate) => candidate.id === target.fileId);
+      } catch {
+        file = undefined;
+      }
+    }
+    if (!file) {
+      setImportConflictFeedback(null);
+      setError(t("fileSpace.importConflict.unavailable"));
+      return;
+    }
+
+    setImportConflictFeedback(null);
+    setActiveCollection("files");
+    setCurrentFolderId(file.folderId);
+    setQuery("");
+    setTypeFilter("all");
+    setTagFilter("all");
+    setTimeFilter("all");
+    setFilterMenuOpen(false);
+    setInspectorVisible(true);
+    updateSelectedFiles(new Set([file.id]), file.id);
+
+    const fileId = file.id;
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        const button = document.querySelector<HTMLButtonElement>(
+          `.file-space-file-card[data-file-id="${CSS.escape(fileId)}"] > button`,
+        );
+        button?.scrollIntoView({
+          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+          block: "center",
+          inline: "center",
+        });
+        button?.focus({ preventScroll: true });
+      });
+    });
   };
 
   const setCurrentTimelineVersion = async (versionId: string) => {
-    if (!timeline) return;
+    if (!timeline || !isTauri()) return;
+    const fileId = timeline.fileId;
+    const requestId = timelineRequestRef.current + 1;
+    const mutationRequestId = timelineMutationRequestRef.current + 1;
+    timelineRequestRef.current = requestId;
+    timelineMutationRequestRef.current = mutationRequestId;
+    versionPreviewRequestRef.current += 1;
     setTimelineBusy(true);
+    setVersionPreview(null);
     setError(null);
     try {
       const updated = await invoke<FileSpaceSnapshot>("set_current_task_file_version", {
-        fileId: timeline.fileId,
+        fileId,
         versionId,
       });
-      const loaded = await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: timeline.fileId });
+      if (
+        mutationRequestId !== timelineMutationRequestRef.current
+        || !lifecycleRef.current.mounted
+      ) return;
       setSnapshot(updated);
+      if (requestId !== timelineRequestRef.current || !lifecycleRef.current.mounted) return;
+      const loaded = await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId });
+      if (
+        mutationRequestId !== timelineMutationRequestRef.current
+        || requestId !== timelineRequestRef.current
+        || !lifecycleRef.current.mounted
+      ) return;
       setTimeline(loaded);
-      setTimelineFile(updated.files.find((file) => file.id === timeline.fileId) ?? timelineFile);
+      setInspectorTimeline(loaded);
+      setSelectedVersionId(loaded.currentVersionId);
+      const comparison = defaultVersionComparison(loaded.versions, loaded.currentVersionId);
+      setDiffBeforeVersionId(comparison?.beforeVersionId ?? null);
+      setDiffAfterVersionId(comparison?.afterVersionId ?? null);
+      setVersionDiffStatus(comparison ? "loading" : "idle");
+      setVersionDiffResult(null);
+      setVersionDiffError(null);
+      setTimelineFile(updated.files.find((file) => file.id === fileId) ?? timelineFile);
     } catch (versionError) {
-      setError(errorText(versionError));
+      if (
+        mutationRequestId === timelineMutationRequestRef.current
+        && lifecycleRef.current.mounted
+      ) {
+        setError(errorText(versionError));
+      }
     } finally {
-      setTimelineBusy(false);
+      if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
+        setTimelineBusy(false);
+      }
     }
   };
 
-  const folderIsActuallyEmpty = childFolders.length === 0 && directFiles.length === 0;
+  const swapComparedVersions = () => {
+    if (!diffBeforeVersionId || !diffAfterVersionId) return;
+    setDiffBeforeVersionId(diffAfterVersionId);
+    setDiffAfterVersionId(diffBeforeVersionId);
+  };
+
+  const folderIsActuallyEmpty = childFolders.length === 0 && filePageTotal === 0;
   const showEmptyDropZone = folderIsActuallyEmpty
     && !normalizedQuery
     && typeFilter === "all"
     && tagFilter === "all"
     && timeFilter === "all";
-  const workspaceTitle = currentFolder?.name ?? snapshot.rootName ?? t("fileSpace.title");
+  const workspaceTitle = isTrashView
+    ? t("fileSpace.trash.title")
+    : currentFolder?.name ?? snapshot.rootName ?? t("fileSpace.title");
+
+  const applyWorkspaceMutation = useCallback((mutation: FileSpaceWorkspaceMutation<FileSpaceSnapshot>) => {
+    setWorkspaceDirectory(mutation.directory);
+    setSnapshot(mutation.snapshot);
+    setFilePageTotal(mutation.snapshot.fileCount);
+    setFilePageCursor(null);
+    setExpandedFolders(new Set());
+    setCurrentFolderId(null);
+    window.localStorage.removeItem(currentFolderStorageKey);
+    setActiveCollection("files");
+    setQuery("");
+    setSearchResult(null);
+    setSearchLoading(false);
+    setTypeFilter("all");
+    setTagFilter("all");
+    setTimeFilter("all");
+    setFilterMenuOpen(false);
+    setGlobalSearchOpen(false);
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    setTimelinePanelOpen(false);
+    setTimeline(null);
+    setTimelineFile(null);
+    setInspectorTimeline(null);
+    setInspectorTimelineLoading(false);
+    updateSelectedFiles(new Set(), null);
+    setVersionNotifications([]);
+    setImportConflictFeedback(null);
+    setTrashFeedback(null);
+    setError(null);
+    setWorkspaceGeneration((generation) => generation + 1);
+    setFilePageRevision((revision) => revision + 1);
+  }, []);
   const hasActiveFilters = typeFilter !== "all"
     || tagFilter !== "all"
     || timeFilter !== "all"
-    || sortOption !== "updatedDesc"
+    || sortOption !== "manual"
     || searchScopes.length !== 3;
-  const chooseStorageRoot = async (mode: RootSetupMode) => {
+  const chooseStorageRoot = async (mode: RootSetupMode, returnFocusTarget?: HTMLElement) => {
+    if (mode === "import" && returnFocusTarget) {
+      importExistingTriggerRef.current = returnFocusTarget;
+    }
     if (!isTauri()) {
       setError(`${t("fileSpace.errors.configure")} Tauri desktop runtime is required.`);
       return;
@@ -1385,10 +3031,11 @@ export function FileSpacePage() {
         setSetupCancelled(true);
         return;
       }
-      const command = mode === "import"
-        ? "import_existing_file_space_root"
-        : "configure_file_space_root";
-      const configured = await invoke<FileSpaceSnapshot>(command, {
+      if (mode === "import") {
+        setPendingImportPath(Array.isArray(selected) ? selected[0] ?? null : selected);
+        return;
+      }
+      const configured = await invoke<FileSpaceSnapshot>("configure_file_space_root", {
         path: selected,
       });
       if (!canCommitOperation(operation)) return;
@@ -1401,6 +3048,46 @@ export function FileSpacePage() {
         setError(`${t(errorKey)} ${errorText(configureError)}`);
       }
     } finally {
+      finishOperation(operation);
+      setRootSetupMode(null);
+    }
+  };
+
+  const confirmExistingFolderImport = async () => {
+    if (!pendingImportPath) return;
+    const operation = beginOperation("configure");
+    if (!operation) return;
+    const requestId = createImportRequestId();
+    importRequestRef.current = requestId;
+    setRootSetupMode("import");
+    setSetupCancelled(false);
+    setImportFeedback({
+      requestId,
+      phase: "scanning",
+      processed: 0,
+      total: 0,
+      currentName: null,
+    });
+    setError(null);
+    try {
+      await waitForCommittedPaint();
+      if (!canCommitOperation(operation)) return;
+      const configured = await invoke<FileSpaceSnapshot>("import_existing_file_space_root", {
+        requestId,
+        path: pendingImportPath,
+      });
+      if (!canCommitOperation(operation)) return;
+      setSnapshot(configured);
+      setCurrentFolderId(null);
+      setExpandedFolders(new Set(configured.folders.map((folder) => folder.id)));
+      setPendingImportPath(null);
+      setImportFeedback(null);
+    } catch (configureError) {
+      if (canCommitOperation(operation)) {
+        setError(`${t("fileSpace.errors.initializeImport")} ${errorText(configureError)}`);
+      }
+    } finally {
+      if (importRequestRef.current === requestId) importRequestRef.current = null;
       finishOperation(operation);
       setRootSetupMode(null);
     }
@@ -1433,11 +3120,63 @@ export function FileSpacePage() {
     }
   };
 
-  const openCreateFolder = (parentId: string | null) => {
+  const createTextFile = async () => {
+    if (!createFileFormat || !createFileName.trim()) return;
+    if (!isTauri()) {
+      setError(`${t("fileSpace.errors.createFile")} Tauri desktop runtime is required.`);
+      return;
+    }
+    const operation = beginOperation("create");
+    if (!operation) return;
+    setError(null);
+    try {
+      const result = await invoke<FileSpaceCreatedFileResult>("create_file_space_text_file", {
+        parentId: createFileParentId,
+        name: `${createFileName.trim()}.${createFileFormat}`,
+        format: createFileFormat,
+      });
+      if (!canCommitOperation(operation)) return;
+      pendingFileRevealRef.current = result.file;
+      setSnapshot(result.snapshot);
+      setFilePageTotal(result.snapshot.fileCount);
+      setFilePageCursor(null);
+      updateSelectedFiles(new Set([result.file.id]), result.file.id);
+      setCreateFileFormat(null);
+      setCreateFileParentId(null);
+      setCreateFileName("");
+      setFilePageRevision((revision) => revision + 1);
+    } catch (createError) {
+      if (canCommitOperation(operation)) {
+        setError(`${t("fileSpace.errors.createFile")} ${errorText(createError)}`);
+      }
+    } finally {
+      finishOperation(operation);
+    }
+  };
+
+  const openCreateTextFile = (parentId: string | null) => {
     if (operationRef.current) return;
+    rememberDialogReturnFocus(contentDropZoneRef.current);
     nativeDropBlockedRef.current = true;
     setFolderContextMenu(null);
     setFileContextMenu(null);
+    setContentContextMenu(null);
+    setCreateFileParentId(parentId);
+    setCreateFileFormat("md");
+    setCreateFileName(t("fileSpace.createFile.defaultName"));
+  };
+
+  const selectCreateTextFileFormat = (format: NewTextFileFormat) => {
+    setCreateFileFormat(format);
+  };
+
+  const openCreateFolder = (parentId: string | null) => {
+    if (operationRef.current) return;
+    rememberDialogReturnFocus();
+    nativeDropBlockedRef.current = true;
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    setContentContextMenu(null);
     setCreateParentId(parentId);
     setFolderName("");
     setCreateFolderOpen(true);
@@ -1469,17 +3208,50 @@ export function FileSpacePage() {
       requestId = createImportRequestId();
       importRequestRef.current = requestId;
       setImportFeedback({ requestId, phase: "scanning", processed: 0, total: 0, currentName: null });
+      const inspection = await invoke<FileSpaceDroppedFileConflictInspection>(
+        "inspect_file_space_import_conflicts",
+        {
+          folderId: destinationFolderId,
+          paths: selectedPaths,
+        },
+      );
+      if (!canCommitOperation(operation)) return;
+      const conflicts = inspection.conflicts.filter((conflict) => !conflict.identical);
+      const identicalFiles = inspection.conflicts
+        .filter((conflict) => conflict.identical)
+        .map((conflict) => ({
+          fileId: conflict.existingFileId,
+          fileName: conflict.fileName,
+        }));
+      if (conflicts.length > 0) {
+        rememberDialogReturnFocus(contentDropZoneRef.current);
+        setImportFeedback(null);
+        setPendingFileImportConflict({
+          requestId,
+          folderId: destinationFolderId,
+          source: { kind: "paths", paths: selectedPaths },
+          conflicts,
+          identicalFiles,
+        });
+        return;
+      }
       const imported = await invoke<FileSpaceSnapshot>("import_file_space_files", {
         requestId,
         folderId: destinationFolderId,
         paths: selectedPaths,
+        conflictAction: "rename",
       });
       if (!canCommitOperation(operation)) return;
       setSnapshot(imported);
       setExpandedFolders(new Set(imported.folders.map((folder) => folder.id)));
-      setImportFeedback((current) => current?.requestId === requestId
-        ? { ...current, phase: "completed", processed: current.total || current.processed }
-        : current);
+      if (identicalFiles.length > 0) {
+        setImportConflictFeedback({ files: identicalFiles });
+        setImportFeedback(null);
+      } else {
+        setImportFeedback((current) => current?.requestId === requestId
+          ? { ...current, phase: "completed", processed: current.total || current.processed }
+          : current);
+      }
     } catch (importError) {
       if (canCommitOperation(operation)) {
         const message = errorText(importError);
@@ -1534,17 +3306,50 @@ export function FileSpacePage() {
         });
       }
       if (!canCommitOperation(operation)) return;
+      const inspection = await invoke<FileSpaceDroppedFileConflictInspection>(
+        "inspect_file_space_dropped_conflicts",
+        {
+          folderId: destinationFolderId,
+          files,
+        },
+      );
+      if (!canCommitOperation(operation)) return;
+      const conflicts = inspection.conflicts.filter((conflict) => !conflict.identical);
+      const identicalFiles = inspection.conflicts
+        .filter((conflict) => conflict.identical)
+        .map((conflict) => ({
+          fileId: conflict.existingFileId,
+          fileName: conflict.fileName,
+        }));
+      if (conflicts.length > 0) {
+        rememberDialogReturnFocus(contentDropZoneRef.current);
+        setImportFeedback(null);
+        setPendingFileImportConflict({
+          requestId,
+          folderId: destinationFolderId,
+          source: { kind: "droppedFiles", files },
+          conflicts,
+          identicalFiles,
+        });
+        return;
+      }
       const imported = await invoke<FileSpaceSnapshot>("import_file_space_dropped_files", {
         requestId,
         folderId: destinationFolderId,
         files,
+        conflictAction: "rename",
       });
       if (!canCommitOperation(operation)) return;
       setSnapshot(imported);
       setExpandedFolders(new Set(imported.folders.map((folder) => folder.id)));
-      setImportFeedback((current) => current?.requestId === requestId
-        ? { ...current, phase: "completed", processed: current.total || current.processed, currentName: null }
-        : current);
+      if (identicalFiles.length > 0) {
+        setImportConflictFeedback({ files: identicalFiles });
+        setImportFeedback(null);
+      } else {
+        setImportFeedback((current) => current?.requestId === requestId
+          ? { ...current, phase: "completed", processed: current.total || current.processed, currentName: null }
+          : current);
+      }
     } catch (importError) {
       if (canCommitOperation(operation)) {
         const message = errorText(importError);
@@ -1565,6 +3370,74 @@ export function FileSpacePage() {
     }
   };
 
+  const resolveFileImportConflict = async (action: FileImportConflictAction) => {
+    const pending = pendingFileImportConflict;
+    if (!pending || !isTauri()) return;
+    const operation = beginOperation("import");
+    if (!operation) return;
+    importRequestRef.current = pending.requestId;
+    setError(null);
+    setImportFeedback({
+      requestId: pending.requestId,
+      phase: "importing",
+      processed: 0,
+      total: pending.source.kind === "paths"
+        ? pending.source.paths.length
+        : pending.source.files.length,
+      currentName: null,
+    });
+    try {
+      const imported = pending.source.kind === "paths"
+        ? await invoke<FileSpaceSnapshot>("import_file_space_files", {
+          requestId: pending.requestId,
+          folderId: pending.folderId,
+          paths: pending.source.paths,
+          conflictAction: action,
+        })
+        : await invoke<FileSpaceSnapshot>("import_file_space_dropped_files", {
+          requestId: pending.requestId,
+          folderId: pending.folderId,
+          files: pending.source.files,
+          conflictAction: action,
+        });
+      if (!canCommitOperation(operation)) return;
+      setSnapshot(imported);
+      setExpandedFolders(new Set(imported.folders.map((folder) => folder.id)));
+      if (pending.identicalFiles.length > 0) {
+        setImportConflictFeedback({ files: pending.identicalFiles });
+        setImportFeedback(null);
+      } else {
+        setImportFeedback((current) => current?.requestId === pending.requestId
+          ? {
+            ...current,
+            phase: "completed",
+            processed: current.total || current.processed,
+            currentName: null,
+          }
+          : current);
+      }
+      setPendingFileImportConflict(null);
+    } catch (importError) {
+      if (canCommitOperation(operation)) {
+        const message = errorText(importError);
+        if (message.includes("IMPORT_CANCELLED:")) {
+          setImportFeedback((current) => current?.requestId === pending.requestId
+            ? { ...current, phase: "cancelled", error: undefined, currentName: null }
+            : current);
+          setPendingFileImportConflict(null);
+        } else {
+          setImportFeedback((current) => current?.requestId === pending.requestId
+            ? { ...current, phase: "failed", error: message, currentName: null }
+            : current);
+          setError(`${t("fileSpace.errors.import")} ${message}`);
+        }
+      }
+    } finally {
+      if (importRequestRef.current === pending.requestId) importRequestRef.current = null;
+      finishOperation(operation);
+    }
+  };
+
   const cancelImport = async () => {
     const requestId = importRequestRef.current;
     if (!requestId) return;
@@ -1579,23 +3452,33 @@ export function FileSpacePage() {
   const nativeDropBlocked = Boolean(
     internalFileDrag ||
     internalFolderDrag ||
+    selectionMarquee ||
     busyAction ||
     operationRef.current ||
     folderContextMenu ||
     fileContextMenu ||
+    contentContextMenu ||
     isFilterMenuOpen ||
     isCreateFolderOpen ||
+    createFileFormat ||
     renameFolderId ||
     deleteFolderId ||
     renameFileId ||
     deleteFileId ||
+    restoreConfirmationEntryId ||
+    isEmptyTrashConfirmationOpen ||
+    pendingFileImportConflict ||
     tagFileId ||
     createDialogPresence.mounted ||
+    createFileDialogPresence.mounted ||
     renameDialogPresence.mounted ||
     deleteDialogPresence.mounted ||
     renameFileDialogPresence.mounted ||
-    deleteFileDialogPresence.mounted
-    || tagDialogPresence.mounted
+    deleteFileDialogPresence.mounted ||
+    restoreTrashDialogPresence.mounted ||
+    emptyTrashDialogPresence.mounted ||
+    importConflictDialogPresence.mounted ||
+    tagDialogPresence.mounted
   );
 
   useEffect(() => {
@@ -1682,8 +3565,10 @@ export function FileSpacePage() {
     if (operationRef.current) return;
     nativeDropBlockedRef.current = true;
     setFileContextMenu(null);
+    setContentContextMenu(null);
     const menuWidth = 190;
-    const menuHeight = 128;
+    const hasChildFolders = (foldersByParent.get(folderId) ?? []).length > 0;
+    const menuHeight = hasChildFolders ? 162 : 128;
     setFolderContextMenu({
       folderId,
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
@@ -1699,9 +3584,31 @@ export function FileSpacePage() {
     const menuWidth = 218;
     const file = snapshot.files.find((item) => item.id === fileId);
     const menuHeight = file?.versionCount ? 280 : 236;
+    updateSelectedFiles(new Set([fileId]), fileId);
     setFolderContextMenu(null);
+    setContentContextMenu(null);
     setFileContextMenu({
       fileId,
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
+    });
+  };
+
+  const openContentContextMenu = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (operationRef.current) return;
+    const target = event.target;
+    if (
+      target instanceof Element
+      && target.closest("button, input, textarea, [role='menu'], [aria-modal='true']")
+    ) return;
+    event.preventDefault();
+    event.stopPropagation();
+    nativeDropBlockedRef.current = true;
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    const menuWidth = 228;
+    const menuHeight = 224;
+    setContentContextMenu({
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
     });
@@ -1720,7 +3627,7 @@ export function FileSpacePage() {
     setTypeFilter("all");
     setTagFilter("all");
     setTimeFilter("all");
-    updateSortOption("updatedDesc");
+    updateSortOption("manual");
     setSearchScopes(["name", "content", "tag"]);
   };
 
@@ -1728,6 +3635,7 @@ export function FileSpacePage() {
     if (operationRef.current) return;
     const file = snapshot.files.find((item) => item.id === fileId);
     if (!file) return;
+    rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(fileId)}"] > button:first-child`));
     nativeDropBlockedRef.current = true;
     setFileContextMenu(null);
     setTagDraft(file.tags.join(", "));
@@ -1780,7 +3688,67 @@ export function FileSpacePage() {
     }
   };
 
-  const startFileDragOut = async (target: HTMLButtonElement, fileId: string) => {
+  const selectFileFromPointer = (
+    event: React.PointerEvent<HTMLButtonElement>,
+    fileId: string,
+  ) => {
+    const currentIds = selectedFileIdsRef.current;
+    const orderedIds = sortedVisibleFiles.map((file) => file.id);
+    const toggle = event.metaKey || event.ctrlKey;
+    const range = event.shiftKey;
+    const collapseOnClick = !toggle && !range && currentIds.has(fileId) && currentIds.size > 1;
+    let nextIds = currentIds;
+
+    if (!collapseOnClick) {
+      const next = resolveFileClickSelection({
+        currentIds,
+        orderedIds,
+        targetId: fileId,
+        anchorId: selectionAnchorRef.current,
+        toggle,
+        range,
+      });
+      nextIds = next.ids;
+      updateSelectedFiles(next.ids, next.anchorId);
+    }
+
+    pointerSelectionIntentRef.current = { fileId, collapseOnClick };
+    const dragIds = nextIds.has(fileId)
+      ? orderedSelection(orderedIds, nextIds)
+      : [fileId];
+    return dragIds.length > 0 ? dragIds : [fileId];
+  };
+
+  const handleFileClick = (event: React.MouseEvent<HTMLButtonElement>, fileId: string) => {
+    const intent = pointerSelectionIntentRef.current;
+    pointerSelectionIntentRef.current = null;
+    if (suppressNextFileClickRef.current) {
+      suppressNextFileClickRef.current = false;
+      return;
+    }
+    if (event.detail === 0) {
+      const next = resolveFileClickSelection({
+        currentIds: selectedFileIdsRef.current,
+        orderedIds: sortedVisibleFiles.map((file) => file.id),
+        targetId: fileId,
+        anchorId: selectionAnchorRef.current,
+        toggle: event.metaKey || event.ctrlKey,
+        range: event.shiftKey,
+      });
+      updateSelectedFiles(next.ids, next.anchorId);
+      return;
+    }
+    if (intent?.fileId === fileId && intent.collapseOnClick) {
+      updateSelectedFiles(new Set([fileId]), fileId);
+    }
+  };
+
+  const startFileDragOut = async (
+    target: HTMLButtonElement,
+    fileId: string,
+    immediate = false,
+    preparedPreview: PreparedFileDragPreview | null = null,
+  ) => {
     if (!isTauri() || operationRef.current || fileDragStartingRef.current) return;
     if (fileDragReleaseTimerRef.current !== null) {
       window.clearTimeout(fileDragReleaseTimerRef.current);
@@ -1789,9 +3757,19 @@ export function FileSpacePage() {
     fileDragStartingRef.current = true;
     setFileContextMenu(null);
     setError(null);
-    const previewBytes = await fileDragPreviewBytes(target);
+    // Command+Tab must start the system session before the app loses focus, so
+    // this path never waits for an asynchronous DOM snapshot.
+    const previewBytes = immediate
+      ? preparedPreview?.immediateBytes
+        ?? imageDragPreviewBytes(target)
+        ?? fallbackFileDragPreviewBytes(target)
+      : await (preparedPreview?.promise ?? fileDragPreviewBytes(target));
     if (!lifecycleRef.current.mounted || !fileDragStartingRef.current) return;
-    void invoke("start_file_space_drag_out", { fileId, previewBytes })
+    void invoke("start_file_space_drag_out", {
+      fileId,
+      previewBytes,
+      skipGeneratedPreview: immediate && previewBytes !== null,
+    })
       .catch((dragError) => {
         setError(`${t("fileSpace.errors.dragOut")} ${errorText(dragError)}`);
       })
@@ -1838,29 +3816,44 @@ export function FileSpacePage() {
     }
   };
 
-  const promoteToNativeFileDrag = (gesture: FileDragGesture) => {
+  const clearDeferredFileDragCancellation = () => {
+    if (fileDragCancelTimerRef.current === null) return;
+    window.clearTimeout(fileDragCancelTimerRef.current);
+    fileDragCancelTimerRef.current = null;
+  };
+
+  const promoteToNativeFileDrag = (gesture: FileDragGesture, immediate = false) => {
+    clearDeferredFileDragCancellation();
     fileDragGestureRef.current = null;
     cancelInternalFileDrag();
+    suppressNextFileClickRef.current = true;
+    window.setTimeout(() => { suppressNextFileClickRef.current = false; }, 0);
+    if (gesture.fileIds.length !== 1) {
+      return;
+    }
     if (!isTauri()) return;
-    void startFileDragOut(gesture.target, gesture.fileId);
+    void startFileDragOut(gesture.target, gesture.fileId, immediate, gesture.preview);
   };
 
   const resolveFileFolderDropTarget = (
     clientX: number,
     clientY: number,
-    fileId: string,
+    fileIds: string[],
   ): FileFolderDropTarget | null => {
     const element = document.elementFromPoint(clientX, clientY);
     if (!(element instanceof Element)) return null;
-    const sourceFolderId = snapshot.files.find((file) => file.id === fileId)?.folderId ?? null;
-    const row = element.closest<HTMLElement>("[data-folder-tree-id]");
-    const targetId = row?.dataset.folderTreeId;
+    const sourceFiles = fileIds.flatMap((fileId) => {
+      const file = snapshot.files.find((item) => item.id === fileId);
+      return file ? [file] : [];
+    });
+    const folderTarget = element.closest<HTMLElement>("[data-file-folder-drop], [data-folder-tree-id]");
+    const targetId = folderTarget?.dataset.fileFolderDrop ?? folderTarget?.dataset.folderTreeId;
     if (targetId && snapshot.folders.some((folder) => folder.id === targetId)) {
       return {
         folderId: targetId,
         targetId,
         kind: "folder",
-        isCurrent: sourceFolderId === targetId,
+        isCurrent: sourceFiles.length > 0 && sourceFiles.every((file) => file.folderId === targetId),
       };
     }
     if (element.closest<HTMLElement>("[data-file-root-drop]")) {
@@ -1868,7 +3861,7 @@ export function FileSpacePage() {
         folderId: null,
         targetId: null,
         kind: "root",
-        isCurrent: sourceFolderId === null,
+        isCurrent: sourceFiles.length > 0 && sourceFiles.every((file) => file.folderId === null),
       };
     }
     return null;
@@ -1879,10 +3872,12 @@ export function FileSpacePage() {
     fileId: string,
   ) => {
     if (event.button !== 0 || operationRef.current) return;
+    const fileIds = selectFileFromPointer(event, fileId);
     const card = event.currentTarget.closest<HTMLElement>(".file-space-file-card");
     const rect = card?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
     fileDragGestureRef.current = {
       fileId,
+      fileIds,
       pointerId: event.pointerId,
       startX: event.clientX,
       startY: event.clientY,
@@ -1893,6 +3888,10 @@ export function FileSpacePage() {
       target: event.currentTarget,
       orderedIds: sortedVisibleFiles.map((file) => file.id),
       phase: "pending",
+      // Generating the high-fidelity native drag image walks and rasterizes the
+      // card DOM. Keep clicks and double-clicks on the zero-work path; prepare
+      // it only after pointer movement proves this is an actual drag.
+      preview: null,
     };
   };
 
@@ -1901,26 +3900,53 @@ export function FileSpacePage() {
     if (!gesture || gesture.pointerId !== event.pointerId) return;
     const fileId = gesture.fileId;
     if ((event.buttons & 1) === 0) {
-      fileDragGestureRef.current = null;
-      cancelInternalFileDrag();
+      cancelFileDragGesture(event.pointerId);
       return;
     }
-    if (Math.hypot(event.clientX - gesture.startX, event.clientY - gesture.startY) < fileDragThreshold) {
+    const dragDistance = Math.hypot(
+      event.clientX - gesture.startX,
+      event.clientY - gesture.startY,
+    );
+    if (dragDistance < fileDragThreshold) {
       return;
+    }
+    const hasReorderMovement = hasMeaningfulFileReorderMovement({
+      startX: gesture.startX,
+      startY: gesture.startY,
+      currentX: event.clientX,
+      currentY: event.clientY,
+      minimumDistance: fileReorderCommitThreshold,
+    });
+    if (hasReorderMovement && isTauri() && gesture.fileIds.length === 1 && !gesture.preview) {
+      gesture.preview = prepareFileDragPreview(gesture.target);
     }
     event.preventDefault();
     event.stopPropagation();
+    if (
+      event.metaKey
+      && decideFileDragHandoff({
+        phase: "reordering",
+        fileCount: gesture.fileIds.length,
+        desktop: isTauri(),
+        trigger: "command",
+      }) === "promote"
+    ) {
+      promoteToNativeFileDrag(gesture, true);
+      return;
+    }
     if (pointerReachedWindowEdge(event.clientX, event.clientY)) {
       promoteToNativeFileDrag(gesture);
       return;
     }
 
     const current = internalFileDragRef.current;
-    const folderTarget = resolveFileFolderDropTarget(event.clientX, event.clientY, fileId);
+    const folderTarget = resolveFileFolderDropTarget(event.clientX, event.clientY, gesture.fileIds);
     if (gesture.phase === "pending" || !current) {
       gesture.phase = "reordering";
+      suppressNextFileClickRef.current = true;
       const started: InternalFileDrag = {
         fileId,
+        fileIds: gesture.fileIds,
         pointerId: event.pointerId,
         pointerX: event.clientX,
         pointerY: event.clientY,
@@ -1947,7 +3973,11 @@ export function FileSpacePage() {
     );
     const orderedIds = folderTarget
       ? current.originalIds
-      : grid && pointerInGrid && canReorderVisibleFiles
+      : grid
+        && pointerInGrid
+        && canReorderVisibleFiles
+        && hasReorderMovement
+        && current.fileIds.length === 1
       ? reorderedIdsAtPointer(
           grid,
           current.orderedIds,
@@ -1969,17 +3999,22 @@ export function FileSpacePage() {
     });
   };
 
-  const moveFile = async (fileId: string, folderId: string | null) => {
-    const sourceFile = snapshot.files.find((file) => file.id === fileId);
-    if (!sourceFile) return;
+  const moveFiles = async (fileIds: string[], folderId: string | null) => {
+    const uniqueIds = [...new Set(fileIds)];
+    const sourceFiles = uniqueIds.flatMap((fileId) => {
+      const file = snapshot.files.find((item) => item.id === fileId);
+      return file ? [file] : [];
+    });
+    if (sourceFiles.length === 0) return;
     const destinationName = folderId
       ? snapshot.folders.find((folder) => folder.id === folderId)?.name
       : t("fileSpace.moveFeedback.root");
     if (!destinationName) return;
     setFileMoveFeedback(null);
-    if (sourceFile.folderId === folderId) {
+    if (sourceFiles.every((file) => file.folderId === folderId)) {
       setFileMoveFeedback({
-        fileName: sourceFile.name,
+        fileName: sourceFiles.length === 1 ? sourceFiles[0].name : null,
+        fileCount: sourceFiles.length,
         destinationName,
         status: "unchanged",
       });
@@ -1989,15 +4024,61 @@ export function FileSpacePage() {
     if (!operation) return;
     setError(null);
     try {
-      const updated = await invoke<FileSpaceSnapshot>("move_file_space_file", {
-        fileId,
-        folderId,
-      });
+      let result: FileMoveResult;
+      if (!isTauri()) {
+        const destinationPath = folderId
+          ? snapshot.folders.find((folder) => folder.id === folderId)?.relativePath ?? ""
+          : "";
+        const movedIds = sourceFiles.filter((file) => file.folderId !== folderId).map((file) => file.id);
+        const unchangedIds = sourceFiles.filter((file) => file.folderId === folderId).map((file) => file.id);
+        const movedIdSet = new Set(movedIds);
+        result = {
+          snapshot: {
+            ...snapshot,
+            files: snapshot.files.map((file) => movedIdSet.has(file.id) ? {
+              ...file,
+              folderId,
+              relativePath: destinationPath ? `${destinationPath}/${file.name}` : file.name,
+              updatedAt: Date.now(),
+            } : file),
+          },
+          movedIds,
+          unchangedIds,
+          failed: [],
+        };
+      } else {
+        result = await invoke<FileMoveResult>("move_file_space_files", {
+          fileIds: uniqueIds,
+          folderId,
+        });
+      }
       if (!canCommitOperation(operation)) return;
-      setSnapshot(updated);
+      setSnapshot(result.snapshot);
       setImportFeedback(null);
-      setFileMoveFeedback({ fileName: sourceFile.name, destinationName, status: "moved" });
-      if (folderId) {
+      if (result.movedIds.length > 0) {
+        const movedFile = sourceFiles.find((file) => file.id === result.movedIds[0]);
+        setFileMoveFeedback({
+          fileName: result.movedIds.length === 1 ? movedFile?.name ?? null : null,
+          fileCount: result.movedIds.length,
+          destinationName,
+          status: "moved",
+        });
+      } else if (result.unchangedIds.length > 0 && result.failed.length === 0) {
+        setFileMoveFeedback({
+          fileName: result.unchangedIds.length === 1 ? sourceFiles[0]?.name ?? null : null,
+          fileCount: result.unchangedIds.length,
+          destinationName,
+          status: "unchanged",
+        });
+      }
+      if (result.failed.length > 0) {
+        setError(`${t("fileSpace.errors.partialMove", {
+          moved: result.movedIds.length,
+          total: sourceFiles.length,
+          failed: result.failed.length,
+        })} ${result.failed[0].message}`);
+      }
+      if (folderId && result.movedIds.length > 0) {
         setExpandedFolders((current) => new Set(current).add(folderId));
       }
     } catch (moveError) {
@@ -2013,7 +4094,7 @@ export function FileSpacePage() {
     const gesture = fileDragGestureRef.current;
     if (!gesture || gesture.pointerId !== pointerId) return;
     const drag = internalFileDragRef.current;
-    const folderTarget = resolveFileFolderDropTarget(clientX, clientY, gesture.fileId);
+    const folderTarget = resolveFileFolderDropTarget(clientX, clientY, gesture.fileIds);
     const gridRect = fileGridRef.current?.getBoundingClientRect();
     const droppedInGrid = Boolean(
       gridRect
@@ -2022,10 +4103,15 @@ export function FileSpacePage() {
       && clientY >= gridRect.top
       && clientY <= gridRect.bottom,
     );
+    clearDeferredFileDragCancellation();
     fileDragGestureRef.current = null;
     cancelInternalFileDrag();
+    if (drag) {
+      suppressNextFileClickRef.current = true;
+      window.setTimeout(() => { suppressNextFileClickRef.current = false; }, 0);
+    }
     if (drag && folderTarget) {
-      void moveFile(drag.fileId, folderTarget.folderId);
+      void moveFiles(drag.fileIds, folderTarget.folderId);
       return;
     }
     if (
@@ -2040,8 +4126,11 @@ export function FileSpacePage() {
   const cancelFileDragGesture = (pointerId?: number) => {
     const gesture = fileDragGestureRef.current;
     if (!gesture || (pointerId !== undefined && gesture.pointerId !== pointerId)) return;
+    clearDeferredFileDragCancellation();
     fileDragGestureRef.current = null;
     cancelInternalFileDrag();
+    suppressNextFileClickRef.current = false;
+    pointerSelectionIntentRef.current = null;
   };
 
   useEffect(() => {
@@ -2049,17 +4138,53 @@ export function FileSpacePage() {
     const finishGesture = (event: PointerEvent) => (
       finishFileDragGesture(event.pointerId, event.clientX, event.clientY)
     );
-    const cancelGesture = (event: PointerEvent) => cancelFileDragGesture(event.pointerId);
-    const cancelOnBlur = () => cancelFileDragGesture();
+    const deferCancelledGesture = (event: PointerEvent) => {
+      const gesture = fileDragGestureRef.current;
+      if (!gesture || gesture.pointerId !== event.pointerId) return;
+      clearDeferredFileDragCancellation();
+      fileDragCancelTimerRef.current = window.setTimeout(() => {
+        fileDragCancelTimerRef.current = null;
+        const current = fileDragGestureRef.current;
+        if (!current || current.pointerId !== event.pointerId) return;
+        if (
+          !document.hasFocus()
+          && decideFileDragHandoff({
+            phase: current.phase,
+            fileCount: current.fileIds.length,
+            desktop: isTauri(),
+            trigger: "blur",
+          }) === "promote"
+        ) {
+          promoteToNativeFileDrag(current, true);
+          return;
+        }
+        cancelFileDragGesture(event.pointerId);
+      }, 0);
+    };
+    const handoffOrCancelOnBlur = () => {
+      const gesture = fileDragGestureRef.current;
+      if (!gesture) return;
+      const decision = decideFileDragHandoff({
+        phase: gesture.phase,
+        fileCount: gesture.fileIds.length,
+        desktop: isTauri(),
+        trigger: "blur",
+      });
+      if (decision === "promote") {
+        promoteToNativeFileDrag(gesture, true);
+        return;
+      }
+      cancelFileDragGesture();
+    };
     window.addEventListener("pointermove", trackGesture, true);
     window.addEventListener("pointerup", finishGesture, true);
-    window.addEventListener("pointercancel", cancelGesture, true);
-    window.addEventListener("blur", cancelOnBlur);
+    window.addEventListener("pointercancel", deferCancelledGesture, true);
+    window.addEventListener("blur", handoffOrCancelOnBlur);
     return () => {
       window.removeEventListener("pointermove", trackGesture, true);
       window.removeEventListener("pointerup", finishGesture, true);
-      window.removeEventListener("pointercancel", cancelGesture, true);
-      window.removeEventListener("blur", cancelOnBlur);
+      window.removeEventListener("pointercancel", deferCancelledGesture, true);
+      window.removeEventListener("blur", handoffOrCancelOnBlur);
     };
   });
 
@@ -2081,20 +4206,279 @@ export function FileSpacePage() {
   });
 
   useEffect(() => {
-    if (!internalFileDrag) return undefined;
-    const cancelWithEscape = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      fileDragGestureRef.current = null;
-      cancelInternalFileDrag();
+    const handleFileDragKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        cancelFileDragGesture();
+        return;
+      }
+      // macOS can consume Tab during app switching; Meta is the reliable early
+      // signal that lets the native drag session exist before focus changes.
+      if (event.key !== "Meta" && !(event.key === "Tab" && event.metaKey)) return;
+      const gesture = fileDragGestureRef.current;
+      if (!gesture) return;
+      if (decideFileDragHandoff({
+        phase: gesture.phase,
+        fileCount: gesture.fileIds.length,
+        desktop: isTauri(),
+        trigger: "command",
+      }) === "promote") {
+        promoteToNativeFileDrag(gesture, true);
+      }
     };
-    window.addEventListener("keydown", cancelWithEscape);
-    return () => window.removeEventListener("keydown", cancelWithEscape);
-  }, [internalFileDrag]);
+    window.addEventListener("keydown", handleFileDragKeyDown, true);
+    return () => window.removeEventListener("keydown", handleFileDragKeyDown, true);
+  });
+
+  const stopMarqueeAutoScroll = () => {
+    if (marqueeAutoScrollFrameRef.current === null) return;
+    window.cancelAnimationFrame(marqueeAutoScrollFrameRef.current);
+    marqueeAutoScrollFrameRef.current = null;
+  };
+
+  const updateMarqueeSelection = (clientX: number, clientY: number) => {
+    const gesture = marqueeGestureRef.current;
+    const scroll = contentDropZoneRef.current;
+    const grid = fileGridRef.current;
+    if (!gesture || !scroll || !grid || !fileJustifiedLayout) return;
+    gesture.lastClientX = clientX;
+    gesture.lastClientY = clientY;
+    if (
+      gesture.phase === "pending"
+      && Math.hypot(clientX - gesture.startClientX, clientY - gesture.startClientY) < fileMarqueeThreshold
+    ) return;
+
+    gesture.phase = "selecting";
+    const scrollRect = scroll.getBoundingClientRect();
+    const end = pointInScrollContent(clientX, clientY, {
+      left: scrollRect.left,
+      top: scrollRect.top,
+      scrollLeft: scroll.scrollLeft,
+      scrollTop: scroll.scrollTop,
+      scrollWidth: scroll.scrollWidth,
+      scrollHeight: scroll.scrollHeight,
+    });
+    const rectangle = normalizeSelectionRectangle(gesture.startX, gesture.startY, end.x, end.y);
+    const intersectingIds = new Set<string>();
+    const gridRect = grid.getBoundingClientRect();
+    const gridLeft = gridRect.left - scrollRect.left + scroll.scrollLeft;
+    const gridTop = gridRect.top - scrollRect.top + scroll.scrollTop;
+    for (const file of visibleFiles) {
+      const placement = fileJustifiedLayout.placements[file.id];
+      if (!placement) continue;
+      const cardTop = gridTop + placement.y;
+      if (cardTop > rectangle.bottom) break;
+      const cardBottom = cardTop + fileJustifiedLayout.cardHeight;
+      if (cardBottom < rectangle.top) continue;
+      if (rectanglesIntersect(rectangle, {
+        left: gridLeft + placement.x,
+        top: cardTop,
+        right: gridLeft + placement.x + placement.width,
+        bottom: cardBottom,
+      })) intersectingIds.add(file.id);
+    }
+    updateSelectedFiles(combineMarqueeSelection(gesture.baselineIds, intersectingIds, gesture.mode));
+    setSelectionMarquee({
+      left: rectangle.left,
+      top: rectangle.top,
+      width: rectangle.right - rectangle.left,
+      height: rectangle.bottom - rectangle.top,
+    });
+  };
+
+  const marqueeScrollSpeed = (clientY: number) => {
+    const scroll = contentDropZoneRef.current;
+    if (!scroll) return 0;
+    const rect = scroll.getBoundingClientRect();
+    if (clientY < rect.top + fileMarqueeScrollInset) {
+      const intensity = Math.min(1, (rect.top + fileMarqueeScrollInset - clientY) / fileMarqueeScrollInset);
+      return -Math.max(2, intensity * fileMarqueeMaxScrollSpeed);
+    }
+    if (clientY > rect.bottom - fileMarqueeScrollInset) {
+      const intensity = Math.min(1, (clientY - (rect.bottom - fileMarqueeScrollInset)) / fileMarqueeScrollInset);
+      return Math.max(2, intensity * fileMarqueeMaxScrollSpeed);
+    }
+    return 0;
+  };
+
+  const ensureMarqueeAutoScroll = () => {
+    if (marqueeAutoScrollFrameRef.current !== null) return;
+    const tick = () => {
+      marqueeAutoScrollFrameRef.current = null;
+      const gesture = marqueeGestureRef.current;
+      const scroll = contentDropZoneRef.current;
+      if (!gesture || gesture.phase !== "selecting" || !scroll) return;
+      const speed = marqueeScrollSpeed(gesture.lastClientY);
+      if (speed === 0) return;
+      const before = scroll.scrollTop;
+      scroll.scrollTop += speed;
+      if (scroll.scrollTop === before) return;
+      updateMarqueeSelection(gesture.lastClientX, gesture.lastClientY);
+      marqueeAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
+    };
+    marqueeAutoScrollFrameRef.current = window.requestAnimationFrame(tick);
+  };
+
+  const beginMarqueeSelection = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      event.button !== 0
+      || !event.isPrimary
+      || target?.closest(".file-space-file-card, .file-space-folder-grid > button, button, input, textarea, select, [contenteditable='true']")
+      || operationRef.current
+      || internalFileDragRef.current
+      || internalFolderDragRef.current
+      || isFileSpaceDialogMounted
+    ) return;
+    const scrollRect = event.currentTarget.getBoundingClientRect();
+    const innerLeft = scrollRect.left + event.currentTarget.clientLeft;
+    const innerTop = scrollRect.top + event.currentTarget.clientTop;
+    const usesOverlayVerticalScrollbar = event.currentTarget.scrollHeight > event.currentTarget.clientHeight
+      && event.currentTarget.offsetWidth - event.currentTarget.clientWidth <= event.currentTarget.clientLeft * 2;
+    const usesOverlayHorizontalScrollbar = event.currentTarget.scrollWidth > event.currentTarget.clientWidth
+      && event.currentTarget.offsetHeight - event.currentTarget.clientHeight <= event.currentTarget.clientTop * 2;
+    const innerRight = innerLeft + event.currentTarget.clientWidth - (usesOverlayVerticalScrollbar ? 13 : 0);
+    const innerBottom = innerTop + event.currentTarget.clientHeight - (usesOverlayHorizontalScrollbar ? 13 : 0);
+    if (
+      event.clientX < innerLeft
+      || event.clientX >= innerRight
+      || event.clientY < innerTop
+      || event.clientY >= innerBottom
+    ) return;
+    const mode: FileSelectionMode = event.shiftKey
+      ? "union"
+      : event.metaKey || event.ctrlKey
+      ? "toggle"
+      : "replace";
+    const start = pointInScrollContent(event.clientX, event.clientY, {
+      left: scrollRect.left,
+      top: scrollRect.top,
+      scrollLeft: event.currentTarget.scrollLeft,
+      scrollTop: event.currentTarget.scrollTop,
+      scrollWidth: event.currentTarget.scrollWidth,
+      scrollHeight: event.currentTarget.scrollHeight,
+    });
+    marqueeGestureRef.current = {
+      pointerId: event.pointerId,
+      startX: start.x,
+      startY: start.y,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      lastClientX: event.clientX,
+      lastClientY: event.clientY,
+      baselineIds: new Set(selectedFileIdsRef.current),
+      baselineAnchorId: selectionAnchorRef.current,
+      mode,
+      phase: "pending",
+    };
+    try {
+      event.currentTarget.setPointerCapture(event.pointerId);
+    } catch {
+      // Synthetic accessibility/testing events may not create a native capture session.
+    }
+    event.currentTarget.focus({ preventScroll: true });
+    event.preventDefault();
+  };
+
+  const continueMarqueeSelection = (event: React.PointerEvent<HTMLDivElement>) => {
+    const gesture = marqueeGestureRef.current;
+    if (!gesture || gesture.pointerId !== event.pointerId) return;
+    if ((event.buttons & 1) === 0) {
+      finishMarqueeSelection(event.pointerId);
+      return;
+    }
+    event.preventDefault();
+    updateMarqueeSelection(event.clientX, event.clientY);
+    if (gesture.phase === "selecting") ensureMarqueeAutoScroll();
+  };
+
+  const finishMarqueeSelection = (pointerId: number, restoreBaseline = false) => {
+    const gesture = marqueeGestureRef.current;
+    const scroll = contentDropZoneRef.current;
+    if (!gesture || gesture.pointerId !== pointerId) return;
+    if (restoreBaseline) {
+      updateSelectedFiles(new Set(gesture.baselineIds), gesture.baselineAnchorId);
+    } else if (gesture.phase === "pending" && gesture.mode === "replace") {
+      clearSelectedFiles();
+    }
+    if (!restoreBaseline && gesture.phase === "selecting") {
+      const preservedAnchor = gesture.mode !== "replace"
+        && gesture.baselineAnchorId
+        && selectedFileIdsRef.current.has(gesture.baselineAnchorId)
+        ? gesture.baselineAnchorId
+        : null;
+      selectionAnchorRef.current = preservedAnchor ?? sortedVisibleFiles.find((file) => (
+        selectedFileIdsRef.current.has(file.id)
+      ))?.id ?? null;
+      setSelectionAnnouncement(t("fileSpace.inspector.selectionStatus", {
+        count: selectedFileIdsRef.current.size,
+      }));
+    }
+    marqueeGestureRef.current = null;
+    stopMarqueeAutoScroll();
+    setSelectionMarquee(null);
+    if (scroll?.hasPointerCapture(pointerId)) scroll.releasePointerCapture(pointerId);
+  };
+
+  const cancelActiveMarquee = () => {
+    const gesture = marqueeGestureRef.current;
+    if (gesture) finishMarqueeSelection(gesture.pointerId, true);
+  };
+
+  const handleFileGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      const allIds = sortedVisibleFiles.map((file) => file.id);
+      updateSelectedFiles(new Set(allIds), allIds[0] ?? null);
+      setSelectionAnnouncement(t("fileSpace.inspector.selectionStatus", { count: allIds.length }));
+      return;
+    }
+    if (
+      event.key === "Escape"
+      && !marqueeGestureRef.current
+      && !fileDragGestureRef.current
+      && !internalFileDragRef.current
+      && !internalFolderDragRef.current
+      && selectedFileIdsRef.current.size > 0
+    ) {
+      event.preventDefault();
+      clearSelectedFiles();
+    }
+  };
+
+  useEffect(() => {
+    document.body.classList.toggle("is-file-space-marquee-selecting", Boolean(selectionMarquee));
+    return () => document.body.classList.remove("is-file-space-marquee-selecting");
+  }, [selectionMarquee]);
+
+  useEffect(() => {
+    const cancelOnBlur = () => cancelActiveMarquee();
+    const cancelOnResize = () => cancelActiveMarquee();
+    const cancelWithEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape" && marqueeGestureRef.current) {
+        event.preventDefault();
+        event.stopPropagation();
+        cancelActiveMarquee();
+      }
+    };
+    window.addEventListener("blur", cancelOnBlur);
+    window.addEventListener("resize", cancelOnResize);
+    window.addEventListener("keydown", cancelWithEscape, true);
+    return () => {
+      window.removeEventListener("blur", cancelOnBlur);
+      window.removeEventListener("resize", cancelOnResize);
+      window.removeEventListener("keydown", cancelWithEscape, true);
+    };
+  });
+
+  useEffect(() => {
+    if (marqueeGestureRef.current) cancelActiveMarquee();
+  }, [fileLayoutMode, visibleFileIds, previewSize]);
 
   const openRenameFile = (fileId: string) => {
     if (operationRef.current) return;
     const file = snapshot.files.find((item) => item.id === fileId);
     if (!file) return;
+    rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(fileId)}"] > button:first-child`));
     nativeDropBlockedRef.current = true;
     setFileContextMenu(null);
     setRenameFileName(file.name);
@@ -2125,6 +4509,7 @@ export function FileSpacePage() {
 
   const requestDeleteFile = (fileId: string) => {
     if (operationRef.current) return;
+    rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(fileId)}"] > button:first-child`));
     nativeDropBlockedRef.current = true;
     setFileContextMenu(null);
     setDeleteFileId(fileId);
@@ -2132,6 +4517,7 @@ export function FileSpacePage() {
 
   const deleteFile = async () => {
     if (!deleteFileId) return;
+    const fileName = snapshot.files.find((file) => file.id === deleteFileId)?.name ?? "";
     const operation = beginOperation("delete");
     if (!operation) return;
     setError(null);
@@ -2142,6 +4528,7 @@ export function FileSpacePage() {
       if (!canCommitOperation(operation)) return;
       setSnapshot(updated);
       setDeleteFileId(null);
+      setTrashFeedback(t("fileSpace.trash.movedToTrash", { name: fileName }));
     } catch (deleteError) {
       if (canCommitOperation(operation)) {
         setError(`${t("fileSpace.errors.deleteFile")} ${errorText(deleteError)}`);
@@ -2155,6 +4542,7 @@ export function FileSpacePage() {
     if (operationRef.current) return;
     const folder = snapshot.folders.find((item) => item.id === folderId);
     if (!folder) return;
+    rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-folder-tree-id="${CSS.escape(folderId)}"] .file-space-tree-name`));
     nativeDropBlockedRef.current = true;
     setFolderContextMenu(null);
     setRenameFolderName(folder.name);
@@ -2185,6 +4573,7 @@ export function FileSpacePage() {
 
   const requestDeleteFolder = (folderId: string) => {
     if (operationRef.current) return;
+    rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-folder-tree-id="${CSS.escape(folderId)}"] .file-space-tree-name`));
     nativeDropBlockedRef.current = true;
     setFolderContextMenu(null);
     setDeleteFolderId(folderId);
@@ -2192,6 +4581,7 @@ export function FileSpacePage() {
 
   const deleteFolder = async () => {
     if (!deleteFolderId) return;
+    const folderNameToDelete = snapshot.folders.find((folder) => folder.id === deleteFolderId)?.name ?? "";
     const operation = beginOperation("delete");
     if (!operation) return;
     const descendantIds = new Set<string>();
@@ -2210,9 +4600,96 @@ export function FileSpacePage() {
       setExpandedFolders((current) => new Set([...current].filter((id) => !descendantIds.has(id))));
       if (currentFolderId && descendantIds.has(currentFolderId)) setCurrentFolderId(null);
       setDeleteFolderId(null);
+      setTrashFeedback(t("fileSpace.trash.movedToTrash", { name: folderNameToDelete }));
     } catch (deleteError) {
       if (canCommitOperation(operation)) {
         setError(`${t("fileSpace.errors.deleteFolder")} ${errorText(deleteError)}`);
+      }
+    } finally {
+      finishOperation(operation);
+    }
+  };
+
+  const requestRestoreTrashEntry = (entryId: string, focusEntryId: string | null) => {
+    if (operationRef.current) return;
+    const fallback = focusEntryId
+      ? document.querySelector<HTMLElement>(
+          `[data-trash-entry-restore="${CSS.escape(focusEntryId)}"]`,
+        )
+      : document.querySelector<HTMLElement>("[data-trash-heading]");
+    rememberDialogReturnFocus(fallback);
+    nativeDropBlockedRef.current = true;
+    setRestoreConfirmationEntryId(entryId);
+  };
+
+  const restoreTrashEntry = async () => {
+    const entryId = restoreConfirmationEntryId;
+    if (!entryId) return;
+    const item = snapshot.trashItems.find((candidate) => candidate.id === entryId);
+    if (!item) {
+      setRestoreConfirmationEntryId(null);
+      return;
+    }
+    const operation = beginOperation("restore");
+    if (!operation) return;
+    setRestoringTrashEntryId(entryId);
+    setError(null);
+    try {
+      const updated = await invoke<FileSpaceSnapshot>("restore_file_space_trash_entry", { entryId });
+      if (!canCommitOperation(operation)) return;
+      setSnapshot(updated);
+      setRestoreConfirmationEntryId(null);
+      const restored = item.itemType === "folder"
+        ? updated.folders.find((folder) => folder.id === item.rootId)
+        : updated.files.find((file) => file.id === item.rootId);
+      setTrashFeedback(t("fileSpace.trash.restored", { name: restored?.name ?? item.name }));
+    } catch (restoreError) {
+      if (canCommitOperation(operation)) {
+        setRestoreConfirmationEntryId(null);
+        setError(`${t("fileSpace.errors.restoreTrash")} ${errorText(restoreError)}`);
+      }
+    } finally {
+      if (canCommitOperation(operation)) setRestoringTrashEntryId(null);
+      finishOperation(operation);
+    }
+  };
+
+  const requestEmptyTrash = (trigger: HTMLElement) => {
+    if (operationRef.current || snapshot.trashItems.length === 0) return;
+    setEmptyTrashEntryIds(snapshot.trashItems.map((item) => item.id));
+    rememberDialogReturnFocus(
+      document.querySelector<HTMLElement>("[data-trash-heading]"),
+    );
+    dialogReturnFocusRef.current = trigger;
+    nativeDropBlockedRef.current = true;
+    setEmptyTrashConfirmationOpen(true);
+  };
+
+  const emptyTrash = async () => {
+    const entryIds = [...emptyTrashEntryIds];
+    if (!isEmptyTrashConfirmationOpen || entryIds.length === 0) return;
+    const operation = beginOperation("purgeTrash");
+    if (!operation) return;
+    setError(null);
+    try {
+      const result = await invoke<FileSpaceTrashPurgeResult>("empty_file_space_trash", { entryIds });
+      if (!canCommitOperation(operation)) return;
+      setSnapshot(result.snapshot);
+      if (result.snapshot.trashItems.length === 0) dialogReturnFocusRef.current = null;
+      setEmptyTrashConfirmationOpen(false);
+      if (result.failedCount > 0 || result.failureMessage) {
+        const summary = t("fileSpace.trash.partialPurge", {
+          failed: result.failedCount,
+          purged: result.purgedCount,
+        });
+        setError(`${t("fileSpace.errors.emptyTrash")} ${summary}${result.failureMessage ? ` ${result.failureMessage}` : ""}`);
+      } else {
+        setTrashFeedback(t("fileSpace.trash.emptied"));
+      }
+    } catch (emptyError) {
+      if (canCommitOperation(operation)) {
+        setEmptyTrashConfirmationOpen(false);
+        setError(`${t("fileSpace.errors.emptyTrash")} ${errorText(emptyError)}`);
       }
     } finally {
       finishOperation(operation);
@@ -2375,11 +4852,11 @@ export function FileSpacePage() {
       suppressFolderClickRef.current = true;
       setFolderContextMenu(null);
     }
-    const tree = folderTreeRef.current;
-    if (tree) {
-      const rect = tree.getBoundingClientRect();
-      if (event.clientY < rect.top + 26) tree.scrollTop -= 9;
-      else if (event.clientY > rect.bottom - 26) tree.scrollTop += 9;
+    const sidebarScroll = sidebarScrollRef.current;
+    if (sidebarScroll) {
+      const rect = sidebarScroll.getBoundingClientRect();
+      if (event.clientY < rect.top + 26) sidebarScroll.scrollTop -= 9;
+      else if (event.clientY > rect.bottom - 26) sidebarScroll.scrollTop += 9;
     }
     updateInternalFolderDrag({
       folderId: gesture.folderId,
@@ -2432,8 +4909,20 @@ export function FileSpacePage() {
   });
 
   const chooseFolder = (folderId: string | null) => {
+    setActiveCollection("files");
     setCurrentFolderId(folderId);
+    clearSelectedFiles();
     setQuery("");
+  };
+
+  const chooseTrash = () => {
+    setActiveCollection("trash");
+    clearSelectedFiles();
+    setQuery("");
+    setFilterMenuOpen(false);
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    closeTimelinePanel();
   };
 
   const toggleExpanded = (folderId: string) => {
@@ -2445,11 +4934,21 @@ export function FileSpacePage() {
     });
   };
 
+  const toggleFolderSubtree = (folderId: string) => {
+    const expandableIds = expandableFolderIdsInSubtree(snapshot.folders, folderId);
+    setExpandedFolders((current) => setFolderSubtreeExpanded(
+      current,
+      expandableIds,
+      !isFolderSubtreeFullyExpanded(current, expandableIds),
+    ));
+    setFolderContextMenu(null);
+  };
+
   const renderTree = (parentId: string | null, depth = 0): React.ReactNode => (
     (foldersByParent.get(parentId) ?? []).map((folder) => {
       const hasChildren = (foldersByParent.get(folder.id) ?? []).length > 0;
       const expanded = expandedFolders.has(folder.id);
-      const active = currentFolder?.id === folder.id;
+      const active = activeCollection === "files" && currentFolder?.id === folder.id;
       const dropMode = internalFolderDrag?.target?.targetId === folder.id
         ? internalFolderDrag.target.mode
         : null;
@@ -2471,12 +4970,14 @@ export function FileSpacePage() {
               onClick={() => toggleExpanded(folder.id)}
               style={{ left: `${depth * 17 - 15}px` }}
               aria-label={hasChildren ? folder.name : undefined}
+              aria-expanded={hasChildren ? expanded : undefined}
             >
-              {hasChildren ? (expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />) : null}
+              {hasChildren ? <ChevronRight className="file-space-tree-chevron" size={13} /> : null}
             </button>
             <button
               className="file-space-tree-name"
               type="button"
+              aria-expanded={hasChildren ? expanded : undefined}
               aria-grabbed={internalFolderDrag?.folderId === folder.id}
               onPointerDown={(event) => beginFolderDragGesture(event, folder.id)}
               onClick={() => {
@@ -2486,6 +4987,12 @@ export function FileSpacePage() {
                 }
                 chooseFolder(folder.id);
               }}
+              onDoubleClick={(event) => {
+                event.preventDefault();
+                setExpandedFolders((current) => (
+                  toggleFolderOnDoubleClick(current, folder.id, hasChildren)
+                ));
+              }}
               title={folder.name}
             >
               {active ? <FolderOpen size={15} /> : <Folder size={15} />}
@@ -2493,7 +5000,12 @@ export function FileSpacePage() {
               <small>{folderCounts.get(folder.id) ?? 0}</small>
             </button>
           </div>
-          {hasChildren && expanded ? renderTree(folder.id, depth + 1) : null}
+          {hasChildren ? (
+            <FolderTreeChildren
+              expanded={expanded}
+              renderChildren={() => renderTree(folder.id, depth + 1)}
+            />
+          ) : null}
         </div>
       );
     })
@@ -2502,6 +5014,7 @@ export function FileSpacePage() {
   if (loading) {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
+        <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <span className="file-space-loading-mark" />
       </section>
     );
@@ -2513,9 +5026,17 @@ export function FileSpacePage() {
       : t(`fileSpace.root.status.${snapshot.rootStatus}`);
     return (
       <section className="file-space-page file-space-setup-page">
+        <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
+        <SetupPreferences />
         <div className="file-space-setup">
-          <div className="file-space-setup-icon"><HardDrive size={28} strokeWidth={1.6} /></div>
-          <p className="eyebrow">LumeTrace · {t("fileSpace.eyebrow")}</p>
+          <img
+            className="file-space-setup-logo"
+            src={lumeTraceLogo}
+            alt=""
+            aria-hidden="true"
+            draggable={false}
+          />
+          <p className="eyebrow">Lume Trace · {t("fileSpace.eyebrow")}</p>
           <h1>{t("fileSpace.root.title")}</h1>
           <p className="file-space-setup-description">{t("fileSpace.root.description")}</p>
           {snapshot.rootPath ? (
@@ -2544,7 +5065,7 @@ export function FileSpacePage() {
                 className="file-space-secondary-button"
                 type="button"
                 disabled={busyAction === "configure"}
-                onClick={() => void chooseStorageRoot("import")}
+                onClick={(event) => void chooseStorageRoot("import", event.currentTarget)}
               >
                 <Upload size={16} />
                 {busyAction === "configure" && rootSetupMode === "import"
@@ -2556,67 +5077,147 @@ export function FileSpacePage() {
           </div>
           {setupCancelled ? <p className="file-space-setup-feedback">{t("fileSpace.root.cancel")}</p> : null}
           {error ? <p className="file-space-error" role="alert">{error}</p> : null}
-          <p className="file-space-setup-privacy"><ShieldCheck size={14} />{t("fileSpace.root.privacy")}</p>
+          <p className="file-space-setup-privacy">
+            <ShieldCheck size={14} />
+            <span>{t("fileSpace.root.privacy")}</span>
+          </p>
         </div>
+        <ImportExistingFolderSheet
+          path={pendingImportPath}
+          busy={busyAction === "configure"}
+          progress={importFeedback && importFeedback.requestId === importRequestRef.current
+            ? { processed: importFeedback.processed, total: importFeedback.total }
+            : null}
+          error={error}
+          returnFocusTarget={importExistingTriggerRef.current}
+          onCancel={() => { setPendingImportPath(null); setError(null); }}
+          onChooseAgain={() => void chooseStorageRoot("import")}
+          onConfirm={() => void confirmExistingFolderImport()}
+        />
       </section>
     );
   }
 
   return (
-    <section className="file-space-page">
-      <aside className="file-space-sidebar">
-        <header className="file-space-sidebar-header">
-          <p className="eyebrow">{t("fileSpace.eyebrow")}</p>
-          <h1>{t("fileSpace.title")}</h1>
+    <section className={`file-space-page${isSidebarVisible ? "" : " is-sidebar-hidden"}${isInspectorVisible && !isTrashView ? "" : " is-inspector-hidden"}`}>
+      <aside className="file-space-sidebar" aria-hidden={!isSidebarVisible} inert={!isSidebarVisible}>
+        <header className="file-space-sidebar-header" data-tauri-drag-region>
+          <button
+            className="file-space-sidebar-close"
+            type="button"
+            onClick={() => setSidebarVisible(false)}
+            title={t("fileSpace.toolbar.toggleSidebar")}
+            aria-label={t("fileSpace.toolbar.toggleSidebar")}
+          >
+            <X size={17} />
+          </button>
         </header>
 
-        <nav className="file-space-quick-navigation" aria-label={t("fileSpace.title")}>
-          <button
-            className={`${!currentFolder ? "is-active" : ""}${internalFileDrag?.folderTarget?.kind === "root" ? (internalFileDrag.folderTarget.isCurrent ? " is-file-drop-current" : " is-file-drop-target") : ""}`}
-            type="button"
-            data-file-root-drop="true"
-            onClick={() => chooseFolder(null)}
+        <div className="file-space-sidebar-scroll" ref={sidebarScrollRef}>
+          <div
+            id="file-space-favorites-heading"
+            className="file-space-folder-heading file-space-favorites-heading"
+            role="heading"
+            aria-level={2}
           >
-            <Folder size={16} /><span>{t("fileSpace.sidebar.all")}</span><small>{snapshot.files.length}</small>
-          </button>
-        </nav>
+            <span>{t("fileSpace.sidebar.favorites")}</span>
+          </div>
+          <nav className="file-space-quick-navigation" aria-labelledby="file-space-favorites-heading">
+            <button
+              className={`${activeCollection === "files" && !currentFolder ? "is-active" : ""}${internalFileDrag?.folderTarget?.kind === "root" ? (internalFileDrag.folderTarget.isCurrent ? " is-file-drop-current" : " is-file-drop-target") : ""}`}
+              type="button"
+              data-file-root-drop="true"
+              aria-current={activeCollection === "files" && !currentFolder ? "page" : undefined}
+              onClick={() => chooseFolder(null)}
+            >
+              <Folder size={16} /><span>{t("fileSpace.sidebar.all")}</span><small>{snapshot.fileCount}</small>
+            </button>
+            <button
+              className={isTrashView ? "is-active" : ""}
+              type="button"
+              aria-current={isTrashView ? "page" : undefined}
+              onClick={chooseTrash}
+            >
+              <Trash2 size={16} /><span>{t("fileSpace.sidebar.trash")}</span><small>{snapshot.trashItems.length}</small>
+            </button>
+          </nav>
 
-        <div
-          className={`file-space-folder-heading${internalFolderDrag?.target?.mode === "root" ? " is-folder-root-drop" : ""}`}
-          data-folder-root-drop="true"
-        >
-          <span>{t("fileSpace.sidebar.folders")}</span>
-          <button type="button" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(null)} aria-label={t("fileSpace.sidebar.addFolder")}>
-            <Plus size={15} />
-          </button>
-        </div>
-        <div
-          className={`file-space-tree${internalFolderDrag?.target?.mode === "root" ? " is-folder-root-drop" : ""}`}
-          ref={folderTreeRef}
-          role="tree"
-          data-folder-root-drop="true"
-        >
-          {renderTree(null)}
+          <div
+            className={`file-space-folder-heading${internalFolderDrag?.target?.mode === "root" ? " is-folder-root-drop" : ""}`}
+            data-folder-root-drop="true"
+          >
+            <span>{t("fileSpace.sidebar.folders")}</span>
+            <button type="button" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(null)} aria-label={t("fileSpace.sidebar.addFolder")}>
+              <Plus size={15} />
+            </button>
+          </div>
+          <div
+            className={`file-space-tree${internalFolderDrag?.target?.mode === "root" ? " is-folder-root-drop" : ""}`}
+            ref={folderTreeRef}
+            role="tree"
+            data-folder-root-drop="true"
+          >
+            {renderTree(null)}
+          </div>
         </div>
 
         <footer className="file-space-sidebar-footer">
-          <span className="file-space-health-dot" />
-          <div>
-            <strong>{t("fileSpace.sidebar.statusReady")}</strong>
-            <span title={snapshot.rootPath ?? ""}>{snapshot.rootPath}</span>
-          </div>
+          <FileSpaceWorkspaceStatus directory={workspaceDirectory} />
+          <FileSpaceSettingsMenu<FileSpaceSnapshot>
+            workspaceDirectory={workspaceDirectory}
+            workspaceDisabled={Boolean(busyAction)}
+            onWorkspaceChanged={applyWorkspaceMutation}
+            onWorkspaceDirectoryChanged={setWorkspaceDirectory}
+          />
         </footer>
       </aside>
 
       <main className="file-space-workspace">
-        <header className="file-space-workspace-toolbar">
-          <strong className="file-space-toolbar-title" title={workspaceTitle}>
-            {workspaceTitle}
-          </strong>
-          <div className="file-space-preview-size-control">
+        <header className="file-space-workspace-toolbar" data-tauri-drag-region>
+          <div className="file-space-toolbar-navigation">
+            <button
+              className="file-space-toolbar-icon-button"
+              type="button"
+              onClick={toggleSidebarVisibility}
+              title={t("fileSpace.toolbar.toggleSidebar")}
+              aria-label={t("fileSpace.toolbar.toggleSidebar")}
+              aria-pressed={isSidebarVisible}
+            >
+              <PanelLeft size={18} />
+            </button>
+            {currentFolder && !isTrashView ? (
+              <>
+                <button
+                  className="file-space-toolbar-icon-button"
+                  type="button"
+                  onClick={() => chooseFolder(currentFolder.parentId ?? null)}
+                  title={t("fileSpace.toolbar.back")}
+                  aria-label={t("fileSpace.toolbar.back")}
+                >
+                  <ChevronLeft size={19} />
+                </button>
+                <strong className="file-space-toolbar-title" title={workspaceTitle} data-tauri-drag-region>{workspaceTitle}</strong>
+              </>
+            ) : isTrashView ? (
+              <strong className="file-space-toolbar-title" title={workspaceTitle} data-trash-heading tabIndex={-1} data-tauri-drag-region>{workspaceTitle}</strong>
+            ) : null}
+          </div>
+          {isTrashView ? <>
+            <span className="file-space-toolbar-spacer" />
+            <button
+              className="file-space-empty-trash-button"
+              type="button"
+              disabled={snapshot.trashItems.length === 0 || Boolean(busyAction)}
+              onClick={(event) => requestEmptyTrash(event.currentTarget)}
+            >
+              {busyAction === "purgeTrash"
+                ? t("fileSpace.trash.cleaning")
+                : t("fileSpace.trash.emptyAction")}
+            </button>
+          </> : <><div className={`file-space-preview-size-control${fileLayoutMode === "list" ? " is-disabled" : ""}`}>
             <button
               type="button"
-              disabled={previewSize <= previewSizeMin}
+              disabled={fileLayoutMode === "list" || previewSize <= previewSizeMin}
               onClick={() => updatePreviewSize(previewSize - previewSizeStep)}
               title={t("fileSpace.toolbar.previewSmaller")}
               aria-label={t("fileSpace.toolbar.previewSmaller")}
@@ -2629,13 +5230,14 @@ export function FileSpacePage() {
               max={previewSizeMax}
               step={5}
               value={previewSize}
+              disabled={fileLayoutMode === "list"}
               onInput={(event) => updatePreviewSize(Number(event.currentTarget.value))}
               aria-label={t("fileSpace.toolbar.previewSize")}
               style={{ "--preview-size-progress": `${((previewSize - previewSizeMin) / (previewSizeMax - previewSizeMin)) * 100}%` } as React.CSSProperties}
             />
             <button
               type="button"
-              disabled={previewSize >= previewSizeMax}
+              disabled={fileLayoutMode === "list" || previewSize >= previewSizeMax}
               onClick={() => updatePreviewSize(previewSize + previewSizeStep)}
               title={t("fileSpace.toolbar.previewLarger")}
               aria-label={t("fileSpace.toolbar.previewLarger")}
@@ -2720,60 +5322,167 @@ export function FileSpacePage() {
               </div>
             ) : null}
           </div>
-          <label className="file-space-search">
-            {searchLoading ? <LoaderCircle className="is-spinning" size={16} /> : <Search size={17} />}
-            <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder={t("fileSpace.toolbar.search")} />
-            {query ? <button type="button" onClick={() => setQuery("")} aria-label={t("fileSpace.toolbar.clearSearch")}><X size={14} /></button> : null}
-          </label>
+          <button
+            className="file-space-search file-space-search-trigger"
+            type="button"
+            onClick={openGlobalSearch}
+            title={t("fileSpace.globalSearch.openShortcut", { shortcut: globalSearchShortcut })}
+            aria-label={t("fileSpace.globalSearch.openShortcut", { shortcut: globalSearchShortcut })}
+            aria-keyshortcuts={globalSearchShortcut === "⌘K" ? "Meta+K" : "Alt+K"}
+          >
+            <Search size={18} />
+            <span>{t("fileSpace.globalSearch.trigger")}</span>
+            <kbd className="file-space-search-shortcut">{globalSearchShortcut}</kbd>
+          </button>
+          <FileSpaceAiSurface key={workspaceGeneration} onOpenSource={openFileFromAiSource} />
+          <button
+            className={`file-space-toolbar-icon-button${isInspectorVisible ? " is-active" : ""}`}
+            type="button"
+            onClick={toggleInspectorVisibility}
+            title={t("fileSpace.toolbar.toggleInspector")}
+            aria-label={t("fileSpace.toolbar.toggleInspector")}
+            aria-pressed={isInspectorVisible}
+          >
+            <Info size={18} />
+          </button>
+          </>}
         </header>
 
         {error ? <p className="file-space-error file-space-workspace-error" role="alert">{error}</p> : null}
 
-        <div
-          className={`file-space-content-scroll${visibleFolders.length === 0 && visibleFiles.length === 0 ? " is-empty" : ""}${isFileDragOver ? " is-drag-over" : ""}`}
+        {!isTrashView && fileLayoutMode === "list" && (visibleFolders.length > 0 || visibleFiles.length > 0) ? (
+          <div className="file-space-file-list-header" aria-hidden="true">
+            <span />
+            <span className="file-space-file-list-date-heading">
+              {t("fileSpace.content.listColumns.name")}
+              {sortOption === "nameAsc" || sortOption === "nameDesc" ? (
+                <i>{sortOption === "nameAsc" ? "↑" : "↓"}</i>
+              ) : null}
+            </span>
+            <span>{t("fileSpace.content.listColumns.dimensions")}</span>
+            <span className="file-space-file-list-date-heading">
+              {t("fileSpace.content.listColumns.extension")}
+              {sortOption === "typeAsc" ? <i>↑</i> : null}
+            </span>
+            <span className="file-space-file-list-date-heading">
+              {t("fileSpace.content.listColumns.fileSize")}
+              {sortOption === "sizeDesc" ? <i>↓</i> : null}
+            </span>
+            <span className="file-space-file-list-date-heading">
+              {t("fileSpace.content.listColumns.addedAt")}
+              {sortOption === "updatedAsc" || sortOption === "updatedDesc" ? (
+                <i>{sortOption === "updatedAsc" ? "↑" : "↓"}</i>
+              ) : null}
+            </span>
+          </div>
+        ) : null}
+
+        {isTrashView ? (
+          <div className="file-space-trash-scroll">
+            <FileSpaceTrashView
+              items={snapshot.trashItems}
+              restoringId={restoringTrashEntryId}
+              busy={Boolean(busyAction)}
+              locale={locale}
+              retentionMs={trashRetentionMs}
+              formatFileSize={formatFileSize}
+              onRestore={requestRestoreTrashEntry}
+            />
+          </div>
+        ) : <div
+          className={`file-space-content-scroll${fileLayoutMode === "list" ? " is-list-layout" : ""}${visibleFolders.length === 0 && filePageTotal === 0 && !filePageLoading ? " is-empty" : ""}${isFileDragOver ? " is-drag-over" : ""}${selectionMarquee ? " is-marquee-selecting" : ""}`}
           ref={contentDropZoneRef}
+          tabIndex={-1}
           aria-busy={busyAction === "import"}
+          onKeyDown={handleFileGridKeyDown}
           onDragEnter={handleExternalDragEnter}
           onDragOver={handleExternalDragOver}
           onDragLeave={handleExternalDragLeave}
           onDrop={handleExternalDrop}
+          onPointerDown={beginMarqueeSelection}
+          onPointerMove={continueMarqueeSelection}
+          onPointerUp={(event) => finishMarqueeSelection(event.pointerId)}
+          onPointerCancel={(event) => finishMarqueeSelection(event.pointerId, true)}
+          onContextMenu={openContentContextMenu}
+          onLostPointerCapture={(event) => {
+            if (marqueeGestureRef.current?.pointerId === event.pointerId) {
+              finishMarqueeSelection(event.pointerId, true);
+            }
+          }}
+          onScroll={() => {
+            scheduleFileVirtualViewportUpdate();
+            const gesture = marqueeGestureRef.current;
+            if (gesture?.phase === "selecting") {
+              updateMarqueeSelection(gesture.lastClientX, gesture.lastClientY);
+            }
+          }}
         >
           {visibleFolders.length > 0 ? (
             <section className="file-space-content-section">
               <div className="file-space-folder-grid">
-                {visibleFolders.map((folder) => (
-                  <button key={folder.id} type="button" onDoubleClick={() => chooseFolder(folder.id)} onClick={() => chooseFolder(folder.id)} onContextMenu={(event) => openFolderContextMenu(event, folder.id)}>
-                    <span className="file-space-folder-art">
-                      <span className="file-space-folder-layer is-back" />
-                      <span className="file-space-folder-layer is-middle" />
-                      <span className="file-space-folder-layer is-front" />
-                      <span className="file-space-folder-cover">
-                        {(folderDisplayDetails.get(folder.id)?.previews ?? []).length > 0 ? (
-                          <span className={`file-space-folder-preview-grid is-${Math.min(folderDisplayDetails.get(folder.id)?.previews.length ?? 0, 4)}`}>
-                            {(folderDisplayDetails.get(folder.id)?.previews ?? []).map((file) => {
-                              const PreviewIcon = fileIcon(file);
-                              return (
-                                <span className={`file-space-folder-preview is-${fileCategory(file)}`} key={file.id}>
-                                  <PreviewIcon size={24} strokeWidth={1.35} />
-                                  <small>{file.name.split(".").pop()?.toUpperCase().slice(0, 4)}</small>
-                                </span>
-                              );
-                            })}
-                          </span>
-                        ) : null}
+                {visibleFolders.map((folder) => {
+                  const fileDropTarget = internalFileDrag?.folderTarget?.targetId === folder.id
+                    ? internalFileDrag.folderTarget
+                    : null;
+                  return (
+                  <button
+                    className={fileDropTarget ? (fileDropTarget.isCurrent ? "is-file-drop-current" : "is-file-drop-target") : undefined}
+                    data-file-folder-drop={folder.id}
+                    key={folder.id}
+                    type="button"
+                    onDoubleClick={() => chooseFolder(folder.id)}
+                    onClick={() => chooseFolder(folder.id)}
+                    onContextMenu={(event) => openFolderContextMenu(event, folder.id)}
+                  >
+                    {fileLayoutMode === "list" ? (
+                      <span className="file-space-folder-list-icon"><Folder size={22} strokeWidth={1.45} /></span>
+                    ) : (
+                      <span className="file-space-folder-art">
+                        <span className="file-space-folder-layer is-back" />
+                        <span className="file-space-folder-layer is-middle" />
+                        <span className="file-space-folder-layer is-front" />
+                        <span className="file-space-folder-cover">
+                          {(folderDisplayDetails.get(folder.id)?.previews ?? []).length > 0 ? (
+                            <span className={`file-space-folder-preview-grid is-${Math.min(folderDisplayDetails.get(folder.id)?.previews.length ?? 0, 4)}`}>
+                              {(folderDisplayDetails.get(folder.id)?.previews ?? []).map((file) => {
+                                const PreviewIcon = fileIcon(file);
+                                return (
+                                  <span className={`file-space-folder-preview is-${fileCategory(file)}`} key={file.id}>
+                                    <PreviewIcon size={24} strokeWidth={1.35} />
+                                    <small>{file.name.split(".").pop()?.toUpperCase().slice(0, 4)}</small>
+                                  </span>
+                                );
+                              })}
+                            </span>
+                          ) : null}
+                        </span>
                       </span>
-                    </span>
-                    <span className="file-space-item-copy">
-                      <strong>{folder.name}</strong>
-                      <small>
-                        {t("fileSpace.content.fileCount", { count: folderDisplayDetails.get(folder.id)?.fileCount ?? 0 })}
-                        {(folderDisplayDetails.get(folder.id)?.folderCount ?? 0) > 0
-                          ? ` · ${t("fileSpace.content.subfolderCount", { count: folderDisplayDetails.get(folder.id)?.folderCount ?? 0 })}`
-                          : null}
-                      </small>
-                    </span>
+                    )}
+                    {fileLayoutMode === "list" ? (
+                      <>
+                        <span className="file-space-file-list-name">
+                          <strong>{folder.name}</strong>
+                          <small>{t("fileSpace.content.fileCount", { count: folderDisplayDetails.get(folder.id)?.fileCount ?? 0 })}</small>
+                        </span>
+                        <span className="file-space-file-list-value">–</span>
+                        <span className="file-space-file-list-value">–</span>
+                        <span className="file-space-file-list-value">–</span>
+                        <span className="file-space-file-list-value">{fileListDateFormatter.format(folder.createdAt)}</span>
+                      </>
+                    ) : (
+                      <span className="file-space-item-copy">
+                        <strong>{folder.name}</strong>
+                        <small>
+                          {t("fileSpace.content.fileCount", { count: folderDisplayDetails.get(folder.id)?.fileCount ?? 0 })}
+                          {(folderDisplayDetails.get(folder.id)?.folderCount ?? 0) > 0
+                            ? ` · ${t("fileSpace.content.subfolderCount", { count: folderDisplayDetails.get(folder.id)?.folderCount ?? 0 })}`
+                            : null}
+                        </small>
+                      </span>
+                    )}
                   </button>
-                ))}
+                  );
+                })}
               </div>
             </section>
           ) : null}
@@ -2781,18 +5490,22 @@ export function FileSpacePage() {
           {visibleFiles.length > 0 ? (
             <section className="file-space-content-section">
               <div
-                className="file-space-file-grid"
+                className={`file-space-file-grid${fileLayoutMode === "list" ? " is-list-layout" : ""}`}
                 ref={fileGridRef}
+                role="group"
+                aria-label={t("fileSpace.content.files")}
                 style={{
-                  "--file-preview-size": `${previewSize}px`,
+                  "--file-preview-size": `${fileLayoutMode === "list" ? fileListPreviewSize : previewSize}px`,
                   height: fileJustifiedLayout ? `${fileJustifiedLayout.height}px` : undefined,
                 } as React.CSSProperties}
               >
-                {visibleFiles.map((file) => {
+                {renderedFiles.map((file) => {
                   const placement = fileJustifiedLayout?.placements[file.id];
+                  const imageDimensions = imageDimensionsByFileVersion[imageDimensionsKey(file.id, file.updatedAt)];
+                  const extension = fileExtension(file);
                   return (
                     <div
-                      className={`file-space-file-card${internalFileDrag?.fileId === file.id ? " is-reorder-placeholder" : ""}`}
+                      className={`file-space-file-card${selectedFileIds.has(file.id) ? " is-selected" : ""}${internalFileDrag?.fileIds.includes(file.id) ? " is-reorder-placeholder" : ""}`}
                       data-file-id={file.id}
                       data-source-kind={file.sourceKind}
                       data-version-count={file.versionCount}
@@ -2812,25 +5525,36 @@ export function FileSpacePage() {
                         data-file-id={file.id}
                         title={file.name}
                         aria-grabbed={internalFileDrag?.fileId === file.id}
+                        aria-pressed={selectedFileIds.has(file.id)}
                         draggable={false}
                         onPointerDown={(event) => beginFileDragGesture(event, file.id)}
+                        onClick={(event) => handleFileClick(event, file.id)}
                         onContextMenu={(event) => openFileContextMenu(event, file.id)}
                       >
-                        <FileArtwork file={file} />
-                        <span className="file-space-item-copy">
-                          <strong>{file.name}</strong>
-                          <small>
-                            {file.sourceKind === "task_artifact" ? t("fileSpace.content.taskArtifact") : t("fileSpace.content.userImport")}
-                            {file.currentVersion ? ` · v${file.currentVersion}/${file.versionCount}` : ""}
-                            {" · "}{formatFileSize(file.sizeBytes)}
-                            {" · "}{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(file.updatedAt)}
-                          </small>
-                          {file.tags.length > 0 ? (
-                            <span className="file-space-card-tags">
-                              {file.tags.slice(0, 3).map((tag) => <em key={tag}>{tag}</em>)}
+                        <FileArtwork file={file} onImageDimensions={recordImageDimensions} />
+                        {fileLayoutMode === "list" ? (
+                          <>
+                            <span className="file-space-file-list-name">
+                              <strong>{file.name}</strong>
+                              {shouldShowFileVersionBadge(file.versionCount) ? (
+                                <small>{t("fileSpace.content.versionCount", { count: file.versionCount })}</small>
+                              ) : null}
                             </span>
-                          ) : null}
-                        </span>
+                            <span className="file-space-file-list-value">
+                              {imageDimensions?.width && imageDimensions.height
+                                ? `${imageDimensions.width} × ${imageDimensions.height}`
+                                : "–"}
+                            </span>
+                            <span className="file-space-file-list-value">{extension || "–"}</span>
+                            <span className="file-space-file-list-value">{formatFileSize(file.sizeBytes)}</span>
+                            <span className="file-space-file-list-value">{fileListDateFormatter.format(file.createdAt)}</span>
+                          </>
+                        ) : (
+                          <span className="file-space-item-copy">
+                            <strong>{file.name}</strong>
+                            <small>{fileCardMetadata(file, imageDimensions)}</small>
+                          </span>
+                        )}
                       </button>
                     </div>
                   );
@@ -2839,7 +5563,22 @@ export function FileSpacePage() {
             </section>
           ) : null}
 
-          {visibleFolders.length === 0 && visibleFiles.length === 0 ? (
+          {selectionMarquee ? (
+            <div
+              className="file-space-selection-marquee"
+              aria-hidden="true"
+              style={{
+                left: `${selectionMarquee.left}px`,
+                top: `${selectionMarquee.top}px`,
+                width: `${selectionMarquee.width}px`,
+                height: `${selectionMarquee.height}px`,
+              }}
+            />
+          ) : null}
+
+          <p className="file-space-selection-status" role="status" aria-live="polite">{selectionAnnouncement}</p>
+
+          {visibleFolders.length === 0 && filePageTotal === 0 && !filePageLoading ? (
             !showEmptyDropZone ? (
               <div className="file-space-empty file-space-empty--search">
                 {searchLoading ? <LoaderCircle className="is-spinning" size={25} /> : <FolderOpen size={27} strokeWidth={1.4} />}
@@ -2895,8 +5634,8 @@ export function FileSpacePage() {
               </div>
             )
           ) : null}
-        </div>
-        {!showEmptyDropZone && isFileDragOver ? (
+        </div>}
+        {!isTrashView && !showEmptyDropZone && isFileDragOver ? (
           <div className="file-space-drop-feedback" role="status" aria-live="polite">
             <Upload size={18} />
             <strong>{t("fileSpace.content.dropOverlayTitle")}</strong>
@@ -2915,7 +5654,11 @@ export function FileSpacePage() {
               <strong>{t(`fileSpace.importFeedback.${importFeedback.phase}`)}</strong>
               <small>
                 {importFeedback.currentName ?? (importFeedback.total > 0
-                  ? t("fileSpace.importFeedback.count", { processed: importFeedback.processed, total: importFeedback.total })
+                  ? t("fileSpace.importFeedback.count", {
+                      count: importFeedback.total,
+                      processed: importFeedback.processed,
+                      total: importFeedback.total,
+                    })
                   : t("fileSpace.importFeedback.preparing"))}
               </small>
               {!["completed", "cancelled", "failed"].includes(importFeedback.phase) && importFeedback.total > 0 ? (
@@ -2933,31 +5676,126 @@ export function FileSpacePage() {
           <div className="file-space-import-feedback is-completed" role="status" aria-live="polite">
             <span className="file-space-import-feedback-icon"><Check size={16} /></span>
             <div className="file-space-import-feedback-copy">
-              <strong>{t(`fileSpace.moveFeedback.${fileMoveFeedback.status}Title`)}</strong>
-              <small>{t(`fileSpace.moveFeedback.${fileMoveFeedback.status}Description`, {
+              <strong>{t(`fileSpace.moveFeedback.${fileMoveFeedback.status}${fileMoveFeedback.fileCount > 1 ? "Many" : ""}Title`, {
+                count: fileMoveFeedback.fileCount,
+              })}</strong>
+              <small>{t(`fileSpace.moveFeedback.${fileMoveFeedback.status}${fileMoveFeedback.fileCount > 1 ? "Many" : ""}Description`, {
                 fileName: fileMoveFeedback.fileName,
+                count: fileMoveFeedback.fileCount,
                 destinationName: fileMoveFeedback.destinationName,
               })}</small>
             </div>
             <button type="button" onClick={() => setFileMoveFeedback(null)} aria-label={t("fileSpace.moveFeedback.dismiss")}><X size={15} /></button>
           </div>
         ) : null}
+        {trashFeedback ? (
+          <div className="file-space-import-feedback is-completed" role="status" aria-live="polite">
+            <span className="file-space-import-feedback-icon"><Check size={16} /></span>
+            <div className="file-space-import-feedback-copy"><strong>{trashFeedback}</strong></div>
+            <button type="button" onClick={() => setTrashFeedback(null)} aria-label={t("fileSpace.trash.dismiss")}><X size={15} /></button>
+          </div>
+        ) : null}
+        {importConflictFeedback ? (
+          <div
+            className="file-space-version-notification file-space-identical-import-notification"
+            role="status"
+            aria-live="polite"
+          >
+            <span className="file-space-version-notification-icon"><Copy size={17} /></span>
+            <div className="file-space-version-notification-copy">
+              <strong>{t(importConflictFeedback.files.length === 1
+                ? "fileSpace.importConflict.identicalTitleSingle"
+                : "fileSpace.importConflict.identicalTitleMany", {
+                count: importConflictFeedback.files.length,
+              })}</strong>
+              <p>{t(importConflictFeedback.files.length === 1
+                ? "fileSpace.importConflict.identicalDescriptionSingle"
+                : "fileSpace.importConflict.identicalDescriptionMany", {
+                count: importConflictFeedback.files.length,
+                name: importConflictFeedback.files[0]?.fileName ?? "",
+              })}</p>
+            </div>
+            <div className="file-space-version-notification-actions">
+              <button type="button" onClick={() => setImportConflictFeedback(null)}>
+                {t("fileSpace.importConflict.acknowledge")}
+              </button>
+              <button className="is-primary" type="button" onClick={() => void viewIdenticalImportFile()}>
+                {t("fileSpace.importConflict.showFile")}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {!importConflictFeedback && versionNotification ? (
+          <div
+            key={versionNotification.versionId}
+            className={`file-space-version-notification${importFeedback || fileMoveFeedback || trashFeedback || importConflictFeedback ? " has-transient-feedback" : ""}`}
+            role="status"
+            aria-live="polite"
+          >
+            <span className="file-space-version-notification-icon"><Clock3 size={17} /></span>
+            <div className="file-space-version-notification-copy">
+              <strong>{t("fileSpace.versionNotification.title")}</strong>
+              <p>{t("fileSpace.versionNotification.description", {
+                name: versionNotification.fileName,
+                version: versionNotification.versionNumber,
+              })}</p>
+            </div>
+            <div className="file-space-version-notification-actions">
+              <button type="button" onClick={dismissVersionNotification}>
+                {t("fileSpace.versionNotification.acknowledge")}
+              </button>
+              <button className="is-primary" type="button" onClick={() => void viewVersionNotification()}>
+                {t("fileSpace.versionNotification.view")}
+              </button>
+            </div>
+          </div>
+        ) : null}
       </main>
 
-      {timeline && timelineFile ? (
-        <div className="file-space-timeline-backdrop" onMouseDown={(event) => {
-          if (event.target === event.currentTarget) {
-            setTimeline(null);
-            setTimelineFile(null);
-          }
-        }}>
-          <aside className="file-space-timeline-panel" aria-label={t("fileSpace.timeline.ariaLabel")}>
+      <FileSpaceSearchPanel
+        open={isGlobalSearchOpen}
+        files={snapshot.files}
+        folders={snapshot.folders}
+        scopes={searchScopes}
+        onOpen={openGlobalSearch}
+        onClose={() => setGlobalSearchOpen(false)}
+        onOpenFile={openFileFromGlobalSearch}
+      />
+
+      <FileSpaceInspector
+        hidden={!isInspectorVisible || isTrashView}
+        files={selectedFiles}
+        artworks={selectedFiles.slice(0, 4).map((file) => <FileArtwork file={file} key={file.id} />)}
+        folderNames={[...new Set(selectedFiles.map((file) => (
+          file.folderId
+            ? (
+              snapshot.folders.find((folder) => folder.id === file.folderId)?.relativePath
+              ?? file.relativePath.split("/").slice(0, -1).join("/")
+            ) || "—"
+            : t("fileSpace.inspector.rootFolder")
+        )))]}
+        timeline={inspectorTimeline}
+        timelineLoading={inspectorTimelineLoading}
+        formatFileSize={formatFileSize}
+        onShowTimeline={() => { if (selectedFile) void openTimeline(selectedFile); }}
+        onReveal={() => { if (selectedFile) void runFileCommand("reveal_file_space_file", selectedFile.id, "revealFile"); }}
+        onEditTags={() => { if (selectedFile) openTagDialog(selectedFile.id); }}
+      />
+
+      {timelinePanelPresence.mounted && timeline && timelineFile ? (
+        <div
+          className="file-space-timeline-backdrop"
+          data-state={timelinePanelPresence.state}
+          aria-hidden={!isTimelinePanelOpen}
+          inert={!isTimelinePanelOpen}
+        >
+          <aside ref={timelinePanelRef} className="file-space-timeline-panel" aria-label={t("fileSpace.timeline.ariaLabel")}>
             <header>
               <div>
                 <span>{t("fileSpace.timeline.taskArtifact")} · {timeline.logicalKey}</span>
                 <h2>{timelineFile.name}</h2>
               </div>
-              <button type="button" onClick={() => { setTimeline(null); setTimelineFile(null); }} aria-label={t("fileSpace.timeline.close")}><X size={18} /></button>
+              <button type="button" onClick={closeTimelinePanel} aria-label={t("fileSpace.timeline.close")}><X size={18} /></button>
             </header>
             <div className="file-space-timeline-body">
               <section className="file-space-version-list">
@@ -2966,7 +5804,7 @@ export function FileSpacePage() {
                     key={version.id}
                     className={`${selectedVersionId === version.id ? "is-selected" : ""}${version.isCurrent ? " is-current" : ""}`}
                   >
-                    <button type="button" onClick={() => void selectTimelineVersion(version)}>
+                    <button type="button" disabled={timelineBusy} onClick={() => void selectTimelineVersion(version)}>
                       <strong>v{version.versionNumber}{version.isCurrent ? ` · ${t("fileSpace.timeline.current")}` : ""}</strong>
                       <span>{version.origin === "task" ? version.taskTitle : t("fileSpace.timeline.userEdit")}</span>
                       {version.roundNumber ? <span>{t("fileSpace.timeline.round", { count: version.roundNumber })} · {version.cellName}</span> : null}
@@ -2979,6 +5817,18 @@ export function FileSpacePage() {
                 ))}
               </section>
               <section className="file-space-version-preview">
+                <FileVersionDiff
+                  versions={timeline.versions}
+                  beforeVersionId={diffBeforeVersionId}
+                  afterVersionId={diffAfterVersionId}
+                  status={versionDiffStatus}
+                  result={versionDiffResult}
+                  error={versionDiffError}
+                  onChangeBefore={setDiffBeforeVersionId}
+                  onChangeAfter={setDiffAfterVersionId}
+                  onSwap={swapComparedVersions}
+                  onRetry={() => setVersionDiffRetryToken((token) => token + 1)}
+                />
                 <h3>{t("fileSpace.timeline.historicalContent")}</h3>
                 {timelineBusy ? <p>{t("fileSpace.timeline.loading")}</p> : versionPreview !== null ? <pre>{versionPreview}</pre> : <p>{t("fileSpace.timeline.noTextPreview")}</p>}
                 <h3>{t("fileSpace.timeline.operations")}</h3>
@@ -3019,33 +5869,107 @@ export function FileSpacePage() {
 
       {internalFileDrag && internallyDraggedFile ? createPortal(
         <div
-          className="file-space-file-reorder-overlay"
+          className={`file-space-file-reorder-overlay${fileLayoutMode === "list" ? " is-list-layout" : ""}`}
           aria-hidden="true"
           style={{
             left: `${internalFileDrag.pointerX - internalFileDrag.offsetX}px`,
             top: `${internalFileDrag.pointerY - internalFileDrag.offsetY}px`,
             width: `${internalFileDrag.cardWidth}px`,
             height: `${internalFileDrag.cardHeight}px`,
-            "--file-preview-size": `${previewSize}px`,
+            "--file-preview-size": `${fileLayoutMode === "list" ? fileListPreviewSize : previewSize}px`,
           } as React.CSSProperties}
         >
-          <FileArtwork file={internallyDraggedFile} />
+          <FileArtwork file={internallyDraggedFile} onImageDimensions={recordImageDimensions} />
+          {internalFileDrag.fileIds.length > 1 ? (
+            <span className="file-space-file-drag-count">{internalFileDrag.fileIds.length}</span>
+          ) : null}
           <span className="file-space-item-copy">
             <strong>{internallyDraggedFile.name}</strong>
-            <small>
-              {internallyDraggedFile.sourceKind === "task_artifact" ? t("fileSpace.content.taskArtifact") : t("fileSpace.content.userImport")}
-              {internallyDraggedFile.currentVersion ? ` · v${internallyDraggedFile.currentVersion}/${internallyDraggedFile.versionCount}` : ""}
-              {" · "}{formatFileSize(internallyDraggedFile.sizeBytes)}
-              {" · "}{new Intl.DateTimeFormat(locale, { month: "short", day: "numeric" }).format(internallyDraggedFile.updatedAt)}
-            </small>
-            {internallyDraggedFile.tags.length > 0 ? (
-              <span className="file-space-card-tags">
-                {internallyDraggedFile.tags.slice(0, 3).map((tag) => <em key={tag}>{tag}</em>)}
-              </span>
-            ) : null}
+            <small>{fileCardMetadata(internallyDraggedFile, imageDimensionsByFileVersion[imageDimensionsKey(internallyDraggedFile.id, internallyDraggedFile.updatedAt)])}</small>
           </span>
         </div>,
         document.body,
+      ) : null}
+
+      {contentContextMenu ? (
+        <div
+          className="file-space-context-menu file-space-content-context-menu"
+          ref={contextMenuRef}
+          role="menu"
+          aria-label={t("fileSpace.contentMenu.title")}
+          style={{ left: contentContextMenu.x, top: contentContextMenu.y }}
+        >
+          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateTextFile(currentFolder?.id ?? null)}>
+            <FilePlus2 size={16} />{t("fileSpace.contentMenu.createFile")}
+          </button>
+          <span />
+          <div className="file-space-content-layout-control" role="group" aria-label={t("fileSpace.contentMenu.layout")}>
+            <span><LayoutGrid size={16} /><strong>{t("fileSpace.contentMenu.layout")}</strong></span>
+            <div>
+              {(["adaptive", "list"] as FileLayoutMode[]).map((mode) => (
+                <button
+                  className={fileLayoutMode === mode ? "is-selected" : ""}
+                  key={mode}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={fileLayoutMode === mode}
+                  title={t(`fileSpace.contentMenu.layoutOptions.${mode}`)}
+                  onClick={() => updateFileLayoutMode(mode)}
+                >
+                  {t(`fileSpace.contentMenu.layoutOptions.${mode}`)}
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="file-space-content-sort-control" role="group" aria-label={t("fileSpace.contentMenu.order")}>
+            <span>
+              <ArrowUpDown size={16} />
+              <strong>{t("fileSpace.contentMenu.sort")}</strong>
+            </span>
+            <div>
+              <button
+                className={`${sortOption === "manual" ? "is-selected " : ""}is-automatic-sort`}
+                type="button"
+                role="menuitemradio"
+                aria-checked={sortOption === "manual"}
+                title={t("fileSpace.contentMenu.automaticHint")}
+                aria-label={t("fileSpace.contentMenu.automaticHint")}
+                onClick={() => updateSortOption("manual")}
+              >
+                {t("fileSpace.contentMenu.automatic")}
+              </button>
+              <button
+                className={sortOption === "updatedAsc" ? "is-selected" : ""}
+                type="button"
+                role="menuitemradio"
+                aria-checked={sortOption === "updatedAsc"}
+                title={t("fileSpace.contentMenu.ascendingHint")}
+                aria-label={t("fileSpace.contentMenu.ascendingHint")}
+                onClick={() => updateSortOption("updatedAsc")}
+              >
+                <ArrowUpNarrowWide size={15} />
+              </button>
+              <button
+                className={sortOption === "updatedDesc" ? "is-selected" : ""}
+                type="button"
+                role="menuitemradio"
+                aria-checked={sortOption === "updatedDesc"}
+                title={t("fileSpace.contentMenu.descendingHint")}
+                aria-label={t("fileSpace.contentMenu.descendingHint")}
+                onClick={() => updateSortOption("updatedDesc")}
+              >
+                <ArrowDownWideNarrow size={15} />
+              </button>
+            </div>
+          </div>
+          <span />
+          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={toggleSidebarVisibility}>
+            <FolderOpen size={16} />{t(isSidebarVisible ? "fileSpace.contentMenu.hideFolders" : "fileSpace.contentMenu.showFolders")}
+          </button>
+          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={toggleInspectorVisibility}>
+            <Info size={16} />{t(isInspectorVisible ? "fileSpace.contentMenu.hideInfo" : "fileSpace.contentMenu.showInfo")}
+          </button>
+        </div>
       ) : null}
 
       {folderContextMenu ? (
@@ -3058,6 +5982,12 @@ export function FileSpacePage() {
           <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(folderContextMenu.folderId)}>
             <FolderPlus size={16} />{t("fileSpace.folderMenu.newSubfolder")}
           </button>
+          {folderContextMenuExpandableIds.length > 0 ? (
+            <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => toggleFolderSubtree(folderContextMenu.folderId)}>
+              {isFolderContextSubtreeFullyExpanded ? <ChevronsDownUp size={16} /> : <ChevronsUpDown size={16} />}
+              {t(isFolderContextSubtreeFullyExpanded ? "fileSpace.folderMenu.collapseAll" : "fileSpace.folderMenu.expandAll")}
+            </button>
+          ) : null}
           <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openRenameFolder(folderContextMenu.folderId)}>
             <Pencil size={15} />{t("fileSpace.folderMenu.rename")}
           </button>
@@ -3112,11 +6042,8 @@ export function FileSpacePage() {
       {createDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${createDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setCreateFolderOpen(false);
-          }}
         >
-          <form className={`file-space-dialog${createDialogPresence.state === "open" ? " is-open" : ""}`} onSubmit={(event) => { event.preventDefault(); void createFolder(); }}>
+          <form className={`file-space-dialog${createDialogPresence.state === "open" ? " is-open" : ""}`} role="dialog" aria-modal="true" aria-label={t("fileSpace.createFolder.title")} tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void createFolder(); }}>
             <header>
               <div><h2>{t("fileSpace.createFolder.title")}</h2><p>{t("fileSpace.createFolder.description")}</p></div>
               <button type="button" onClick={() => setCreateFolderOpen(false)} aria-label={t("fileSpace.createFolder.cancel")}><X size={17} /></button>
@@ -3135,14 +6062,74 @@ export function FileSpacePage() {
         </div>
       ) : null}
 
+      {createFileDialogPresence.mounted && createFileFormat ? (
+        <div
+          className={`file-space-dialog-backdrop${createFileDialogPresence.state === "open" ? " is-open" : ""}`}
+        >
+          <form
+            className={`file-space-dialog${createFileDialogPresence.state === "open" ? " is-open" : ""}`}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("fileSpace.createFile.dialogTitle")}
+            tabIndex={-1}
+            onSubmit={(event) => { event.preventDefault(); void createTextFile(); }}
+          >
+            <header>
+              <div>
+                <h2>{t("fileSpace.createFile.dialogTitle")}</h2>
+                <p>{t("fileSpace.createFile.description")}</p>
+              </div>
+              <button type="button" disabled={busyAction === "create"} onClick={() => setCreateFileFormat(null)} aria-label={t("fileSpace.createFile.cancel")}><X size={17} /></button>
+            </header>
+            <fieldset className="file-space-create-file-format">
+              <legend>{t("fileSpace.createFile.formatLabel")}</legend>
+              <div role="radiogroup" aria-label={t("fileSpace.createFile.formatLabel")}>
+                {(["md", "txt"] as const).map((format) => (
+                  <button
+                    key={format}
+                    type="button"
+                    role="radio"
+                    aria-checked={createFileFormat === format}
+                    className={createFileFormat === format ? "is-selected" : ""}
+                    disabled={busyAction === "create"}
+                    onClick={() => selectCreateTextFileFormat(format)}
+                  >
+                    {t(`fileSpace.createFile.formats.${format}`)}
+                  </button>
+                ))}
+              </div>
+            </fieldset>
+            <label>
+              <span>{t("fileSpace.createFile.label")}</span>
+              <span className="file-space-create-file-name-field">
+                <input
+                  ref={createFileNameRef}
+                  value={createFileName}
+                  aria-describedby="file-space-create-file-extension"
+                  disabled={busyAction === "create"}
+                  onChange={(event) => setCreateFileName(event.target.value)}
+                  spellCheck={false}
+                />
+                <span id="file-space-create-file-extension" aria-label={t("fileSpace.createFile.fixedExtension", { extension: createFileFormat })}>
+                  .{createFileFormat}
+                </span>
+              </span>
+            </label>
+            <footer>
+              <button type="button" disabled={busyAction === "create"} onClick={() => setCreateFileFormat(null)}>{t("fileSpace.createFile.cancel")}</button>
+              <button className="is-primary" type="submit" disabled={!createFileName.trim() || Boolean(busyAction)}>
+                {busyAction === "create" ? t("fileSpace.createFile.submitting") : t("fileSpace.createFile.submit")}
+              </button>
+            </footer>
+          </form>
+        </div>
+      ) : null}
+
       {renameDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${renameDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setRenameFolderId(null);
-          }}
         >
-          <form className={`file-space-dialog${renameDialogPresence.state === "open" ? " is-open" : ""}`} onSubmit={(event) => { event.preventDefault(); void renameFolder(); }}>
+          <form className={`file-space-dialog${renameDialogPresence.state === "open" ? " is-open" : ""}`} role="dialog" aria-modal="true" aria-label={t("fileSpace.renameFolder.title")} tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void renameFolder(); }}>
             <header>
               <div><h2>{t("fileSpace.renameFolder.title")}</h2><p>{t("fileSpace.renameFolder.description")}</p></div>
               <button type="button" onClick={() => setRenameFolderId(null)} aria-label={t("fileSpace.renameFolder.cancel")}><X size={17} /></button>
@@ -3164,11 +6151,8 @@ export function FileSpacePage() {
       {renameFileDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${renameFileDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setRenameFileId(null);
-          }}
         >
-          <form className={`file-space-dialog${renameFileDialogPresence.state === "open" ? " is-open" : ""}`} onSubmit={(event) => { event.preventDefault(); void renameFile(); }}>
+          <form className={`file-space-dialog${renameFileDialogPresence.state === "open" ? " is-open" : ""}`} role="dialog" aria-modal="true" aria-label={t("fileSpace.renameFile.title")} tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void renameFile(); }}>
             <header>
               <div><h2>{t("fileSpace.renameFile.title")}</h2><p>{t("fileSpace.renameFile.description")}</p></div>
               <button type="button" onClick={() => setRenameFileId(null)} aria-label={t("fileSpace.renameFile.cancel")}><X size={17} /></button>
@@ -3190,11 +6174,8 @@ export function FileSpacePage() {
       {tagDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${tagDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setTagFileId(null);
-          }}
         >
-          <form className={`file-space-dialog${tagDialogPresence.state === "open" ? " is-open" : ""}`} onSubmit={(event) => { event.preventDefault(); void saveFileTags(); }}>
+          <form className={`file-space-dialog${tagDialogPresence.state === "open" ? " is-open" : ""}`} role="dialog" aria-modal="true" aria-label={t("fileSpace.tags.title")} tabIndex={-1} onSubmit={(event) => { event.preventDefault(); void saveFileTags(); }}>
             <header>
               <div><h2>{t("fileSpace.tags.title")}</h2><p>{t("fileSpace.tags.description")}</p></div>
               <button type="button" onClick={() => setTagFileId(null)} aria-label={t("fileSpace.tags.cancel")}><X size={17} /></button>
@@ -3214,22 +6195,208 @@ export function FileSpacePage() {
         </div>
       ) : null}
 
+      {importConflictDialogPresence.mounted && pendingFileImportConflict ? (
+        <div
+          className={`file-space-dialog-backdrop${importConflictDialogPresence.state === "open" ? " is-open" : ""}`}
+        >
+          <div
+            className={`file-space-dialog file-space-import-conflict-dialog${importConflictDialogPresence.state === "open" ? " is-open" : ""}`}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="file-space-import-conflict-title"
+            aria-describedby="file-space-import-conflict-description"
+            tabIndex={-1}
+          >
+            <header>
+              <div>
+                <h2 id="file-space-import-conflict-title">
+                  {t("fileSpace.importConflict.title", {
+                    count: pendingFileImportConflict.conflicts.length,
+                    name: pendingFileImportConflict.conflicts[0]?.fileName ?? "",
+                  })}
+                </h2>
+                <p id="file-space-import-conflict-description">
+                  {t("fileSpace.importConflict.description", {
+                    count: pendingFileImportConflict.conflicts.length,
+                  })}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyAction === "import"}
+                onClick={() => setPendingFileImportConflict(null)}
+                aria-label={t("fileSpace.importConflict.cancel")}
+              >
+                <X size={17} />
+              </button>
+            </header>
+            <div className="file-space-import-conflict-list" role="list">
+              {pendingFileImportConflict.conflicts.map((conflict) => (
+                <div key={`${conflict.existingFileId}:${conflict.relativePath}`} role="listitem">
+                  <span className="file-space-import-conflict-icon"><Clock3 size={16} /></span>
+                  <span>
+                    <strong>{conflict.fileName}</strong>
+                    <small>{t("fileSpace.importConflict.fileDetails", {
+                      existingSize: formatFileSize(conflict.existingSizeBytes),
+                      incomingSize: formatFileSize(conflict.incomingSizeBytes),
+                      version: conflict.existingVersion,
+                    })}</small>
+                  </span>
+                </div>
+              ))}
+            </div>
+            <footer>
+              <button
+                ref={importConflictCancelRef}
+                type="button"
+                disabled={busyAction === "import"}
+                onClick={() => setPendingFileImportConflict(null)}
+              >
+                {t("fileSpace.importConflict.cancel")}
+              </button>
+              <button
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => void resolveFileImportConflict("rename")}
+              >
+                {t("fileSpace.importConflict.rename")}
+              </button>
+              <button
+                className="is-primary"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => void resolveFileImportConflict("latestVersion")}
+              >
+                {busyAction === "import"
+                  ? t("fileSpace.importConflict.applying")
+                  : t("fileSpace.importConflict.latestVersion")}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
       {deleteDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${deleteDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setDeleteFolderId(null);
-          }}
         >
-          <div className={`file-space-dialog file-space-delete-dialog${deleteDialogPresence.state === "open" ? " is-open" : ""}`} role="alertdialog" aria-modal="true">
+          <div className={`file-space-dialog file-space-delete-dialog${deleteDialogPresence.state === "open" ? " is-open" : ""}`} role="alertdialog" aria-modal="true" aria-label={t("fileSpace.deleteFolder.title")} tabIndex={-1}>
             <header>
               <div><h2>{t("fileSpace.deleteFolder.title")}</h2><p>{t("fileSpace.deleteFolder.description", { name: snapshot.folders.find((folder) => folder.id === deleteFolderId)?.name ?? "" })}</p></div>
               <button type="button" onClick={() => setDeleteFolderId(null)} aria-label={t("fileSpace.deleteFolder.cancel")}><X size={17} /></button>
             </header>
             <footer>
-              <button type="button" onClick={() => setDeleteFolderId(null)}>{t("fileSpace.deleteFolder.cancel")}</button>
-              <button className="is-danger" type="button" disabled={Boolean(busyAction)} onClick={() => void deleteFolder()}>
+              <button ref={deleteFolderCancelRef} type="button" onClick={() => setDeleteFolderId(null)}>{t("fileSpace.deleteFolder.cancel")}</button>
+              <button className="is-primary" type="button" disabled={Boolean(busyAction)} onClick={() => void deleteFolder()}>
                 {busyAction === "delete" ? t("fileSpace.deleteFolder.submitting") : t("fileSpace.deleteFolder.submit")}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {restoreTrashDialogPresence.mounted ? (
+        <div
+          className={`file-space-dialog-backdrop${restoreTrashDialogPresence.state === "open" ? " is-open" : ""}`}
+        >
+          <div
+            className={`file-space-dialog file-space-confirm-dialog${restoreTrashDialogPresence.state === "open" ? " is-open" : ""}`}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="file-space-restore-trash-title"
+            aria-describedby="file-space-restore-trash-description"
+            tabIndex={-1}
+          >
+            <header>
+              <div>
+                <h2 id="file-space-restore-trash-title">
+                  {t("fileSpace.trash.confirmTitle", { name: trashItemPendingRestore?.name ?? "" })}
+                </h2>
+                <p id="file-space-restore-trash-description">
+                  {t("fileSpace.trash.confirmDescription")}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyAction === "restore"}
+                onClick={() => setRestoreConfirmationEntryId(null)}
+                aria-label={t("fileSpace.trash.confirmCancel")}
+              >
+                <X size={17} />
+              </button>
+            </header>
+            <footer>
+              <button
+                ref={restoreTrashCancelRef}
+                type="button"
+                disabled={busyAction === "restore"}
+                onClick={() => setRestoreConfirmationEntryId(null)}
+              >
+                {t("fileSpace.trash.confirmCancel")}
+              </button>
+              <button
+                className="is-primary"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => void restoreTrashEntry()}
+              >
+                {busyAction === "restore"
+                  ? t("fileSpace.trash.restoring")
+                  : t("fileSpace.trash.confirmSubmit")}
+              </button>
+            </footer>
+          </div>
+        </div>
+      ) : null}
+
+      {emptyTrashDialogPresence.mounted ? (
+        <div
+          className={`file-space-dialog-backdrop${emptyTrashDialogPresence.state === "open" ? " is-open" : ""}`}
+        >
+          <div
+            className={`file-space-dialog file-space-confirm-dialog file-space-empty-trash-dialog${emptyTrashDialogPresence.state === "open" ? " is-open" : ""}`}
+            role="alertdialog"
+            aria-modal="true"
+            aria-labelledby="file-space-empty-trash-title"
+            aria-describedby="file-space-empty-trash-description"
+            tabIndex={-1}
+          >
+            <header>
+              <div>
+                <h2 id="file-space-empty-trash-title">{t("fileSpace.trash.emptyConfirmTitle")}</h2>
+                <p id="file-space-empty-trash-description">
+                  {t("fileSpace.trash.emptyConfirmDescription", {
+                    count: emptyTrashEntryIds.length,
+                  })}
+                </p>
+              </div>
+              <button
+                type="button"
+                disabled={busyAction === "purgeTrash"}
+                onClick={() => setEmptyTrashConfirmationOpen(false)}
+                aria-label={t("fileSpace.trash.emptyConfirmCancel")}
+              >
+                <X size={17} />
+              </button>
+            </header>
+            <footer>
+              <button
+                ref={emptyTrashCancelRef}
+                type="button"
+                disabled={busyAction === "purgeTrash"}
+                onClick={() => setEmptyTrashConfirmationOpen(false)}
+              >
+                {t("fileSpace.trash.emptyConfirmCancel")}
+              </button>
+              <button
+                className="is-danger"
+                type="button"
+                disabled={Boolean(busyAction)}
+                onClick={() => void emptyTrash()}
+              >
+                {busyAction === "purgeTrash"
+                  ? t("fileSpace.trash.cleaning")
+                  : t("fileSpace.trash.emptyConfirmSubmit")}
               </button>
             </footer>
           </div>
@@ -3239,11 +6406,8 @@ export function FileSpacePage() {
       {deleteFileDialogPresence.mounted ? (
         <div
           className={`file-space-dialog-backdrop${deleteFileDialogPresence.state === "open" ? " is-open" : ""}`}
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) setDeleteFileId(null);
-          }}
         >
-          <div className={`file-space-dialog file-space-delete-dialog${deleteFileDialogPresence.state === "open" ? " is-open" : ""}`} role="alertdialog" aria-modal="true">
+          <div className={`file-space-dialog file-space-delete-dialog${deleteFileDialogPresence.state === "open" ? " is-open" : ""}`} role="alertdialog" aria-modal="true" aria-label={t("fileSpace.deleteFile.title")} tabIndex={-1}>
             <header>
               <div>
                 <h2>{t("fileSpace.deleteFile.title")}</h2>
@@ -3252,8 +6416,8 @@ export function FileSpacePage() {
               <button type="button" onClick={() => setDeleteFileId(null)} aria-label={t("fileSpace.deleteFile.cancel")}><X size={17} /></button>
             </header>
             <footer>
-              <button type="button" onClick={() => setDeleteFileId(null)}>{t("fileSpace.deleteFile.cancel")}</button>
-              <button className="is-danger" type="button" disabled={Boolean(busyAction)} onClick={() => void deleteFile()}>
+              <button ref={deleteFileCancelRef} type="button" onClick={() => setDeleteFileId(null)}>{t("fileSpace.deleteFile.cancel")}</button>
+              <button className="is-primary" type="button" disabled={Boolean(busyAction)} onClick={() => void deleteFile()}>
                 {busyAction === "delete" ? t("fileSpace.deleteFile.submitting") : t("fileSpace.deleteFile.submit")}
               </button>
             </footer>

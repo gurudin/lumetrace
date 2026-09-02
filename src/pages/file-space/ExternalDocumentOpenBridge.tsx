@@ -3,6 +3,7 @@ import { AlertTriangle, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
+import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
 import "./external-document-open-bridge.css";
 
 interface ExternalDocumentRequest {
@@ -10,8 +11,6 @@ interface ExternalDocumentRequest {
   name: string;
   action: "open" | "reveal";
 }
-
-const externalDocumentPattern = /\.(doc|docx|xls|xlsx|ppt|pptx|html?|csv)$/i;
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -32,34 +31,31 @@ function externalDocumentFromTarget(target: EventTarget | null) {
   const fileId = button?.dataset.fileId ?? card?.dataset.fileId;
   const name = button?.title ?? "";
   if (!button || !fileId || !name.trim()) return null;
+  const route = resolveFileDoubleClickRoute(
+    name,
+    Boolean(button.querySelector(".file-space-file-art.has-preview")),
+  );
+  if (route === "internal-preview") return null;
   return {
     button,
     request: {
       fileId,
       name,
-      action: externalDocumentPattern.test(name.trim()) ? "open" : "reveal",
+      action: route === "external-open" ? "open" : "reveal",
     } satisfies ExternalDocumentRequest,
   };
 }
 
 export function ExternalDocumentOpenBridge() {
-  const { i18n } = useTranslation();
-  const copy = i18n.resolvedLanguage?.startsWith("zh") ? {
-    opening: (name: string) => `正在用默认应用打开 ${name}`,
-    revealing: (name: string) => `正在访达中显示 ${name}`,
-    failed: (name: string) => `无法打开 ${name}`,
-    choose: "选择其他应用打开",
-    choosing: "正在打开系统选择器",
-    dismiss: "关闭提示",
-    desktopOnly: "文件只能在 LumeTrace 客户端中交给系统应用或访达打开。",
-  } : {
-    opening: (name: string) => `Opening ${name} in the default app`,
-    revealing: (name: string) => `Showing ${name} in Finder`,
-    failed: (name: string) => `Unable to open ${name}`,
-    choose: "Choose Another App",
-    choosing: "Opening system chooser",
-    dismiss: "Dismiss",
-    desktopOnly: "Files can only be handed to system apps or Finder from the LumeTrace desktop app.",
+  const { t } = useTranslation();
+  const copy = {
+    opening: (name: string) => t("fileSpace.externalDocument.opening", { name }),
+    revealing: (name: string) => t("fileSpace.externalDocument.revealing", { name }),
+    failed: (name: string) => t("fileSpace.externalDocument.failed", { name }),
+    choose: t("fileSpace.externalDocument.choose"),
+    choosing: t("fileSpace.externalDocument.choosing"),
+    dismiss: t("fileSpace.externalDocument.dismiss"),
+    desktopOnly: t("fileSpace.externalDocument.desktopOnly"),
   };
   const [request, setRequest] = useState<ExternalDocumentRequest | null>(null);
   const [open, setOpen] = useState(false);

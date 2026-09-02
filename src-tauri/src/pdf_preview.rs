@@ -9,7 +9,7 @@ fn require_storage_root(database: &Database) -> Result<std::path::PathBuf, Strin
     let connection = database
         .0
         .lock()
-        .map_err(|_| "Unable to access LumeTrace database".to_owned())?;
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
     let path = connection
         .query_row(
             "SELECT value FROM app_settings WHERE key = 'file_space.storage_root'",
@@ -33,7 +33,7 @@ fn pdf_record(database: &Database, file_id: &str) -> Result<(String, String), St
     let connection = database
         .0
         .lock()
-        .map_err(|_| "Unable to access LumeTrace database".to_owned())?;
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
     connection
         .query_row(
             "SELECT original_name, storage_path

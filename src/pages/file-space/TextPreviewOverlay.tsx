@@ -3,6 +3,8 @@ import { AlertTriangle, History, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
+import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
+import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import "./text-preview-overlay.css";
 
 interface TextPreviewRequest {
@@ -34,39 +36,25 @@ function errorText(error: unknown) {
 }
 
 export function TextPreviewOverlay() {
-  const { i18n } = useTranslation();
-  const zh = i18n.resolvedLanguage?.startsWith("zh") ?? true;
-  const locale = zh ? "zh-CN" : "en-US";
-  const copy = zh ? {
-    dialog: (name: string) => `预览 TXT：${name}`,
-    close: "关闭 TXT 预览",
-    loading: "正在读取 TXT",
-    loadError: "无法读取这个 TXT 文件。",
-    retry: "重新读取",
-    empty: "这个 TXT 文件当前没有内容。",
-    desktopOnly: "TXT 文件只能在 LumeTrace 客户端中读取。",
-    versionHistory: "版本记录",
-    versionCount: (count: number) => `共 ${count} 个版本`,
-    current: "当前版本",
-    historical: "历史版本 · 只读",
-    userEdit: "用户修改",
-    round: (count: number) => `第 ${count} 轮`,
-    timelineError: "无法读取版本记录",
-  } : {
-    dialog: (name: string) => `Preview TXT: ${name}`,
-    close: "Close TXT preview",
-    loading: "Loading TXT",
-    loadError: "Unable to read this TXT file.",
-    retry: "Reload",
-    empty: "This TXT file is empty.",
-    desktopOnly: "TXT files can only be read in the LumeTrace desktop app.",
-    versionHistory: "Version history",
-    versionCount: (count: number) => `${count} version${count === 1 ? "" : "s"}`,
-    current: "Current",
-    historical: "Historical version · Read only",
-    userEdit: "User edit",
-    round: (count: number) => `Round ${count}`,
-    timelineError: "Unable to load version history",
+  const { t, i18n } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "en-US";
+  const copy = {
+    dialog: (name: string) => t("fileSpace.preview.text.dialog", { name }),
+    close: t("fileSpace.preview.text.close"),
+    loading: t("fileSpace.preview.text.loading"),
+    loadError: t("fileSpace.preview.text.loadError"),
+    retry: t("fileSpace.preview.text.retry"),
+    empty: t("fileSpace.preview.text.empty"),
+    desktopOnly: t("fileSpace.preview.text.desktopOnly"),
+    versionHistory: t("fileSpace.preview.common.versionHistory"),
+    showVersionHistory: t("fileSpace.preview.common.showVersionHistory"),
+    hideVersionHistory: t("fileSpace.preview.common.hideVersionHistory"),
+    versionCount: (count: number) => t("fileSpace.preview.common.versionCount", { count }),
+    current: t("fileSpace.preview.common.current"),
+    historical: t("fileSpace.preview.common.historical"),
+    userEdit: t("fileSpace.preview.common.userEdit"),
+    round: (count: number) => t("fileSpace.preview.common.round", { count }),
+    timelineError: t("fileSpace.preview.common.timelineError"),
   };
   const [request, setRequest] = useState<TextPreviewRequest | null>(null);
   const [open, setOpen] = useState(false);
@@ -76,13 +64,15 @@ export function TextPreviewOverlay() {
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
+  const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const loadSequenceRef = useRef(0);
   const presence = usePresence(open);
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
-  const showTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const hasTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
+  const showTimeline = hasTimeline && timelineVisible;
 
   const loadCurrent = useCallback(async (target: TextPreviewRequest) => {
     const sequence = loadSequenceRef.current + 1;
@@ -163,6 +153,7 @@ export function TextPreviewOverlay() {
       setContent("");
       setTimeline(null);
       setTimelineError(null);
+      setTimelineVisible(shouldShowVersionTimelineByDefault(target.versionCount));
       setSelectedVersionId(null);
       setOpen(true);
       void loadCurrent(target);
@@ -189,6 +180,7 @@ export function TextPreviewOverlay() {
       loadSequenceRef.current += 1;
       setRequest(null);
       setTimeline(null);
+      setTimelineVisible(false);
     }
   }, [presence.mounted]);
 
@@ -203,9 +195,10 @@ export function TextPreviewOverlay() {
         </div>
         <button ref={closeButtonRef} type="button" onClick={closePreview} title={copy.close} aria-label={copy.close}><X size={18} /></button>
       </header>
-      <div className={`file-text-preview-workspace${showTimeline ? " has-version-timeline" : ""}`}>
-        {showTimeline ? (
-          <aside className="file-text-version-timeline" aria-label={copy.versionHistory}>
+      <div className={`file-text-preview-workspace file-preview-version-workspace${showTimeline ? " has-version-timeline" : ""}`}>
+        {hasTimeline ? (
+          <VersionTimelineRegion visible={showTimeline}>
+            <aside id="file-text-version-timeline" className="file-text-version-timeline" aria-label={copy.versionHistory}>
             <header><div><History size={15} /><span>{copy.versionHistory}</span></div><small>{copy.versionCount(timeline?.versions.length ?? request.versionCount)}</small></header>
             {timelineLoading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={17} /><span>{copy.loading}</span></div>
               : timelineError ? <div className="file-text-preview-state is-error"><AlertTriangle size={17} /><strong>{copy.timelineError}</strong><span>{timelineError}</span><button type="button" onClick={() => void loadTimeline(request)}>{copy.retry}</button></div>
@@ -223,7 +216,17 @@ export function TextPreviewOverlay() {
                     ))}
                   </ol>
                 ) : null}
-          </aside>
+            </aside>
+          </VersionTimelineRegion>
+        ) : null}
+        {hasTimeline ? (
+          <VersionTimelineToggle
+            controlsId="file-text-version-timeline"
+            visible={showTimeline}
+            showLabel={copy.showVersionHistory}
+            hideLabel={copy.hideVersionHistory}
+            onToggle={() => setTimelineVisible((visible) => !visible)}
+          />
         ) : null}
         <main className="file-text-preview-body">
           {loading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={22} /><span>{copy.loading}</span></div>
