@@ -222,6 +222,39 @@ CREATE TABLE IF NOT EXISTS file_space_semantic_embeddings (
   created_at  INTEGER NOT NULL
 );
 
+-- The numeric key is the stable bridge between SQLite's source-of-truth
+-- chunks and the derived on-disk ANN graph. It is intentionally stored in the
+-- workspace database so ANN search results can always be validated against
+-- current, non-trashed files before they become AI context.
+CREATE TABLE IF NOT EXISTS file_space_semantic_ann_keys (
+  ann_key  INTEGER PRIMARY KEY AUTOINCREMENT,
+  chunk_id TEXT NOT NULL UNIQUE REFERENCES file_space_search_chunks(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS file_space_semantic_ann_state (
+  model_id      TEXT PRIMARY KEY,
+  data_revision INTEGER NOT NULL DEFAULT 0,
+  file_revision INTEGER NOT NULL DEFAULT -1
+);
+
+INSERT OR IGNORE INTO file_space_semantic_ann_state
+  (model_id, data_revision, file_revision)
+VALUES ('multilingual-e5-small-int8-v1', 0, -1);
+
+CREATE TRIGGER IF NOT EXISTS file_space_semantic_ann_keys_ai
+AFTER INSERT ON file_space_semantic_ann_keys BEGIN
+  UPDATE file_space_semantic_ann_state
+  SET data_revision = data_revision + 1
+  WHERE model_id = 'multilingual-e5-small-int8-v1';
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_space_semantic_ann_keys_ad
+AFTER DELETE ON file_space_semantic_ann_keys BEGIN
+  UPDATE file_space_semantic_ann_state
+  SET data_revision = data_revision + 1
+  WHERE model_id = 'multilingual-e5-small-int8-v1';
+END;
+
 CREATE TABLE IF NOT EXISTS file_space_index_jobs (
   file_id                       TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
   requested_document_indexed_at INTEGER NOT NULL,
@@ -276,6 +309,8 @@ CREATE INDEX IF NOT EXISTS idx_file_space_search_chunks_file
   ON file_space_search_chunks(file_id, ordinal);
 CREATE INDEX IF NOT EXISTS idx_file_space_semantic_embeddings_model
   ON file_space_semantic_embeddings(model_id, chunk_id);
+CREATE INDEX IF NOT EXISTS idx_file_space_semantic_ann_keys_chunk
+  ON file_space_semantic_ann_keys(chunk_id);
 CREATE INDEX IF NOT EXISTS idx_file_space_index_jobs_status
   ON file_space_index_jobs(status, requested_at, file_id);
 CREATE INDEX IF NOT EXISTS idx_file_space_ai_turns_created

@@ -4,7 +4,8 @@ use crate::{
     database::{self, Database},
     file_space::{lock_file_space_operations, search_file_space_matches, FileSpaceSearchRequest},
     semantic_search::{
-        retrieve_ai_context_chunks, AiContextChunk, HybridSearchMatch, SemanticSearchRuntime,
+        retrieve_ai_context_chunks, semantic_file_ranks_global, AiContextChunk, HybridSearchMatch,
+        SemanticSearchRuntime,
     },
 };
 use rusqlite::{params, OptionalExtension};
@@ -493,57 +494,6 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
-fn compact_file_search_query(question: &str) -> Option<String> {
-    let original = question.trim();
-    let mut query = original.trim_matches(|character: char| {
-        character.is_whitespace() || "，。！？、,.!?：:；;".contains(character)
-    });
-    let mut transformed = false;
-    for prefix in [
-        "请帮我找一下",
-        "帮我找一下",
-        "帮忙找一下",
-        "请查找一下",
-        "查找一下",
-        "搜索一下",
-        "请查找",
-        "请搜索",
-        "找一下",
-        "查找",
-        "搜索",
-        "寻找",
-        "找",
-    ] {
-        if let Some(stripped) = query.strip_prefix(prefix) {
-            query = stripped.trim();
-            transformed = true;
-            break;
-        }
-    }
-    for suffix in [
-        "这个文件在哪里",
-        "这个文件在哪",
-        "相关文件",
-        "这些文件",
-        "文件在哪里",
-        "文件在哪",
-        "文件",
-        "文档",
-        "资料",
-    ] {
-        if let Some(stripped) = query.strip_suffix(suffix) {
-            query = stripped.trim();
-            transformed = true;
-            break;
-        }
-    }
-    let query = query.trim_matches(|character: char| {
-        character.is_whitespace() || "，。！？、,.!?：:；;".contains(character)
-    });
-    let query = if transformed { query } else { original };
-    (!query.is_empty() && query.chars().count() <= 120).then(|| query.to_owned())
-}
-
 fn build_retrieval_plan(question: &str, history: &[FileSpaceAiTurn]) -> RetrievalPlan {
     let mut recent_turns = history
         .iter()
@@ -577,9 +527,6 @@ fn build_retrieval_plan(question: &str, history: &[FileSpaceAiTurn]) -> Retrieva
     }
 
     let mut search_queries = vec![question.to_owned()];
-    if let Some(compact_query) = compact_file_search_query(question) {
-        push_unique(&mut search_queries, compact_query);
-    }
     if inherits_history {
         for turn in &recent_turns {
             push_unique(
@@ -899,14 +846,28 @@ fn ask_file_space_ai_blocking(
                     semantic_similarity: None,
                 })
                 .collect::<Vec<_>>();
+            let semantic = semantic_file_ranks_global(
+                &database,
+                semantic_runtime.inner(),
+                &retrieval_plan.query,
+            )
+            .map_err(|_| ERROR_SEARCH_FAILED.to_owned())?
+            .into_iter()
+            .map(|(file_id, similarity)| HybridSearchMatch {
+                file_id,
+                lexical_match: false,
+                semantic_similarity: Some(similarity),
+            })
+            .collect::<Vec<_>>();
+            merge_search_candidates(&mut candidates, semantic);
             for query in &retrieval_plan.search_queries {
                 let request = FileSpaceSearchRequest {
                     query: query.clone(),
                     scopes: Vec::new(),
                 };
-                // Candidate recall is lexical and index-backed. Semantic scoring is
-                // performed once below on the bounded candidate chunks, instead of
-                // embedding every history query and scanning the whole vector table.
+                // Exact FTS and file-name recall complements the independent
+                // full-workspace ANN result. It is never a prerequisite for
+                // natural-language semantic retrieval.
                 let incoming = search_file_space_matches(&database, None, &request)
                     .map_err(|_| ERROR_SEARCH_FAILED.to_owned())?
                     .into_iter()
@@ -1047,14 +1008,10 @@ mod tests {
     }
 
     #[test]
-    fn file_lookup_questions_add_a_compact_chinese_search_term() {
+    fn natural_language_questions_are_not_rewritten_into_hard_coded_keywords() {
         let plan = build_retrieval_plan("找一下日报文件", &[]);
-        assert_eq!(plan.search_queries, vec!["找一下日报文件", "日报"]);
-        assert_eq!(compact_file_search_query("日报").as_deref(), Some("日报"));
-        assert_eq!(
-            compact_file_search_query("请帮我找一下产品日报文档").as_deref(),
-            Some("产品日报")
-        );
+        assert_eq!(plan.query, "找一下日报文件");
+        assert_eq!(plan.search_queries, vec!["找一下日报文件"]);
     }
 
     #[test]

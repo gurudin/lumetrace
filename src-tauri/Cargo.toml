@@ -27,6 +27,7 @@ tauri = { version = "2", features = [] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 uuid = { version = "1", features = ["v4"] }
+usearch = { version = "2.26.2", default-features = false }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 
 [target.'cfg(unix)'.dependencies]

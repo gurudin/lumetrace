@@ -542,6 +542,34 @@ fn remove_file_if_present(path: &Path) -> Result<(), String> {
     }
 }
 
+fn remove_semantic_ann_temporary_files(database_path: &Path) -> Result<(), String> {
+    let Some(directory) = database_path.parent() else {
+        return Ok(());
+    };
+    let entries = match fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(format!(
+                "Unable to inspect the workspace semantic index directory: {error}"
+            ))
+        }
+    };
+    for entry in entries {
+        let entry = entry.map_err(|error| {
+            format!("Unable to inspect a workspace semantic index file: {error}")
+        })?;
+        let name = entry.file_name();
+        let Some(name) = name.to_str() else {
+            continue;
+        };
+        if name.starts_with(".semantic-search.usearch.") && name.ends_with(".tmp") {
+            remove_file_if_present(&entry.path())?;
+        }
+    }
+    Ok(())
+}
+
 fn remove_empty_workspace_container(
     workspace: &StoredWorkspace,
     app_data_directory: &Path,
@@ -595,6 +623,14 @@ fn remove_workspace_with_options(
     } else {
         None
     };
+    let semantic_index_target = if request.delete_workspace_data {
+        validate_internal_file_target(
+            &crate::semantic_search::semantic_ann_index_path_for_database(&workspace.database_path),
+            app_data_directory,
+        )?
+    } else {
+        None
+    };
 
     for other in all_workspaces
         .iter()
@@ -617,7 +653,11 @@ fn remove_workspace_with_options(
             .map_err(|error| format!("Unable to delete the workspace version history: {error}"))?;
     }
     if request.delete_workspace_data {
+        if let Some(target) = semantic_index_target.as_deref() {
+            remove_file_if_present(target)?;
+        }
         if let Some(target) = database_target.as_deref() {
+            remove_semantic_ann_temporary_files(target)?;
             remove_file_if_present(target)?;
             remove_file_if_present(&sqlite_sidecar_path(target, "-wal"))?;
             remove_file_if_present(&sqlite_sidecar_path(target, "-shm"))?;
@@ -886,6 +926,15 @@ mod tests {
         fs::write(&physical_file, b"original file").unwrap();
         let registry = WorkspaceRegistry::load_or_create(app_data_directory.clone()).unwrap();
         let workspace = register_inactive_workspace(&registry, &app_data_directory, &physical_root);
+        let semantic_index =
+            crate::semantic_search::semantic_ann_index_path_for_database(&workspace.database_path);
+        fs::write(&semantic_index, b"derived index").unwrap();
+        let semantic_temporary_index = workspace
+            .database_path
+            .parent()
+            .unwrap()
+            .join(".semantic-search.usearch.interrupted.tmp");
+        fs::write(&semantic_temporary_index, b"interrupted derived index").unwrap();
 
         remove_workspace_with_options(
             &registry,
@@ -900,6 +949,8 @@ mod tests {
 
         assert!(registry.workspace(&workspace.id).is_err());
         assert!(workspace.database_path.is_file());
+        assert!(semantic_index.is_file());
+        assert!(semantic_temporary_index.is_file());
         assert!(workspace.artifact_store_path.join("snapshot.bin").is_file());
         assert!(physical_file.is_file());
         fs::remove_dir_all(root).unwrap();
@@ -916,6 +967,15 @@ mod tests {
         fs::write(&physical_file, b"original file").unwrap();
         let registry = WorkspaceRegistry::load_or_create(app_data_directory.clone()).unwrap();
         let workspace = register_inactive_workspace(&registry, &app_data_directory, &physical_root);
+        let semantic_index =
+            crate::semantic_search::semantic_ann_index_path_for_database(&workspace.database_path);
+        fs::write(&semantic_index, b"derived index").unwrap();
+        let semantic_temporary_index = workspace
+            .database_path
+            .parent()
+            .unwrap()
+            .join(".semantic-search.usearch.interrupted.tmp");
+        fs::write(&semantic_temporary_index, b"interrupted derived index").unwrap();
 
         remove_workspace_with_options(
             &registry,
@@ -930,6 +990,8 @@ mod tests {
 
         assert!(registry.workspace(&workspace.id).is_err());
         assert!(!workspace.database_path.exists());
+        assert!(!semantic_index.exists());
+        assert!(!semantic_temporary_index.exists());
         assert!(!workspace.artifact_store_path.exists());
         assert!(!workspace.database_path.parent().unwrap().exists());
         assert!(physical_root.is_dir());

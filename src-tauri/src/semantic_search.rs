@@ -18,11 +18,12 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicU64, Ordering as AtomicOrdering},
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 use tauri::{Emitter, Manager, State};
+use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 use uuid::Uuid;
 
 pub const SEMANTIC_MODEL_ID: &str = "multilingual-e5-small-int8-v1";
@@ -40,6 +41,12 @@ const SEMANTIC_RESULT_LIMIT: usize = 80;
 const SEMANTIC_CANDIDATE_FILE_LIMIT: usize = 200;
 const SEMANTIC_CHUNKS_PER_FILE_LIMIT: usize = 64;
 const SEMANTIC_VECTOR_SCAN_LIMIT: usize = 4_096;
+const SEMANTIC_ANN_INDEX_FILE: &str = "semantic-search.usearch";
+const SEMANTIC_ANN_BUILD_BATCH_SIZE: usize = 256;
+const SEMANTIC_ANN_SEARCH_LIMIT: usize = 256;
+const SEMANTIC_ANN_CONNECTIVITY: usize = 16;
+const SEMANTIC_ANN_EXPANSION_ADD: usize = 64;
+const SEMANTIC_ANN_EXPANSION_SEARCH: usize = 96;
 const AI_CONTEXT_CANDIDATE_FILE_LIMIT: usize = 40;
 const AI_CONTEXT_STORED_CHUNK_LIMIT: usize = 64;
 const AI_CONTEXT_LEXICAL_CHUNK_LIMIT: usize = 8;
@@ -172,6 +179,12 @@ struct RuntimeProgress {
     error: Option<String>,
 }
 
+struct SemanticAnnSnapshot {
+    workspace_id: String,
+    data_revision: i64,
+    index: Arc<Index>,
+}
+
 impl Default for RuntimeProgress {
     fn default() -> Self {
         Self {
@@ -190,6 +203,7 @@ pub struct SemanticSearchRuntime {
     download_running: AtomicBool,
     cancel_download: AtomicBool,
     index_generation: AtomicU64,
+    ann_snapshot: Mutex<Option<SemanticAnnSnapshot>>,
 }
 
 impl SemanticSearchRuntime {
@@ -201,6 +215,7 @@ impl SemanticSearchRuntime {
             download_running: AtomicBool::new(false),
             cancel_download: AtomicBool::new(false),
             index_generation: AtomicU64::new(0),
+            ann_snapshot: Mutex::new(None),
         }
     }
 
@@ -233,6 +248,82 @@ impl SemanticSearchRuntime {
             .map_err(|_| "Unable to access the local semantic model".to_owned())?;
         *current = model;
         Ok(())
+    }
+
+    fn clear_ann_snapshot(&self) {
+        if let Ok(mut snapshot) = self.ann_snapshot.lock() {
+            *snapshot = None;
+        }
+    }
+
+    fn set_ann_snapshot(&self, snapshot: SemanticAnnSnapshot) -> Result<(), String> {
+        let mut current = self
+            .ann_snapshot
+            .lock()
+            .map_err(|_| "Unable to access the local semantic ANN index".to_owned())?;
+        *current = Some(snapshot);
+        Ok(())
+    }
+
+    fn ann_snapshot_for(
+        &self,
+        workspace_id: &str,
+        data_revision: i64,
+    ) -> Result<Option<Arc<Index>>, String> {
+        let current = self
+            .ann_snapshot
+            .lock()
+            .map_err(|_| "Unable to access the local semantic ANN index".to_owned())?;
+        Ok(current
+            .as_ref()
+            .filter(|snapshot| {
+                snapshot.workspace_id == workspace_id && snapshot.data_revision == data_revision
+            })
+            .map(|snapshot| Arc::clone(&snapshot.index)))
+    }
+
+    fn apply_ann_mutation(
+        &self,
+        workspace_id: &str,
+        revision_before: i64,
+        revision_after: i64,
+        removed_keys: &[u64],
+        added_vectors: &[(u64, Vec<f32>)],
+    ) {
+        let Ok(mut current) = self.ann_snapshot.lock() else {
+            return;
+        };
+        let Some(snapshot) = current.as_mut().filter(|snapshot| {
+            snapshot.workspace_id == workspace_id && snapshot.data_revision == revision_before
+        }) else {
+            return;
+        };
+        let update_result = (|| -> Result<(), String> {
+            if !added_vectors.is_empty() {
+                snapshot
+                    .index
+                    .reserve(snapshot.index.size().saturating_add(added_vectors.len()))
+                    .map_err(|error| format!("Unable to grow the semantic ANN index: {error}"))?;
+            }
+            for key in removed_keys {
+                snapshot
+                    .index
+                    .remove(*key)
+                    .map_err(|error| format!("Unable to remove a semantic ANN vector: {error}"))?;
+            }
+            for (key, vector) in added_vectors {
+                snapshot
+                    .index
+                    .add(*key, vector)
+                    .map_err(|error| format!("Unable to add a semantic ANN vector: {error}"))?;
+            }
+            Ok(())
+        })();
+        if update_result.is_ok() {
+            snapshot.data_revision = revision_after;
+        } else {
+            *current = None;
+        }
     }
 
     fn embed(&self, text: &str) -> Result<Option<Vec<f32>>, String> {
@@ -279,6 +370,14 @@ struct SearchDocument {
     cell_text: String,
     version_id: Option<String>,
     indexed_at: i64,
+}
+
+struct SemanticAnnMutation {
+    workspace_id: String,
+    revision_before: i64,
+    revision_after: i64,
+    removed_keys: Vec<u64>,
+    added_vectors: Vec<(u64, Vec<f32>)>,
 }
 
 fn split_search_text(text: &str) -> Vec<SearchChunk> {
@@ -374,6 +473,290 @@ fn cosine_similarity(left: &[f32], right: &[f32]) -> f32 {
     } else {
         dot / denominator
     }
+}
+
+pub(crate) fn semantic_ann_index_path_for_database(database_path: &Path) -> PathBuf {
+    database_path.with_file_name(SEMANTIC_ANN_INDEX_FILE)
+}
+
+fn semantic_ann_revisions(database: &Database) -> Result<(i64, i64), String> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    connection
+        .query_row(
+            "SELECT data_revision, file_revision
+             FROM file_space_semantic_ann_state WHERE model_id = ?1",
+            [SEMANTIC_MODEL_ID],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| format!("Unable to read semantic ANN state: {error}"))
+}
+
+fn semantic_ann_vector_count(database: &Database) -> Result<usize, String> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    connection
+        .query_row(
+            "SELECT COUNT(*)
+             FROM file_space_semantic_ann_keys ann
+             JOIN file_space_semantic_embeddings embeddings
+               ON embeddings.chunk_id = ann.chunk_id
+             WHERE embeddings.model_id = ?1
+               AND embeddings.dimensions = ?2",
+            params![SEMANTIC_MODEL_ID, SEMANTIC_MODEL_DIMENSIONS as i64],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|count| count.max(0) as usize)
+        .map_err(|error| format!("Unable to count semantic ANN vectors: {error}"))
+}
+
+fn backfill_semantic_ann_keys(database: &Database) -> Result<(), String> {
+    loop {
+        let changed = {
+            let mut connection = database
+                .0
+                .lock()
+                .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+            let transaction = connection
+                .transaction()
+                .map_err(|error| format!("Unable to begin semantic ANN migration: {error}"))?;
+            let changed = transaction
+                .execute(
+                    "INSERT OR IGNORE INTO file_space_semantic_ann_keys (chunk_id)
+                     SELECT embeddings.chunk_id
+                     FROM file_space_semantic_embeddings embeddings
+                     LEFT JOIN file_space_semantic_ann_keys ann
+                       ON ann.chunk_id = embeddings.chunk_id
+                     WHERE embeddings.model_id = ?1 AND ann.chunk_id IS NULL
+                     ORDER BY embeddings.rowid
+                     LIMIT ?2",
+                    params![SEMANTIC_MODEL_ID, SEMANTIC_ANN_BUILD_BATCH_SIZE as i64],
+                )
+                .map_err(|error| format!("Unable to migrate semantic ANN keys: {error}"))?;
+            transaction
+                .commit()
+                .map_err(|error| format!("Unable to finish semantic ANN migration: {error}"))?;
+            changed
+        };
+        if changed == 0 {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+fn new_semantic_ann_index(capacity: usize) -> Result<Index, String> {
+    let index = Index::new(&IndexOptions {
+        dimensions: SEMANTIC_MODEL_DIMENSIONS,
+        metric: MetricKind::Cos,
+        quantization: ScalarKind::BF16,
+        connectivity: SEMANTIC_ANN_CONNECTIVITY,
+        expansion_add: SEMANTIC_ANN_EXPANSION_ADD,
+        expansion_search: SEMANTIC_ANN_EXPANSION_SEARCH,
+        multi: false,
+    })
+    .map_err(|error| format!("Unable to create the semantic ANN index: {error}"))?;
+    index
+        .reserve_capacity_and_threads(capacity.max(1), 1)
+        .map_err(|error| format!("Unable to reserve the semantic ANN index: {error}"))?;
+    Ok(index)
+}
+
+fn save_semantic_ann_index(index: &Index, destination: &Path) -> Result<(), String> {
+    let parent = destination
+        .parent()
+        .ok_or_else(|| "Unable to resolve the semantic ANN directory".to_owned())?;
+    fs::create_dir_all(parent)
+        .map_err(|error| format!("Unable to create the semantic ANN directory: {error}"))?;
+    let temporary = parent.join(format!(".{SEMANTIC_ANN_INDEX_FILE}.{}.tmp", Uuid::new_v4()));
+    let temporary_text = temporary
+        .to_str()
+        .ok_or_else(|| "The semantic ANN path is not valid UTF-8".to_owned())?;
+    if let Err(error) = index.save(temporary_text) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Unable to save the semantic ANN index: {error}"));
+    }
+    #[cfg(target_os = "windows")]
+    if destination.exists() {
+        fs::remove_file(destination)
+            .map_err(|error| format!("Unable to replace the semantic ANN index: {error}"))?;
+    }
+    if let Err(error) = fs::rename(&temporary, destination) {
+        let _ = fs::remove_file(&temporary);
+        return Err(format!("Unable to publish the semantic ANN index: {error}"));
+    }
+    Ok(())
+}
+
+fn mark_semantic_ann_file_revision(
+    database: &Database,
+    expected_data_revision: i64,
+) -> Result<bool, String> {
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    connection
+        .execute(
+            "UPDATE file_space_semantic_ann_state
+             SET file_revision = ?2
+             WHERE model_id = ?1 AND data_revision = ?2",
+            params![SEMANTIC_MODEL_ID, expected_data_revision],
+        )
+        .map(|changed| changed == 1)
+        .map_err(|error| format!("Unable to save semantic ANN state: {error}"))
+}
+
+fn current_workspace_is(database: &Database, workspace_id: &str) -> bool {
+    database
+        .location()
+        .is_ok_and(|location| location.workspace_id == workspace_id)
+}
+
+fn build_semantic_ann_index(
+    database: &Database,
+    workspace_id: &str,
+    expected_data_revision: i64,
+) -> Result<Option<Index>, String> {
+    let vector_count = semantic_ann_vector_count(database)?;
+    let index = new_semantic_ann_index(vector_count)?;
+    let mut last_key = 0_i64;
+    loop {
+        if !current_workspace_is(database, workspace_id)
+            || semantic_ann_revisions(database)?.0 != expected_data_revision
+        {
+            return Ok(None);
+        }
+        let started_at = Instant::now();
+        let rows = {
+            let connection = database
+                .0
+                .lock()
+                .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+            let mut statement = connection
+                .prepare(
+                    "SELECT ann.ann_key, embeddings.vector, embeddings.dimensions
+                     FROM file_space_semantic_ann_keys ann
+                     JOIN file_space_semantic_embeddings embeddings
+                       ON embeddings.chunk_id = ann.chunk_id
+                     WHERE embeddings.model_id = ?1 AND ann.ann_key > ?2
+                     ORDER BY ann.ann_key
+                     LIMIT ?3",
+                )
+                .map_err(|error| format!("Unable to prepare semantic ANN rebuild: {error}"))?;
+            statement
+                .query_map(
+                    params![
+                        SEMANTIC_MODEL_ID,
+                        last_key,
+                        SEMANTIC_ANN_BUILD_BATCH_SIZE as i64
+                    ],
+                    |row| {
+                        Ok((
+                            row.get::<_, i64>(0)?,
+                            row.get::<_, Vec<u8>>(1)?,
+                            row.get::<_, i64>(2)?,
+                        ))
+                    },
+                )
+                .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+                .map_err(|error| format!("Unable to read semantic ANN vectors: {error}"))?
+        };
+        if rows.is_empty() {
+            break;
+        }
+        for (ann_key, blob, dimensions) in &rows {
+            last_key = *ann_key;
+            if *dimensions != SEMANTIC_MODEL_DIMENSIONS as i64 {
+                continue;
+            }
+            let Some(vector) = vector_from_blob(blob, SEMANTIC_MODEL_DIMENSIONS) else {
+                continue;
+            };
+            index
+                .add(*ann_key as u64, &vector)
+                .map_err(|error| format!("Unable to rebuild a semantic ANN vector: {error}"))?;
+        }
+        let pause = semantic_index_cooldown(started_at.elapsed());
+        std::thread::sleep(pause);
+    }
+    Ok(Some(index))
+}
+
+fn load_semantic_ann_index(path: &Path, expected_size: usize) -> Result<Index, String> {
+    let path = path
+        .to_str()
+        .ok_or_else(|| "The semantic ANN path is not valid UTF-8".to_owned())?;
+    let index = Index::restore(path)
+        .map_err(|error| format!("Unable to load the semantic ANN index: {error}"))?;
+    if index.dimensions() != SEMANTIC_MODEL_DIMENSIONS || index.size() != expected_size {
+        return Err(
+            "The saved semantic ANN index does not match the workspace database".to_owned(),
+        );
+    }
+    Ok(index)
+}
+
+fn reconcile_semantic_ann_index(
+    database: &Database,
+    runtime: &SemanticSearchRuntime,
+) -> Result<(), String> {
+    let location = database.location()?;
+    backfill_semantic_ann_keys(database)?;
+    if !current_workspace_is(database, &location.workspace_id) {
+        return Ok(());
+    }
+    let (data_revision, file_revision) = semantic_ann_revisions(database)?;
+    let index_path = semantic_ann_index_path_for_database(&location.database_path);
+    if let Some(index) = runtime.ann_snapshot_for(&location.workspace_id, data_revision)? {
+        if file_revision != data_revision {
+            save_semantic_ann_index(&index, &index_path)?;
+            let _ = mark_semantic_ann_file_revision(database, data_revision)?;
+        }
+        return Ok(());
+    }
+
+    let expected_size = semantic_ann_vector_count(database)?;
+    if file_revision == data_revision && index_path.is_file() {
+        if let Ok(index) = load_semantic_ann_index(&index_path, expected_size) {
+            runtime.set_ann_snapshot(SemanticAnnSnapshot {
+                workspace_id: location.workspace_id,
+                data_revision,
+                index: Arc::new(index),
+            })?;
+            return Ok(());
+        }
+    }
+
+    let Some(index) = build_semantic_ann_index(database, &location.workspace_id, data_revision)?
+    else {
+        return Ok(());
+    };
+    save_semantic_ann_index(&index, &index_path)?;
+    if !mark_semantic_ann_file_revision(database, data_revision)? {
+        return Ok(());
+    }
+    runtime.set_ann_snapshot(SemanticAnnSnapshot {
+        workspace_id: location.workspace_id,
+        data_revision,
+        index: Arc::new(index),
+    })
+}
+
+fn semantic_ann_is_ready(database: &Database, runtime: &SemanticSearchRuntime) -> bool {
+    let Ok(location) = database.location() else {
+        return false;
+    };
+    let Ok((data_revision, _)) = semantic_ann_revisions(database) else {
+        return false;
+    };
+    runtime
+        .ann_snapshot_for(&location.workspace_id, data_revision)
+        .is_ok_and(|snapshot| snapshot.is_some())
 }
 
 fn sha256_file(path: &Path) -> Result<String, String> {
@@ -866,8 +1249,9 @@ fn process_next_document(
     let Some(document) = read_next_document(database)? else {
         return Ok(false);
     };
+    let workspace_id = database.location()?.workspace_id;
     let index_generation = runtime.index_generation.load(AtomicOrdering::SeqCst);
-    let result = (|| -> Result<(), String> {
+    let result = (|| -> Result<Option<SemanticAnnMutation>, String> {
         if document.extraction_status == "failed" {
             return Err(document
                 .extraction_error
@@ -917,7 +1301,7 @@ fn process_next_document(
             transaction
                 .commit()
                 .map_err(|error| format!("Unable to pause semantic indexing: {error}"))?;
-            return Ok(());
+            return Ok(None);
         }
         let current_indexed_at = transaction
             .query_row(
@@ -941,8 +1325,32 @@ fn process_next_document(
             transaction
                 .commit()
                 .map_err(|error| format!("Unable to reschedule semantic indexing: {error}"))?;
-            return Ok(());
+            return Ok(None);
         }
+        let revision_before = transaction
+            .query_row(
+                "SELECT data_revision FROM file_space_semantic_ann_state WHERE model_id = ?1",
+                [SEMANTIC_MODEL_ID],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("Unable to read semantic ANN revision: {error}"))?;
+        let removed_keys = {
+            let mut statement = transaction
+                .prepare(
+                    "SELECT ann.ann_key
+                     FROM file_space_semantic_ann_keys ann
+                     JOIN file_space_search_chunks chunks ON chunks.id = ann.chunk_id
+                     WHERE chunks.file_id = ?1",
+                )
+                .map_err(|error| format!("Unable to prepare semantic ANN replacement: {error}"))?;
+            statement
+                .query_map([&document.file_id], |row| row.get::<_, i64>(0))
+                .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+                .map_err(|error| format!("Unable to read replaced semantic ANN keys: {error}"))?
+                .into_iter()
+                .map(|key| key as u64)
+                .collect::<Vec<_>>()
+        };
         transaction
             .execute(
                 "DELETE FROM file_space_search_chunks WHERE file_id = ?1",
@@ -950,6 +1358,7 @@ fn process_next_document(
             )
             .map_err(|error| format!("Unable to replace semantic chunks: {error}"))?;
         let created_at = now_millis();
+        let mut added_vectors = Vec::with_capacity(embedded_chunks.len());
         for (ordinal, (chunk, hash, vector)) in embedded_chunks.into_iter().enumerate() {
             let chunk_id = Uuid::new_v4().to_string();
             transaction
@@ -987,6 +1396,13 @@ fn process_next_document(
                     ],
                 )
                 .map_err(|error| format!("Unable to save a semantic embedding: {error}"))?;
+            transaction
+                .execute(
+                    "INSERT INTO file_space_semantic_ann_keys (chunk_id) VALUES (?1)",
+                    [&chunk_id],
+                )
+                .map_err(|error| format!("Unable to save a semantic ANN key: {error}"))?;
+            added_vectors.push((transaction.last_insert_rowid() as u64, vector));
         }
         transaction
             .execute(
@@ -996,9 +1412,23 @@ fn process_next_document(
                 params![document.file_id, now_millis()],
             )
             .map_err(|error| format!("Unable to finish semantic indexing: {error}"))?;
+        let revision_after = transaction
+            .query_row(
+                "SELECT data_revision FROM file_space_semantic_ann_state WHERE model_id = ?1",
+                [SEMANTIC_MODEL_ID],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|error| format!("Unable to read updated semantic ANN revision: {error}"))?;
         transaction
             .commit()
-            .map_err(|error| format!("Unable to finish semantic indexing: {error}"))
+            .map_err(|error| format!("Unable to finish semantic indexing: {error}"))?;
+        Ok(Some(SemanticAnnMutation {
+            workspace_id,
+            revision_before,
+            revision_after,
+            removed_keys,
+            added_vectors,
+        }))
     })();
     if let Err(error) = &result {
         if runtime.index_generation.load(AtomicOrdering::SeqCst) != index_generation
@@ -1008,6 +1438,15 @@ fn process_next_document(
         } else {
             mark_document_failed(database, &document.file_id, error);
         }
+    }
+    if let Ok(Some(mutation)) = &result {
+        runtime.apply_ann_mutation(
+            &mutation.workspace_id,
+            mutation.revision_before,
+            mutation.revision_after,
+            &mutation.removed_keys,
+            &mutation.added_vectors,
+        );
     }
     result.map(|_| true)
 }
@@ -1080,6 +1519,7 @@ pub(crate) fn status_record(
         })
         .unwrap_or((0, 0, 0, 0, None, None));
     let installed = runtime.is_installed();
+    let ann_ready = semantic_ann_is_ready(database, runtime);
     let state = if runtime.download_running.load(AtomicOrdering::Relaxed) {
         if progress.phase == "validating" {
             "validating"
@@ -1096,7 +1536,7 @@ pub(crate) fn status_record(
         "failed"
     } else if counts.3 > 0 && counts.2 == 0 {
         "failed"
-    } else if counts.2 > 0 || counts.1 < counts.0 {
+    } else if counts.2 > 0 || counts.1 < counts.0 || !ann_ready {
         "indexing"
     } else {
         "ready"
@@ -1187,7 +1627,19 @@ pub fn start_semantic_indexer(app: tauri::AppHandle) -> Result<(), String> {
                             if let Err(error) = schedule_outdated_documents(database.inner()) {
                                 eprintln!("Unable to reconcile semantic indexing: {error}");
                             }
-                            reconciled_workspace_id = Some(workspace_id);
+                            reconciled_workspace_id = Some(workspace_id.clone());
+                        } else if let Err(error) =
+                            reconcile_semantic_ann_index(database.inner(), runtime.inner())
+                        {
+                            runtime.set_progress(
+                                "failed",
+                                model_total_bytes(),
+                                None,
+                                Some(error.clone()),
+                            );
+                            eprintln!("Unable to reconcile the semantic ANN index: {error}");
+                        } else {
+                            runtime.set_progress("installed", model_total_bytes(), None, None);
                         }
                         if last_status_emit.elapsed() >= SEMANTIC_STATUS_INTERVAL {
                             emit_status(&app, database.inner(), runtime.inner());
@@ -1320,6 +1772,116 @@ pub fn semantic_file_ranks(
     });
     ranked.truncate(SEMANTIC_RESULT_LIMIT);
     Ok(ranked)
+}
+
+fn semantic_ann_candidate_rows(
+    database: &Database,
+    ann_keys: &[u64],
+) -> Result<Vec<(String, Vec<u8>, i64)>, String> {
+    if ann_keys.is_empty() {
+        return Ok(Vec::new());
+    }
+    let candidate_values = ann_keys
+        .iter()
+        .enumerate()
+        .map(|(rank, _)| format!("(?{}, {rank})", rank + 1))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let model_parameter = ann_keys.len() + 1;
+    let sql = format!(
+        "WITH candidates(ann_key, candidate_rank) AS (VALUES {candidate_values})
+         SELECT chunks.file_id, embeddings.vector, embeddings.dimensions
+         FROM candidates
+         JOIN file_space_semantic_ann_keys ann ON ann.ann_key = candidates.ann_key
+         JOIN file_space_semantic_embeddings embeddings ON embeddings.chunk_id = ann.chunk_id
+         JOIN file_space_search_chunks chunks ON chunks.id = ann.chunk_id
+         JOIN file_space_search_documents documents
+           ON documents.file_id = chunks.file_id
+          AND documents.indexed_at = chunks.document_indexed_at
+          AND documents.extraction_status = 'extracted'
+         JOIN files ON files.id = chunks.file_id
+         WHERE embeddings.model_id = ?{model_parameter}
+           AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
+         ORDER BY candidates.candidate_rank"
+    );
+    let mut parameters = ann_keys
+        .iter()
+        .map(|key| Value::Integer(*key as i64))
+        .collect::<Vec<_>>();
+    parameters.push(Value::Text(SEMANTIC_MODEL_ID.to_owned()));
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|error| format!("Unable to prepare full-space semantic recall: {error}"))?;
+    statement
+        .query_map(params_from_iter(parameters), |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        })
+        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        .map_err(|error| format!("Unable to read full-space semantic recall: {error}"))
+}
+
+fn semantic_file_ranks_for_vector(
+    database: &Database,
+    runtime: &SemanticSearchRuntime,
+    query_vector: &[f32],
+) -> Result<Vec<(String, f32)>, String> {
+    let location = database.location()?;
+    let (data_revision, _) = semantic_ann_revisions(database)?;
+    let Some(index) = runtime.ann_snapshot_for(&location.workspace_id, data_revision)? else {
+        return Ok(Vec::new());
+    };
+    if index.size() == 0 {
+        return Ok(Vec::new());
+    }
+    let matches = index
+        .search(query_vector, SEMANTIC_ANN_SEARCH_LIMIT.min(index.size()))
+        .map_err(|error| format!("Unable to search the semantic ANN index: {error}"))?;
+    let rows = semantic_ann_candidate_rows(database, &matches.keys)?;
+    let mut file_scores = HashMap::<String, f32>::new();
+    for (file_id, blob, dimensions) in rows {
+        if dimensions != SEMANTIC_MODEL_DIMENSIONS as i64 {
+            continue;
+        }
+        let Some(vector) = vector_from_blob(&blob, SEMANTIC_MODEL_DIMENSIONS) else {
+            continue;
+        };
+        let similarity = cosine_similarity(query_vector, &vector);
+        if !similarity.is_finite() || similarity < SEMANTIC_MIN_SIMILARITY {
+            continue;
+        }
+        file_scores
+            .entry(file_id)
+            .and_modify(|score| *score = score.max(similarity))
+            .or_insert(similarity);
+    }
+    let mut ranked = file_scores.into_iter().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| left.0.cmp(&right.0))
+    });
+    ranked.truncate(SEMANTIC_RESULT_LIMIT);
+    Ok(ranked)
+}
+
+pub(crate) fn semantic_file_ranks_global(
+    database: &Database,
+    runtime: &SemanticSearchRuntime,
+    query: &str,
+) -> Result<Vec<(String, f32)>, String> {
+    if !runtime.is_installed() || query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(query_vector) = runtime.embed(&format!("query: {}", query.trim()))? else {
+        return Ok(Vec::new());
+    };
+    semantic_file_ranks_for_vector(database, runtime, &query_vector)
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1949,6 +2511,15 @@ pub fn remove_semantic_search_model(
         .index_generation
         .fetch_add(1, AtomicOrdering::SeqCst);
     runtime.set_model(None)?;
+    runtime.clear_ann_snapshot();
+    if let Ok(location) = database.location() {
+        let ann_index_path = semantic_ann_index_path_for_database(&location.database_path);
+        if let Err(error) = fs::remove_file(&ann_index_path) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(format!("Unable to remove the semantic ANN index: {error}"));
+            }
+        }
+    }
     if runtime.model_directory.exists() {
         fs::remove_dir_all(&runtime.model_directory)
             .map_err(|error| format!("Unable to remove the local semantic model: {error}"))?;
@@ -2084,6 +2655,74 @@ mod tests {
             .unwrap();
         assert!(!semantic.lexical_match);
         assert_eq!(semantic.semantic_similarity, Some(0.9));
+    }
+
+    #[test]
+    fn ann_recall_finds_a_semantic_file_without_lexical_candidates() {
+        let root = std::env::temp_dir().join(format!("lumetrace-ann-recall-{}", Uuid::new_v4()));
+        {
+            let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
+            let mut near_vector = vec![0.0_f32; SEMANTIC_MODEL_DIMENSIONS];
+            near_vector[0] = 1.0;
+            let mut far_vector = vec![0.0_f32; SEMANTIC_MODEL_DIMENSIONS];
+            far_vector[1] = 1.0;
+            let connection = database.0.lock().unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO files
+                       (id, original_name, storage_path, size_bytes, source_kind,
+                        updated_at, created_at)
+                     VALUES
+                       ('near-file', 'strategy.md', 'strategy.md', 10, 'user_import', 10, 10),
+                       ('far-file', 'unrelated.md', 'unrelated.md', 10, 'user_import', 10, 10);
+                     INSERT INTO file_space_search_documents
+                       (file_id, file_name, body_text, extraction_status, extraction_version,
+                        tag_text, task_text, cell_text, file_updated_at, size_bytes, indexed_at)
+                     VALUES
+                       ('near-file', 'strategy.md', 'source body', 'extracted', 1,
+                        '', '', '', 10, 10, 11),
+                       ('far-file', 'unrelated.md', 'other body', 'extracted', 1,
+                        '', '', '', 10, 10, 11);
+                     INSERT INTO file_space_search_chunks
+                       (id, file_id, document_indexed_at, content_hash, ordinal,
+                        start_character, end_character, body_text, character_count, created_at)
+                     VALUES
+                       ('near-chunk', 'near-file', 11, 'near', 0, 0, 11, 'source body', 11, 11),
+                       ('far-chunk', 'far-file', 11, 'far', 0, 0, 10, 'other body', 10, 11);",
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO file_space_semantic_embeddings
+                       (chunk_id, model_id, dimensions, vector, created_at)
+                     VALUES ('near-chunk', ?1, ?2, ?3, 11)",
+                    params![
+                        SEMANTIC_MODEL_ID,
+                        SEMANTIC_MODEL_DIMENSIONS as i64,
+                        vector_to_blob(&near_vector)
+                    ],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO file_space_semantic_embeddings
+                       (chunk_id, model_id, dimensions, vector, created_at)
+                     VALUES ('far-chunk', ?1, ?2, ?3, 11)",
+                    params![
+                        SEMANTIC_MODEL_ID,
+                        SEMANTIC_MODEL_DIMENSIONS as i64,
+                        vector_to_blob(&far_vector)
+                    ],
+                )
+                .unwrap();
+            drop(connection);
+
+            let runtime = SemanticSearchRuntime::new(&root);
+            reconcile_semantic_ann_index(&database, &runtime).unwrap();
+            let ranked = semantic_file_ranks_for_vector(&database, &runtime, &near_vector).unwrap();
+            assert_eq!(ranked, vec![("near-file".to_owned(), 1.0)]);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
