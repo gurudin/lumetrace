@@ -5,6 +5,7 @@ import {
   clearAgentCliRuntimeSuccess,
   recordAgentCliRuntimeSuccess,
   wasAgentCliRecentlySuccessful,
+  withAgentCheckResult,
 } from "../src/pages/file-space/agentCliDetection.ts";
 
 test("does not present a transient CLI check failure as missing configuration", () => {
@@ -49,4 +50,26 @@ test("remembers a real runtime success briefly so stale UI checks cannot overrid
   assert.equal(wasAgentCliRecentlySuccessful("codex", 10_001), false);
   assert.equal(wasAgentCliRecentlySuccessful("hermes", 310_001), false);
   clearAgentCliRuntimeSuccess();
+});
+
+test("one CLI result cannot overwrite the other in-flight checks", () => {
+  const initial = {
+    claude: "checking",
+    hermes: "checking",
+    codex: "checking",
+    opencode: "checking",
+  };
+  const afterHermes = withAgentCheckResult(initial, "hermes", "passed");
+  assert.deepEqual(afterHermes, {
+    claude: "checking",
+    hermes: "passed",
+    codex: "checking",
+    opencode: "checking",
+  });
+  assert.deepEqual(initial, {
+    claude: "checking",
+    hermes: "checking",
+    codex: "checking",
+    opencode: "checking",
+  });
 });

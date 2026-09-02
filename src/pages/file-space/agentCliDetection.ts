@@ -26,6 +26,14 @@ export function clearAgentCliRuntimeSuccess() {
   recentRuntimeSuccess = null;
 }
 
+export function withAgentCheckResult<Key extends string, Value>(
+  checks: Record<Key, Value>,
+  key: Key,
+  result: Value,
+) {
+  return { ...checks, [key]: result };
+}
+
 export function agentCheckState(result: AgentCliStatusResponse): AgentCheckState {
   switch (result.checkState) {
     case "passed":

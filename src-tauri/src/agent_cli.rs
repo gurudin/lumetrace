@@ -410,6 +410,16 @@ fn inspect(definition: AgentCliDefinition) -> AgentCliStatus {
     }
 }
 
+fn failed_check_status(definition: AgentCliDefinition) -> AgentCliStatus {
+    AgentCliStatus {
+        key: definition.key.to_owned(),
+        installed: false,
+        reachable: false,
+        version: None,
+        check_state: AgentCliCheckState::CheckFailed,
+    }
+}
+
 fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
     let status = inspect(definition);
     if definition.key != "hermes"
@@ -471,9 +481,38 @@ fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
 
 #[tauri::command]
 pub async fn check_agent_clis() -> Vec<AgentCliStatus> {
-    tauri::async_runtime::spawn_blocking(|| definitions().into_iter().map(inspect).collect())
-        .await
-        .unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(|| {
+        let workers = definitions()
+            .into_iter()
+            .map(|definition| {
+                let worker = thread::spawn(move || inspect(definition));
+                (definition, worker)
+            })
+            .collect::<Vec<_>>();
+        workers
+            .into_iter()
+            .map(|(definition, worker)| {
+                worker
+                    .join()
+                    .unwrap_or_else(|_| failed_check_status(definition))
+            })
+            .collect()
+    })
+    .await
+    .unwrap_or_else(|_| definitions().into_iter().map(failed_check_status).collect())
+}
+
+#[tauri::command]
+pub async fn check_agent_cli_status(key: String) -> Option<AgentCliStatus> {
+    tauri::async_runtime::spawn_blocking(move || {
+        definitions()
+            .into_iter()
+            .find(|definition| definition.key == key)
+            .map(inspect)
+    })
+    .await
+    .ok()
+    .flatten()
 }
 
 #[tauri::command]

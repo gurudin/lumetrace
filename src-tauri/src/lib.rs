@@ -64,6 +64,7 @@ pub fn run() {
             ai_service::check_local_llm_connection,
             ai_service::save_local_llm_settings,
             agent_cli::check_agent_clis,
+            agent_cli::check_agent_cli_status,
             agent_cli::check_agent_cli,
             agent_cli::get_agent_cli_settings,
             agent_cli::save_agent_cli_settings,

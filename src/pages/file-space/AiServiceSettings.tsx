@@ -23,6 +23,7 @@ import {
   type AgentCheckState,
   type AgentCliStatusResponse,
   wasAgentCliRecentlySuccessful,
+  withAgentCheckResult,
 } from "./agentCliDetection";
 import {
   defaultAiServiceMode,
@@ -129,24 +130,30 @@ function reconcileRecentRuntimeSuccess(checks: Record<AgentCliKey, AgentCheck>) 
   };
 }
 
-async function requestAgentChecks() {
+async function requestAgentChecks(onResult?: (key: AgentCliKey, check: AgentCheck) => void) {
   if (!isTauri()) return createAgentCheckMap("error");
-  try {
-    const results = await invoke<AgentCliStatusResponse[]>("check_agent_clis");
-    const checks = createAgentCheckMap("missing");
-    results.forEach((result) => {
-      if (isAgentCliKey(result.key)) checks[result.key] = toAgentCheck(result);
-    });
-    return reconcileRecentRuntimeSuccess(checks);
-  } catch {
-    return createAgentCheckMap("error");
-  }
+  const checks = createAgentCheckMap("checking");
+  await Promise.all(agentCliKeys.map(async (key) => {
+    let check: AgentCheck;
+    try {
+      const result = await invoke<AgentCliStatusResponse | null>("check_agent_cli_status", { key });
+      check = result ? toAgentCheck(result) : { state: "missing" };
+    } catch {
+      check = { state: "error" };
+    }
+    if (wasAgentCliRecentlySuccessful(key)) {
+      check = { ...check, state: "passed" };
+    }
+    checks[key] = check;
+    onResult?.(key, check);
+  }));
+  return checks;
 }
 
-function getStartupAgentChecks() {
+function getStartupAgentChecks(onResult?: (key: AgentCliKey, check: AgentCheck) => void) {
   if (cachedAgentChecks) return Promise.resolve(cachedAgentChecks);
   if (!startupAgentCheckPromise) {
-    startupAgentCheckPromise = requestAgentChecks().then((checks) => {
+    startupAgentCheckPromise = requestAgentChecks(onResult).then((checks) => {
       cachedAgentChecks = checks;
       return checks;
     });
@@ -272,7 +279,9 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const detectAgentClis = useCallback(async () => {
     setDetectingAgents(true);
     setAgentChecks(createAgentCheckMap("checking"));
-    const checks = await requestAgentChecks();
+    const checks = await requestAgentChecks((key, check) => {
+      setAgentChecks((current) => withAgentCheckResult(current, key, check));
+    });
     cachedAgentChecks = checks;
     startupAgentCheckPromise = Promise.resolve(checks);
     setAgentChecks(checks);
@@ -288,7 +297,9 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     }
     setDetectingAgents(true);
     setAgentChecks(createAgentCheckMap("checking"));
-    void getStartupAgentChecks().then((checks) => {
+    void getStartupAgentChecks((key, check) => {
+      setAgentChecks((current) => withAgentCheckResult(current, key, check));
+    }).then((checks) => {
       setAgentChecks(checks);
       setDetectingAgents(false);
     });
