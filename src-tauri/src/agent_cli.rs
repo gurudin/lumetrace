@@ -207,6 +207,61 @@ pub(crate) fn resolve_agent_cli_executable(key: &str) -> Option<PathBuf> {
         })
 }
 
+fn codex_user_config_path() -> Option<PathBuf> {
+    env::var_os("CODEX_HOME")
+        .map(PathBuf::from)
+        .or_else(|| {
+            env::var_os("HOME")
+                .or_else(|| env::var_os("USERPROFILE"))
+                .map(PathBuf::from)
+                .map(|home| home.join(".codex"))
+        })
+        .map(|home| home.join("config.toml"))
+}
+
+fn codex_mcp_server_keys(config: &str) -> Vec<String> {
+    let mut keys = config
+        .lines()
+        .filter_map(|line| {
+            let table = line
+                .trim()
+                .strip_prefix("[mcp_servers.")?
+                .strip_suffix(']')?
+                .trim();
+            if table.is_empty() || table.chars().any(char::is_control) {
+                return None;
+            }
+
+            let mut quote = None;
+            let mut escaped = false;
+            for character in table.chars() {
+                if escaped {
+                    escaped = false;
+                    continue;
+                }
+                match (quote, character) {
+                    (Some('"'), '\\') => escaped = true,
+                    (Some(current), value) if current == value => quote = None,
+                    (None, '"' | '\'') => quote = Some(character),
+                    (None, '.') => return None,
+                    _ => {}
+                }
+            }
+            quote.is_none().then(|| table.to_owned())
+        })
+        .collect::<Vec<_>>();
+    keys.sort();
+    keys.dedup();
+    keys
+}
+
+fn configured_codex_mcp_server_keys() -> Vec<String> {
+    codex_user_config_path()
+        .and_then(|path| std::fs::read_to_string(path).ok())
+        .map(|config| codex_mcp_server_keys(&config))
+        .unwrap_or_default()
+}
+
 fn read_pipe<T>(pipe: Option<T>) -> thread::JoinHandle<String>
 where
     T: Read + Send + 'static,
@@ -295,7 +350,6 @@ pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Comma
         .arg("read-only")
         .arg("--skip-git-repo-check")
         .arg("--ephemeral")
-        .arg("--ignore-user-config")
         .arg("--ignore-rules")
         .arg("--color")
         .arg("never")
@@ -306,10 +360,24 @@ pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Comma
         .arg("multi_agent")
         .arg("--disable")
         .arg("apps")
+        .arg("--disable")
+        .arg("hooks")
+        .arg("--disable")
+        .arg("remote_plugin")
+        .arg("--disable")
+        .arg("memories")
         .arg("-c")
         .arg("web_search=\"disabled\"")
-        .arg("-")
         .current_dir(working_dir);
+    // Keep the user's model/provider/auth configuration, but do not start the
+    // user's unrelated MCP servers for a RAG answer whose complete evidence is
+    // already supplied by Lume Trace in the prompt.
+    for server in configured_codex_mcp_server_keys() {
+        command
+            .arg("-c")
+            .arg(format!("mcp_servers.{server}.enabled=false"));
+    }
+    command.arg("-");
     for key in CODEX_HOST_ENVIRONMENT_KEYS {
         command.env_remove(key);
     }
@@ -693,6 +761,53 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument.contains("LUMETRACE")));
+    }
+
+    #[test]
+    fn codex_keeps_user_provider_configuration_but_disables_runtime_extensions() {
+        let command = codex_exec_command(Path::new("codex"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument == "--ignore-user-config"));
+        for feature in [
+            "shell_tool",
+            "multi_agent",
+            "apps",
+            "hooks",
+            "remote_plugin",
+            "memories",
+        ] {
+            assert!(arguments.iter().any(|argument| argument == feature));
+        }
+    }
+
+    #[test]
+    fn codex_mcp_config_parser_returns_only_top_level_server_tables() {
+        let config = r#"
+[mcp_servers.claude-mem]
+command = "node"
+
+[mcp_servers.node_repl]
+command = "node"
+
+[mcp_servers.node_repl.env]
+TOKEN = "not-a-real-token"
+
+[mcp_servers."server.with.dots"]
+url = "https://example.invalid/mcp"
+"#;
+        assert_eq!(
+            codex_mcp_server_keys(config),
+            vec![
+                "\"server.with.dots\"".to_owned(),
+                "claude-mem".to_owned(),
+                "node_repl".to_owned(),
+            ]
+        );
     }
 
     #[test]
