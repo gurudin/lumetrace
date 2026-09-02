@@ -2037,10 +2037,101 @@ fn dense_ai_context_chunks(
     if !runtime.is_installed() || query.trim().is_empty() {
         return Ok(Vec::new());
     }
-    let Some(query_vector) = runtime.embed(&format!("query: {}", query.trim()))? else {
-        return Ok(Vec::new());
+    let mut fused = HashMap::<String, (StoredAiChunk, f32, f32)>::new();
+    for variant in semantic_query_variants(query) {
+        let Some(query_vector) = runtime.embed(&format!("query: {variant}"))? else {
+            continue;
+        };
+        for (rank, (chunk, similarity)) in
+            dense_ai_context_chunks_for_vector(database, runtime, &query_vector)?
+                .into_iter()
+                .enumerate()
+        {
+            let reciprocal_rank = 1.0 / (AI_RRF_K + rank as f32 + 1.0);
+            match fused.entry(chunk.chunk_id.clone()) {
+                std::collections::hash_map::Entry::Occupied(mut entry) => {
+                    let (_, best_similarity, score) = entry.get_mut();
+                    *best_similarity = best_similarity.max(similarity);
+                    *score += reciprocal_rank;
+                }
+                std::collections::hash_map::Entry::Vacant(entry) => {
+                    entry.insert((chunk, similarity, reciprocal_rank));
+                }
+            }
+        }
+    }
+    let mut ranked = fused.into_values().collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| right.2.partial_cmp(&left.2).unwrap_or(Ordering::Equal))
+            .then_with(|| left.0.chunk_id.cmp(&right.0.chunk_id))
+    });
+    ranked.truncate(AI_DENSE_SEARCH_LIMIT);
+    Ok(ranked
+        .into_iter()
+        .map(|(chunk, similarity, _)| (chunk, similarity))
+        .collect())
+}
+
+fn is_cjk_character(character: char) -> bool {
+    matches!(
+        character,
+        '\u{3400}'..='\u{4dbf}'
+            | '\u{4e00}'..='\u{9fff}'
+            | '\u{f900}'..='\u{faff}'
+            | '\u{3040}'..='\u{30ff}'
+            | '\u{ac00}'..='\u{d7af}'
+    )
+}
+
+fn semantic_query_variants(query: &str) -> Vec<String> {
+    let query = query.trim();
+    if query.is_empty() {
+        return Vec::new();
+    }
+    let mut variants = vec![query.to_owned()];
+    let Some(primary_clause) = query
+        .split(|character| {
+            matches!(
+                character,
+                ',' | '，' | '.' | '。' | '!' | '！' | '?' | '？' | ';' | '；' | '\n'
+            )
+        })
+        .map(str::trim)
+        .filter(|clause| !clause.is_empty())
+        .max_by_key(|clause| clause.chars().count())
+    else {
+        return variants;
     };
-    dense_ai_context_chunks_for_vector(database, runtime, &query_vector)
+    let focus = if primary_clause.chars().any(is_cjk_character) {
+        let characters = primary_clause.chars().collect::<Vec<_>>();
+        let focus_length = if characters.len() <= 6 {
+            characters.len()
+        } else if characters.len() <= 8 {
+            (characters.len() * 2 / 3).max(4)
+        } else {
+            ((characters.len() * 2 + 2) / 3).clamp(4, 18)
+        };
+        characters[characters.len().saturating_sub(focus_length)..]
+            .iter()
+            .collect::<String>()
+    } else {
+        let words = primary_clause.split_whitespace().collect::<Vec<_>>();
+        let focus_length = if words.len() <= 4 {
+            words.len()
+        } else {
+            ((words.len() * 2 + 2) / 3).clamp(3, 12)
+        };
+        words[words.len().saturating_sub(focus_length)..].join(" ")
+    };
+    let focus = focus.trim();
+    if !focus.is_empty() && focus != query {
+        variants.push(focus.to_owned());
+    }
+    variants
 }
 
 fn dense_ai_context_chunks_for_vector(
@@ -2506,6 +2597,28 @@ mod tests {
         assert!((cosine_similarity(&[1.0, 0.0], &[1.0, 0.0]) - 1.0).abs() < 0.0001);
         assert_eq!(cosine_similarity(&[1.0, 0.0], &[0.0, 1.0]), 0.0);
         assert_eq!(cosine_similarity(&[], &[]), 0.0);
+    }
+
+    #[test]
+    fn natural_language_queries_add_a_focused_semantic_variant() {
+        let question = "帮我总结一下最近关于断流后恢复策略的调整，不要只列文件名。";
+        let variants = semantic_query_variants(question);
+        assert_eq!(variants.first().map(String::as_str), Some(question));
+        assert_eq!(variants.len(), 2);
+        assert!(variants[1].contains("断流后恢复策略"));
+        assert!(!variants[1].contains("帮我总结一下"));
+
+        assert_eq!(
+            semantic_query_variants("找一下日报文件"),
+            vec!["找一下日报文件".to_owned(), "日报文件".to_owned()]
+        );
+        assert_eq!(
+            semantic_query_variants("Please find the latest daily report file"),
+            vec![
+                "Please find the latest daily report file".to_owned(),
+                "the latest daily report file".to_owned()
+            ]
+        );
     }
 
     #[test]
