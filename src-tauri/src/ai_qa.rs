@@ -9,9 +9,10 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
-    io::Read,
+    io::{BufRead, BufReader, Read},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
+    sync::mpsc::{self, Receiver},
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -93,6 +94,13 @@ struct FileSpaceAiProgress {
 struct CapturedOutput {
     text: String,
     exceeded_limit: bool,
+}
+
+#[derive(Default)]
+struct HermesReasoningStream {
+    agent_initialized: bool,
+    inside_reasoning: bool,
+    thinking: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -670,6 +678,105 @@ fn read_limited<R: Read>(mut reader: R, limit: usize) -> CapturedOutput {
     }
 }
 
+fn read_limited_lines<R: Read>(
+    reader: R,
+    limit: usize,
+    sender: mpsc::Sender<String>,
+) -> CapturedOutput {
+    let mut reader = BufReader::new(reader);
+    let mut stored = Vec::new();
+    let mut exceeded_limit = false;
+    loop {
+        let mut line = Vec::new();
+        let Ok(read) = reader.read_until(b'\n', &mut line) else {
+            break;
+        };
+        if read == 0 {
+            break;
+        }
+        let remaining = limit.saturating_sub(stored.len());
+        if remaining > 0 {
+            stored.extend_from_slice(&line[..read.min(remaining)]);
+        }
+        let within_limit = !exceeded_limit && read <= remaining;
+        if !within_limit {
+            exceeded_limit = true;
+        }
+        if within_limit {
+            let _ = sender.send(String::from_utf8_lossy(&line).into_owned());
+        }
+    }
+    CapturedOutput {
+        text: String::from_utf8_lossy(&stored).into_owned(),
+        exceeded_limit,
+    }
+}
+
+fn strip_ansi_sequences(value: &str) -> String {
+    let mut output = String::with_capacity(value.len());
+    let mut characters = value.chars().peekable();
+    while let Some(character) = characters.next() {
+        if character != '\u{1b}' {
+            output.push(character);
+            continue;
+        }
+        if characters.next_if_eq(&'[').is_none() {
+            continue;
+        }
+        for control in characters.by_ref() {
+            if ('@'..='~').contains(&control) {
+                break;
+            }
+        }
+    }
+    output
+}
+
+impl HermesReasoningStream {
+    fn push_line(&mut self, line: &str) -> Option<&str> {
+        let line = strip_ansi_sequences(line);
+        let line = line.trim_end_matches(['\r', '\n']);
+        if !self.agent_initialized {
+            if line.trim() == "Initializing agent..." {
+                self.agent_initialized = true;
+            }
+            return None;
+        }
+        if !self.inside_reasoning && line.contains("┌─ Reasoning ") {
+            self.inside_reasoning = true;
+            return None;
+        }
+        if !self.inside_reasoning {
+            return None;
+        }
+        if line.trim_start().starts_with('└') {
+            self.inside_reasoning = false;
+            return None;
+        }
+        let line = line.trim();
+        if line.is_empty() {
+            return None;
+        }
+        if !self.thinking.is_empty() {
+            self.thinking.push('\n');
+        }
+        self.thinking.push_str(line);
+        Some(&self.thinking)
+    }
+}
+
+fn drain_hermes_reasoning(
+    receiver: &Receiver<String>,
+    stream: &mut HermesReasoningStream,
+    on_thinking: &mut dyn FnMut(&str),
+) {
+    while let Ok(line) = receiver.try_recv() {
+        if let Some(thinking) = stream.push_line(&line) {
+            on_thinking(thinking);
+        }
+    }
+}
+
 fn extract_final_answer(output: &str) -> Option<String> {
     let start = output.rfind(ANSWER_START_MARKER)? + ANSWER_START_MARKER.len();
     let end = output[start..].find(ANSWER_END_MARKER)? + start;
@@ -705,16 +812,19 @@ fn finish_child(
     Ok(answer)
 }
 
-fn run_hermes(executable: &Path, prompt: &str) -> Result<String, String> {
+fn run_hermes(
+    executable: &Path,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
     let mut child = Command::new(executable)
         .arg("chat")
         .arg("-q")
         .arg(prompt)
-        .arg("-Q")
         .arg("--safe-mode")
         .arg("--reasoning")
-        .arg("none")
+        .arg("low")
         .arg("--max-turns")
         .arg("1")
         .arg("--source")
@@ -741,15 +851,21 @@ fn run_hermes(executable: &Path, prompt: &str) -> Result<String, String> {
         .stderr
         .take()
         .ok_or_else(|| ERROR_HERMES_FAILED.to_owned())?;
-    let stdout_thread = thread::spawn(move || read_limited(stdout, HERMES_OUTPUT_MAX_BYTES));
+    let (stdout_sender, stdout_receiver) = mpsc::channel();
+    let stdout_thread =
+        thread::spawn(move || read_limited_lines(stdout, HERMES_OUTPUT_MAX_BYTES, stdout_sender));
     let stderr_thread = thread::spawn(move || read_limited(stderr, HERMES_OUTPUT_MAX_BYTES));
+    let mut reasoning_stream = HermesReasoningStream::default();
     let deadline = Instant::now() + HERMES_TIMEOUT;
     loop {
+        drain_hermes_reasoning(&stdout_receiver, &mut reasoning_stream, on_thinking);
         match child.try_wait() {
             Ok(Some(status)) => {
-                return finish_child(&mut child, status, stdout_thread, stderr_thread)
+                let result = finish_child(&mut child, status, stdout_thread, stderr_thread);
+                drain_hermes_reasoning(&stdout_receiver, &mut reasoning_stream, on_thinking);
+                return result;
             }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(50)),
+            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(25)),
             Ok(None) => {
                 let _ = child.kill();
                 let _ = child.wait();
@@ -819,7 +935,21 @@ fn ask_file_space_ai_blocking(
             (build_prompt(&question, &sources, &history), sources)
         };
         let generated_answer = match &executor {
-            AiExecutor::Hermes(executable) => run_hermes(executable, &prompt)?,
+            AiExecutor::Hermes(executable) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    let _ = progress_app.emit(
+                        FILE_SPACE_AI_PROGRESS_EVENT,
+                        FileSpaceAiProgress {
+                            request_id: progress_request_id.clone(),
+                            phase: "thinking".to_owned(),
+                            thinking: thinking.to_owned(),
+                        },
+                    );
+                };
+                run_hermes(executable, &prompt, &mut emit_thinking)?
+            }
             AiExecutor::Local(settings) => {
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
@@ -1075,6 +1205,27 @@ mod tests {
         let output = "provider reasoning\n<LUMETRACE_ANSWER>\n结论 [S1]\n</LUMETRACE_ANSWER>\n";
         assert_eq!(extract_final_answer(output).as_deref(), Some("结论 [S1]"));
         assert_eq!(extract_final_answer("reasoning only"), None);
+    }
+
+    #[test]
+    fn hermes_reasoning_stream_emits_only_the_real_reasoning_box() {
+        let mut stream = HermesReasoningStream::default();
+        assert_eq!(stream.push_line("Query:\n"), None);
+        assert_eq!(stream.push_line("┌─ Reasoning ─┐\n"), None);
+        assert_eq!(stream.push_line("untrusted prompt content\n"), None);
+        assert_eq!(stream.push_line("Initializing agent...\r\n"), None);
+        assert_eq!(stream.push_line("┌─ Reasoning ─────────┐\r\n"), None);
+        assert_eq!(
+            stream.push_line("\u{1b}[2m先检查当前来源\u{1b}[0m\r\n"),
+            Some("先检查当前来源")
+        );
+        assert_eq!(
+            stream.push_line("再综合相关记录\r\n"),
+            Some("先检查当前来源\n再综合相关记录")
+        );
+        assert_eq!(stream.push_line("└──────────────┘\r\n"), None);
+        assert_eq!(stream.push_line("最终答案不属于思考\r\n"), None);
+        assert_eq!(stream.thinking, "先检查当前来源\n再综合相关记录");
     }
 
     #[test]
