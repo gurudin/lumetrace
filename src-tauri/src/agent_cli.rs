@@ -10,12 +10,12 @@ use std::{
     path::PathBuf,
     process::{ExitStatus, Stdio},
     thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{SystemTime, UNIX_EPOCH},
 };
 use tauri::State;
 
 const AGENT_CLI_SETTINGS_KEY: &str = "ai.agent_cli";
-const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(5);
+const HERMES_CONNECTION_MARKER: &str = "LUMETRACE_HERMES_OK";
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -44,11 +44,11 @@ pub struct AgentCliSettings {
     pub(crate) version: Option<String>,
 }
 
+#[derive(Clone, Copy)]
 struct AgentCliDefinition {
     key: &'static str,
     executable: &'static str,
     health_args: &'static [&'static str],
-    health_timeout: Duration,
     validator: fn(&str) -> bool,
 }
 
@@ -61,7 +61,6 @@ struct ProcessOutput {
 enum CommandResult {
     Completed(ProcessOutput),
     NotFound,
-    TimedOut,
     Failed,
 }
 
@@ -223,7 +222,7 @@ fn read_process_output(
     }
 }
 
-fn run_command(executable: &PathBuf, args: &[&str], timeout: Duration) -> CommandResult {
+fn run_command(executable: &PathBuf, args: &[&str]) -> CommandResult {
     let mut child = match std::process::Command::new(executable)
         .args(args)
         .stdin(Stdio::null())
@@ -242,31 +241,16 @@ fn run_command(executable: &PathBuf, args: &[&str], timeout: Duration) -> Comman
     // output to fill an OS pipe and would otherwise block before they can exit.
     let stdout_reader = read_pipe(child.stdout.take());
     let stderr_reader = read_pipe(child.stderr.take());
-    let deadline = Instant::now() + timeout;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                return CommandResult::Completed(read_process_output(
-                    stdout_reader,
-                    stderr_reader,
-                    status,
-                ))
-            }
-            Ok(None) if Instant::now() < deadline => thread::sleep(Duration::from_millis(40)),
-            Ok(None) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return CommandResult::TimedOut;
-            }
-            Err(_) => {
-                let _ = child.kill();
-                let _ = child.wait();
-                let _ = stdout_reader.join();
-                let _ = stderr_reader.join();
-                return CommandResult::Failed;
-            }
+    match child.wait() {
+        Ok(status) => {
+            CommandResult::Completed(read_process_output(stdout_reader, stderr_reader, status))
+        }
+        Err(_) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_reader.join();
+            let _ = stderr_reader.join();
+            CommandResult::Failed
         }
     }
 }
@@ -336,66 +320,65 @@ fn hermes_is_configured(output: &str) -> bool {
     })
 }
 
+fn hermes_connection_succeeded(output: &str) -> bool {
+    output
+        .lines()
+        .any(|line| line.trim() == HERMES_CONNECTION_MARKER)
+}
+
 fn definitions() -> [AgentCliDefinition; 4] {
     [
         AgentCliDefinition {
             key: "claude",
             executable: "claude",
             health_args: &["auth", "status"],
-            health_timeout: Duration::from_secs(8),
             validator: claude_is_authenticated,
         },
         AgentCliDefinition {
             key: "hermes",
             executable: "hermes",
             health_args: &["status"],
-            health_timeout: Duration::from_secs(12),
             validator: hermes_is_configured,
         },
         AgentCliDefinition {
             key: "codex",
             executable: "codex",
             health_args: &["login", "status"],
-            health_timeout: Duration::from_secs(8),
             validator: codex_is_authenticated,
         },
         AgentCliDefinition {
             key: "opencode",
             executable: "opencode",
             health_args: &["auth", "list"],
-            health_timeout: Duration::from_secs(8),
             validator: opencode_is_authenticated,
         },
     ]
 }
 
+fn inspect_health(definition: &AgentCliDefinition, candidate: &PathBuf) -> AgentCliCheckState {
+    match run_command(candidate, definition.health_args) {
+        CommandResult::Completed(output)
+            if output.success && (definition.validator)(&output.combined()) =>
+        {
+            AgentCliCheckState::Passed
+        }
+        CommandResult::Completed(output) if output.success => AgentCliCheckState::NotConfigured,
+        CommandResult::Completed(_) | CommandResult::NotFound | CommandResult::Failed => {
+            AgentCliCheckState::CheckFailed
+        }
+    }
+}
+
 fn inspect(definition: AgentCliDefinition) -> AgentCliStatus {
     for candidate in executable_candidates(definition.executable) {
-        match run_command(&candidate, &["--version"], VERSION_CHECK_TIMEOUT) {
+        match run_command(&candidate, &["--version"]) {
             CommandResult::NotFound => continue,
             CommandResult::Completed(version_output) => {
                 let version = version_output.first_line();
                 let check_state = if !version_output.success {
                     AgentCliCheckState::CheckFailed
                 } else {
-                    match run_command(
-                        &candidate,
-                        definition.health_args,
-                        definition.health_timeout,
-                    ) {
-                        CommandResult::Completed(output)
-                            if output.success && (definition.validator)(&output.combined()) =>
-                        {
-                            AgentCliCheckState::Passed
-                        }
-                        CommandResult::Completed(output) if output.success => {
-                            AgentCliCheckState::NotConfigured
-                        }
-                        CommandResult::Completed(_)
-                        | CommandResult::NotFound
-                        | CommandResult::TimedOut
-                        | CommandResult::Failed => AgentCliCheckState::CheckFailed,
-                    }
+                    inspect_health(&definition, &candidate)
                 };
 
                 return AgentCliStatus {
@@ -406,7 +389,7 @@ fn inspect(definition: AgentCliDefinition) -> AgentCliStatus {
                     check_state,
                 };
             }
-            CommandResult::TimedOut | CommandResult::Failed => {
+            CommandResult::Failed => {
                 return AgentCliStatus {
                     key: definition.key.to_owned(),
                     installed: true,
@@ -427,19 +410,70 @@ fn inspect(definition: AgentCliDefinition) -> AgentCliStatus {
     }
 }
 
+fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
+    let status = inspect(definition);
+    if definition.key != "hermes"
+        || !status.installed
+        || status.check_state == AgentCliCheckState::NotConfigured
+    {
+        return status;
+    }
+    let Some(executable) = resolve_agent_cli_executable(definition.key) else {
+        return AgentCliStatus {
+            check_state: AgentCliCheckState::CheckFailed,
+            reachable: false,
+            ..status
+        };
+    };
+    let neutral_directory = std::env::temp_dir();
+    let Some(neutral_directory) = neutral_directory.to_str() else {
+        return AgentCliStatus {
+            check_state: AgentCliCheckState::CheckFailed,
+            reachable: false,
+            ..status
+        };
+    };
+    let result = run_command(
+        &executable,
+        &[
+            "chat",
+            "-q",
+            "Reply with exactly LUMETRACE_HERMES_OK.",
+            "-Q",
+            "--safe-mode",
+            "--reasoning",
+            "none",
+            "--max-turns",
+            "1",
+            "--source",
+            "tool",
+            "--toolsets",
+            "context_engine",
+            "--in",
+            neutral_directory,
+        ],
+    );
+    let passed = matches!(
+        result,
+        CommandResult::Completed(ref output)
+            if output.success && hermes_connection_succeeded(&output.combined())
+    );
+    AgentCliStatus {
+        reachable: passed,
+        check_state: if passed {
+            AgentCliCheckState::Passed
+        } else {
+            AgentCliCheckState::CheckFailed
+        },
+        ..status
+    }
+}
+
 #[tauri::command]
 pub async fn check_agent_clis() -> Vec<AgentCliStatus> {
-    tauri::async_runtime::spawn_blocking(|| {
-        definitions()
-            .into_iter()
-            .map(|definition| thread::spawn(move || inspect(definition)))
-            .collect::<Vec<_>>()
-            .into_iter()
-            .filter_map(|check| check.join().ok())
-            .collect()
-    })
-    .await
-    .unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(|| definitions().into_iter().map(inspect).collect())
+        .await
+        .unwrap_or_default()
 }
 
 #[tauri::command]
@@ -448,7 +482,7 @@ pub async fn check_agent_cli(key: String) -> Option<AgentCliStatus> {
         definitions()
             .into_iter()
             .find(|definition| definition.key == key)
-            .map(inspect)
+            .map(inspect_connection)
     })
     .await
     .ok()
@@ -495,25 +529,24 @@ mod tests {
     }
 
     #[test]
+    fn hermes_connection_requires_the_exact_health_marker() {
+        assert!(hermes_connection_succeeded(
+            "session_id: test\nLUMETRACE_HERMES_OK\n"
+        ));
+        assert!(!hermes_connection_succeeded(
+            "session_id: test\nHermes is available\n"
+        ));
+    }
+
+    #[test]
     #[cfg(unix)]
-    fn command_timeout_allows_a_slow_healthy_check_and_reports_a_real_timeout() {
+    fn command_waits_for_a_slow_healthy_check() {
         let shell = PathBuf::from("/bin/sh");
-        let completed = run_command(
-            &shell,
-            &["-c", "sleep 0.05; printf 'ready\\n'"],
-            Duration::from_millis(500),
-        );
+        let completed = run_command(&shell, &["-c", "sleep 0.05; printf 'ready\\n'"]);
         assert!(matches!(
             completed,
             CommandResult::Completed(ProcessOutput { success: true, .. })
         ));
-
-        let timed_out = run_command(
-            &shell,
-            &["-c", "sleep 0.5; printf 'too late\\n'"],
-            Duration::from_millis(50),
-        );
-        assert!(matches!(timed_out, CommandResult::TimedOut));
     }
 
     #[test]
