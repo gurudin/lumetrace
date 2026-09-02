@@ -389,8 +389,8 @@ export const ko = {
       processedIn: "{{seconds}}초 만에 처리",
       sourceVersion: "버전 {{version}}",
       sourceCurrentContent: "현재 버전",
-      primaryEvidence: "주요 근거",
-      contextEvidence: "배경 자료",
+      primaryEvidence: "주요",
+      contextEvidence: "자료",
       sourceCitationCount: "{{count}}회 인용",
       composerLabel: "Lumie에게 질문",
       errors: {

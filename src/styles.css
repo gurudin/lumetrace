@@ -6990,9 +6990,21 @@ button.file-space-ai-header-service:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.file-space-ai-source-evidence > span:first-child {
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--separator) 72%, transparent);
+  border-radius: 5px;
+  color: var(--text-muted);
+  background: color-mix(in srgb, var(--surface-subtle) 65%, transparent);
+  font-size: 9px;
+  font-weight: 500;
+  line-height: 14px;
+}
+
 .file-space-ai-source-evidence.is-primary > span:first-child {
-  color: var(--text);
-  font-weight: 560;
+  border-color: color-mix(in srgb, var(--highlight) 12%, var(--separator));
+  color: color-mix(in srgb, var(--highlight) 42%, var(--text-muted));
+  background: color-mix(in srgb, var(--highlight) 5%, transparent);
 }
 
 .file-space-ai-unavailable strong {

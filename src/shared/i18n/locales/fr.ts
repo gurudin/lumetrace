@@ -389,8 +389,8 @@ export const fr = {
       processedIn: "Traité en {{seconds}} s",
       sourceVersion: "Version {{version}}",
       sourceCurrentContent: "Version actuelle",
-      primaryEvidence: "Preuve principale",
-      contextEvidence: "Contexte",
+      primaryEvidence: "Principal",
+      contextEvidence: "Source",
       sourceCitationCount: "Cité {{count}}×",
       composerLabel: "Interroger Lumie",
       errors: {
