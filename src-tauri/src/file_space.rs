@@ -10674,6 +10674,29 @@ fn search_file_space_matches_with_generation(
         }
     }
 
+    if scopes.contains(&"file_name") && query.chars().count() <= 256 {
+        let mut statement = connection
+            .prepare(
+                "SELECT documents.file_id
+                 FROM file_space_search_documents documents
+                 JOIN files ON files.id = documents.file_id
+                 WHERE instr(lower(documents.file_name), lower(?1)) > 0
+                   AND files.trashed_at IS NULL
+                   AND files.storage_path IS NOT NULL
+                 ORDER BY files.updated_at DESC, documents.file_id
+                 LIMIT 200",
+            )
+            .map_err(|error| format!("Unable to prepare File Space name search: {error}"))?;
+        let rows = statement
+            .query_map([query], |row| row.get::<_, String>(0))
+            .map_err(|error| format!("Unable to search File Space names: {error}"))?;
+        for file_id in rows.flatten() {
+            if matches.insert(file_id.clone()) {
+                lexical.push(file_id);
+            }
+        }
+    }
+
     drop(connection);
     if search_generation.is_some_and(|generation| {
         FILE_SPACE_SEARCH_GENERATION.load(AtomicOrdering::Acquire) != generation
@@ -12705,6 +12728,30 @@ mod tests {
             &FileSpaceSearchRequest {
                 query: "evidence".to_owned(),
                 scopes: vec!["content".to_owned()],
+            },
+        )
+        .unwrap();
+
+        assert_eq!(matches, vec![file_id]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chinese_filename_search_supports_bounded_substring_matches() {
+        let (root, _storage, _versions, database) = test_workspace("chinese-name-search");
+        let source = root.join("产品日报.md");
+        fs::write(&source, "今天完成了文件检索优化。".as_bytes()).unwrap();
+        let imported =
+            import_files_record(&database, None, &[source.to_string_lossy().into_owned()]).unwrap();
+        capture_initial_user_versions(&database, &_versions).unwrap();
+        let file_id = imported.files[0].id.clone();
+
+        let matches = search_file_space_records(
+            &database,
+            None,
+            &FileSpaceSearchRequest {
+                query: "日报".to_owned(),
+                scopes: vec!["name".to_owned()],
             },
         )
         .unwrap();

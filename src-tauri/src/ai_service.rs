@@ -6,7 +6,10 @@ use reqwest::{blocking::Client, Url};
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+    io::{BufRead, BufReader, ErrorKind},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
 use tauri::State;
 
 pub(crate) const AI_SERVICE_MODE_KEY: &str = "ai.service_mode";
@@ -14,9 +17,15 @@ pub(crate) const AI_SERVICE_MODE_AGENT_CLI: &str = "agentCli";
 const AI_SERVICE_MODE_LOCAL: &str = "local";
 const LOCAL_LLM_SETTINGS_KEY: &str = "ai.local_llm";
 const LOCAL_LLM_CONNECTION_TIMEOUT: Duration = Duration::from_secs(12);
-const LOCAL_LLM_CHAT_TIMEOUT: Duration = Duration::from_secs(240);
+const LOCAL_LLM_CHAT_TIMEOUT: Duration = Duration::from_secs(60);
 const LOCAL_LLM_MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const LOCAL_LLM_MAX_ANSWER_CHARACTERS: usize = 64_000;
+const LOCAL_LLM_MAX_THINKING_CHARACTERS: usize = 8_000;
+const LOCAL_LLM_ANSWER_TOKEN_LIMIT: usize = 2_048;
+const OLLAMA_THINKING_TOKEN_LIMIT: usize = 1_024;
+const OLLAMA_THINKING_TIME_LIMIT: Duration = Duration::from_secs(3);
+const OLLAMA_THINKING_CHARACTER_LIMIT: usize = 1_600;
+const THINKING_EMIT_INTERVAL: Duration = Duration::from_millis(100);
 const ANSWER_START_MARKER: &str = "<LUMETRACE_ANSWER>";
 const ANSWER_END_MARKER: &str = "</LUMETRACE_ANSWER>";
 
@@ -64,6 +73,22 @@ pub struct AiServiceSettingsSnapshot {
 pub(crate) enum ActiveAiService {
     Local(LocalLlmSettings),
     AgentCli(AgentCliSettings),
+}
+
+#[derive(Debug, Default, PartialEq)]
+struct LocalLlmStreamChunk {
+    content: String,
+    thinking: String,
+    finish_reason: Option<String>,
+    done: bool,
+}
+
+#[derive(Debug, Default)]
+struct LocalLlmStreamResult {
+    content: String,
+    thinking: String,
+    finish_reason: Option<String>,
+    thinking_limited: bool,
 }
 
 fn now_millis() -> i64 {
@@ -223,6 +248,17 @@ fn chat_endpoint(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
 }
 
+fn ollama_chat_endpoint(base_url: &str) -> Result<String, String> {
+    let mut url = Url::parse(base_url).map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+    let path = url.path().trim_end_matches('/');
+    let prefix = path
+        .strip_suffix("/v1")
+        .unwrap_or(path)
+        .trim_end_matches('/');
+    url.set_path(&format!("{prefix}/api/chat"));
+    Ok(url.as_str().to_owned())
+}
+
 fn parse_model_list(body: &[u8]) -> Result<Vec<String>, String> {
     let document = serde_json::from_slice::<Value>(body)
         .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
@@ -367,20 +403,136 @@ fn parse_chat_answer(body: &[u8]) -> Result<String, String> {
     Ok(answer)
 }
 
-pub(crate) fn run_local_llm(settings: &LocalLlmSettings, prompt: &str) -> Result<String, String> {
-    let settings = validate_local_llm_settings(settings.clone())
-        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
-    let client = Client::builder()
-        .connect_timeout(Duration::from_secs(8))
-        .timeout(LOCAL_LLM_CHAT_TIMEOUT)
-        .build()
-        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+fn reasoning_content(value: &Value) -> String {
+    ["reasoning", "reasoning_content", "thinking"]
+        .iter()
+        .filter_map(|key| value.get(*key).and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+fn parse_openai_stream_line(line: &str) -> Result<Option<LocalLlmStreamChunk>, String> {
+    let Some(payload) = line.trim().strip_prefix("data:").map(str::trim) else {
+        return Ok(None);
+    };
+    if payload == "[DONE]" {
+        return Ok(Some(LocalLlmStreamChunk {
+            done: true,
+            ..LocalLlmStreamChunk::default()
+        }));
+    }
+    let document =
+        serde_json::from_str::<Value>(payload).map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let Some(choice) = document
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+    else {
+        return Ok(None);
+    };
+    let delta = choice
+        .get("delta")
+        .or_else(|| choice.get("message"))
+        .unwrap_or(&Value::Null);
+    Ok(Some(LocalLlmStreamChunk {
+        content: message_content(delta),
+        thinking: reasoning_content(delta),
+        finish_reason: choice
+            .get("finish_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        done: choice
+            .get("finish_reason")
+            .is_some_and(|reason| !reason.is_null()),
+    }))
+}
+
+fn parse_ollama_stream_line(line: &str) -> Result<Option<LocalLlmStreamChunk>, String> {
+    let line = line.trim();
+    if line.is_empty() {
+        return Ok(None);
+    }
+    let document =
+        serde_json::from_str::<Value>(line).map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let message = document.get("message").unwrap_or(&Value::Null);
+    Ok(Some(LocalLlmStreamChunk {
+        content: message_content(message),
+        thinking: reasoning_content(message),
+        finish_reason: document
+            .get("done_reason")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        done: document
+            .get("done")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    }))
+}
+
+fn append_bounded(target: &mut String, value: &str, limit: usize) -> Result<(), String> {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if target.chars().count().saturating_add(value.chars().count()) > limit {
+        return Err(ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE.to_owned());
+    }
+    target.push_str(value);
+    Ok(())
+}
+
+fn stream_read_error(error: std::io::Error) -> String {
+    if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) {
+        ERROR_LOCAL_LLM_TIMEOUT.to_owned()
+    } else {
+        ERROR_LOCAL_LLM_FAILED.to_owned()
+    }
+}
+
+fn apply_stream_chunk(
+    result: &mut LocalLlmStreamResult,
+    chunk: LocalLlmStreamChunk,
+    last_thinking_emit: &mut Option<Instant>,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<bool, String> {
+    append_bounded(
+        &mut result.content,
+        &chunk.content,
+        LOCAL_LLM_MAX_ANSWER_CHARACTERS,
+    )?;
+    if !chunk.thinking.is_empty()
+        && result.thinking.chars().count() < LOCAL_LLM_MAX_THINKING_CHARACTERS
+    {
+        let remaining =
+            LOCAL_LLM_MAX_THINKING_CHARACTERS.saturating_sub(result.thinking.chars().count());
+        result
+            .thinking
+            .extend(chunk.thinking.chars().take(remaining));
+        if result.content.is_empty()
+            && last_thinking_emit
+                .is_none_or(|last_emit| last_emit.elapsed() >= THINKING_EMIT_INTERVAL)
+        {
+            on_thinking(&result.thinking);
+            *last_thinking_emit = Some(Instant::now());
+        }
+    }
+    if let Some(finish_reason) = chunk.finish_reason {
+        result.finish_reason = Some(finish_reason);
+    }
+    Ok(chunk.done)
+}
+
+fn run_openai_stream(
+    client: &Client,
+    settings: &LocalLlmSettings,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<LocalLlmStreamResult, String> {
     let request_body = serde_json::to_vec(&json!({
         "model": settings.model,
         "messages": [{ "role": "user", "content": prompt }],
-        "max_tokens": 8192,
+        "max_tokens": LOCAL_LLM_ANSWER_TOKEN_LIMIT,
         "temperature": 0.2,
-        "stream": false,
+        "stream": true,
     }))
     .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let response = client
@@ -399,12 +551,169 @@ pub(crate) fn run_local_llm(settings: &LocalLlmSettings, prompt: &str) -> Result
         })?
         .error_for_status()
         .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
-    let body = read_bounded_response(
-        response,
-        LOCAL_LLM_MAX_RESPONSE_BYTES,
-        ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE,
-    )?;
-    parse_chat_answer(&body)
+    let is_event_stream = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .is_some_and(|content_type| content_type.contains("text/event-stream"));
+    if !is_event_stream {
+        let body = read_bounded_response(
+            response,
+            LOCAL_LLM_MAX_RESPONSE_BYTES,
+            ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE,
+        )?;
+        return Ok(LocalLlmStreamResult {
+            content: parse_chat_answer(&body)?,
+            ..LocalLlmStreamResult::default()
+        });
+    }
+
+    let mut reader = BufReader::new(response);
+    let mut line = String::new();
+    let mut result = LocalLlmStreamResult::default();
+    let mut last_thinking_emit = None;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(stream_read_error)? == 0 {
+            break;
+        }
+        let Some(chunk) = parse_openai_stream_line(&line)? else {
+            continue;
+        };
+        if apply_stream_chunk(&mut result, chunk, &mut last_thinking_emit, on_thinking)? {
+            break;
+        }
+    }
+    if result.content.is_empty() && !result.thinking.is_empty() {
+        on_thinking(&result.thinking);
+    }
+    Ok(result)
+}
+
+fn run_ollama_stream(
+    client: &Client,
+    settings: &LocalLlmSettings,
+    prompt: &str,
+    think: bool,
+    thinking_limit: bool,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<LocalLlmStreamResult, String> {
+    let token_limit = if think {
+        OLLAMA_THINKING_TOKEN_LIMIT
+    } else {
+        LOCAL_LLM_ANSWER_TOKEN_LIMIT
+    };
+    let request_body = serde_json::to_vec(&json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "stream": true,
+        "think": think,
+        "options": {
+            "num_predict": token_limit,
+            "temperature": 0.2,
+        },
+    }))
+    .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let response = client
+        .post(ollama_chat_endpoint(&settings.base_url)?)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(request_body)
+        .send()
+        .map_err(|error| {
+            if error.is_timeout() {
+                ERROR_LOCAL_LLM_TIMEOUT.to_owned()
+            } else if error.is_connect() {
+                ERROR_LOCAL_LLM_UNAVAILABLE.to_owned()
+            } else {
+                ERROR_LOCAL_LLM_FAILED.to_owned()
+            }
+        })?
+        .error_for_status()
+        .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let started_at = Instant::now();
+    let mut reader = BufReader::new(response);
+    let mut line = String::new();
+    let mut result = LocalLlmStreamResult::default();
+    let mut last_thinking_emit = None;
+    loop {
+        line.clear();
+        if reader.read_line(&mut line).map_err(stream_read_error)? == 0 {
+            break;
+        }
+        let Some(chunk) = parse_ollama_stream_line(&line)? else {
+            continue;
+        };
+        let done = apply_stream_chunk(&mut result, chunk, &mut last_thinking_emit, on_thinking)?;
+        if thinking_limit
+            && result.content.is_empty()
+            && !result.thinking.is_empty()
+            && (started_at.elapsed() >= OLLAMA_THINKING_TIME_LIMIT
+                || result.thinking.chars().count() >= OLLAMA_THINKING_CHARACTER_LIMIT)
+        {
+            result.thinking_limited = true;
+            on_thinking(&result.thinking);
+            break;
+        }
+        if done {
+            break;
+        }
+    }
+    if result.content.is_empty() && !result.thinking.is_empty() {
+        on_thinking(&result.thinking);
+    }
+    Ok(result)
+}
+
+fn final_stream_answer(result: LocalLlmStreamResult) -> Result<String, String> {
+    let answer = extract_marked_or_plain_answer(&result.content)
+        .ok_or_else(|| ERROR_LOCAL_LLM_EMPTY.to_owned())?;
+    if answer.chars().count() > LOCAL_LLM_MAX_ANSWER_CHARACTERS {
+        return Err(ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE.to_owned());
+    }
+    Ok(answer)
+}
+
+fn should_retry_ollama_without_thinking(result: &Result<LocalLlmStreamResult, String>) -> bool {
+    match result {
+        Ok(result) => result.thinking_limited || result.content.trim().is_empty(),
+        Err(error) => error == ERROR_LOCAL_LLM_FAILED,
+    }
+}
+
+pub(crate) fn run_local_llm(
+    settings: &LocalLlmSettings,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let settings = validate_local_llm_settings(settings.clone())
+        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(LOCAL_LLM_CHAT_TIMEOUT)
+        .build()
+        .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
+    if settings.provider == "ollama" {
+        let thinking = run_ollama_stream(&client, &settings, prompt, true, true, on_thinking);
+        if should_retry_ollama_without_thinking(&thinking) {
+            let mut ignore_thinking = |_: &str| {};
+            let answer = run_ollama_stream(
+                &client,
+                &settings,
+                prompt,
+                false,
+                false,
+                &mut ignore_thinking,
+            )?;
+            final_stream_answer(answer)
+        } else {
+            match thinking {
+                Ok(result) => final_stream_answer(result),
+                Err(error) => Err(error),
+            }
+        }
+    } else {
+        final_stream_answer(run_openai_stream(&client, &settings, prompt, on_thinking)?)
+    }
 }
 
 #[tauri::command]
@@ -505,6 +814,65 @@ mod tests {
             parse_chat_answer(reasoning_only.as_bytes()),
             Err(ERROR_LOCAL_LLM_EMPTY.to_owned())
         );
+    }
+
+    #[test]
+    fn streaming_formats_keep_reasoning_separate_from_final_content() {
+        let openai_thinking = parse_openai_stream_line(
+            r#"data: {"choices":[{"delta":{"reasoning":"先检查来源"},"finish_reason":null}]}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(openai_thinking.thinking, "先检查来源");
+        assert!(openai_thinking.content.is_empty());
+        assert!(!openai_thinking.done);
+
+        let openai_answer = parse_openai_stream_line(
+            r#"data: {"choices":[{"delta":{"content":"最终回答 [S1]"},"finish_reason":"stop"}]}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(openai_answer.content, "最终回答 [S1]");
+        assert!(openai_answer.thinking.is_empty());
+        assert!(openai_answer.done);
+
+        let ollama_thinking = parse_ollama_stream_line(
+            r#"{"message":{"role":"assistant","thinking":"比较证据","content":""},"done":false}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(ollama_thinking.thinking, "比较证据");
+        assert!(ollama_thinking.content.is_empty());
+
+        let ollama_answer = parse_ollama_stream_line(
+            r#"{"message":{"role":"assistant","thinking":"","content":"结论 [S2]"},"done":true,"done_reason":"stop"}"#,
+        )
+        .unwrap()
+        .unwrap();
+        assert_eq!(ollama_answer.content, "结论 [S2]");
+        assert!(ollama_answer.done);
+    }
+
+    #[test]
+    fn reasoning_only_ollama_results_switch_to_fast_answer_mode() {
+        let reasoning_only = Ok(LocalLlmStreamResult {
+            thinking: "模型仍在循环推理".to_owned(),
+            thinking_limited: true,
+            ..LocalLlmStreamResult::default()
+        });
+        assert!(should_retry_ollama_without_thinking(&reasoning_only));
+
+        let completed = Ok(LocalLlmStreamResult {
+            content: "最终回答".to_owned(),
+            ..LocalLlmStreamResult::default()
+        });
+        assert!(!should_retry_ollama_without_thinking(&completed));
+        assert!(should_retry_ollama_without_thinking(&Err(
+            ERROR_LOCAL_LLM_FAILED.to_owned()
+        )));
+        assert!(!should_retry_ollama_without_thinking(&Err(
+            ERROR_LOCAL_LLM_TIMEOUT.to_owned()
+        )));
     }
 
     #[test]

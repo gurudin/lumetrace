@@ -420,7 +420,8 @@ export const en = {
       unsupportedConfigurationDescription: "Agent CLI mode currently supports Hermes with read-only access only.",
       questionLabel: "Your question",
       answerLabel: "Lumie answer",
-      asking: "Searching your files and waiting for the AI response…",
+      asking: "Searching relevant files…",
+      thinking: "Thinking…",
       waiting: "Waiting {{seconds}}s",
       answerErrorTitle: "Couldn’t complete the answer",
       retryAnswer: "Try Again",
@@ -436,6 +437,7 @@ export const en = {
       errors: {
         questionEmpty: "Enter a question.",
         questionTooLong: "The question is too long. Shorten it and try again.",
+        requestInvalid: "This request is invalid. Please send it again.",
         serviceNotConfigured: "No AI service is configured.",
         serviceUnsupported: "Agent CLI mode currently supports Hermes only.",
         readOnlyRequired: "Change Hermes file access to Read Only.",

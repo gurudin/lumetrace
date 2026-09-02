@@ -376,7 +376,8 @@ export const fr = {
       unsupportedConfigurationDescription: "Le mode Agent CLI prend actuellement en charge uniquement Hermes en lecture seule.",
       questionLabel: "Votre question",
       answerLabel: "Réponse de Lumie",
-      asking: "Recherche dans vos fichiers et attente de la réponse IA…",
+      asking: "Recherche des fichiers pertinents…",
+      thinking: "Réflexion en cours…",
       waiting: "Attente : {{seconds}} s",
       answerErrorTitle: "Impossible de terminer la réponse",
       retryAnswer: "Réessayer",
@@ -392,6 +393,7 @@ export const fr = {
       errors: {
         questionEmpty: "Saisissez une question.",
         questionTooLong: "La question est trop longue. Raccourcissez-la puis réessayez.",
+        requestInvalid: "Cette requête est invalide. Veuillez la renvoyer.",
         serviceNotConfigured: "Aucun service IA n’est configuré.",
         serviceUnsupported: "Le mode Agent CLI prend actuellement en charge uniquement Hermes.",
         readOnlyRequired: "Passez l’accès aux fichiers de Hermes en lecture seule.",

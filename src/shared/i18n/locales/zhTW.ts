@@ -376,7 +376,8 @@ export const zhTW = {
       unsupportedConfigurationDescription: "Agent CLI 方式目前只支援 Hermes，且必須選擇唯讀存取。",
       questionLabel: "你的問題",
       answerLabel: "Lumie 回答",
-      asking: "正在檢索檔案並等待 AI 回答…",
+      asking: "正在檢索相關檔案…",
+      thinking: "正在思考…",
       waiting: "已等待 {{seconds}}s",
       answerErrorTitle: "無法完成回答",
       retryAnswer: "再試一次",
@@ -392,6 +393,7 @@ export const zhTW = {
       errors: {
         questionEmpty: "請輸入問題。",
         questionTooLong: "問題過長，請縮短後再試。",
+        requestInvalid: "本次請求無效，請重新傳送。",
         serviceNotConfigured: "尚未設定 AI 服務。",
         serviceUnsupported: "Agent CLI 方式目前只支援 Hermes。",
         readOnlyRequired: "請將 Hermes 的檔案權限改為唯讀存取。",

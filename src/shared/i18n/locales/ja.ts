@@ -376,7 +376,8 @@ export const ja = {
       unsupportedConfigurationDescription: "Agent CLI モードは現在、読み取り専用の Hermes のみをサポートします。",
       questionLabel: "あなたの質問",
       answerLabel: "Lumie の回答",
-      asking: "ファイルを検索し、AI の回答を待っています…",
+      asking: "関連ファイルを検索中…",
+      thinking: "考えています…",
       waiting: "{{seconds}}秒待機中",
       answerErrorTitle: "回答を完了できませんでした",
       retryAnswer: "もう一度試す",
@@ -392,6 +393,7 @@ export const ja = {
       errors: {
         questionEmpty: "質問を入力してください。",
         questionTooLong: "質問が長すぎます。短くして再試行してください。",
+        requestInvalid: "このリクエストは無効です。もう一度送信してください。",
         serviceNotConfigured: "AI サービスが設定されていません。",
         serviceUnsupported: "Agent CLI モードは現在 Hermes のみ対応します。",
         readOnlyRequired: "Hermes のファイルアクセスを読み取り専用に変更してください。",

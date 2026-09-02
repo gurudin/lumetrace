@@ -1,4 +1,5 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   ChevronDown,
   CircleAlert,
@@ -23,8 +24,10 @@ import {
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
+  shouldAcceptAiThinkingProgress,
   shouldSelectAiSourceFromClickDetail,
   visibleAiAnswer,
+  type AiThinkingProgress,
   type FileSpaceAiSourceReference,
 } from "./aiAnswerPresentation";
 import { recordAgentCliRuntimeSuccess } from "./agentCliDetection";
@@ -72,6 +75,7 @@ interface FileSpaceAiTurn {
 const aiErrorKeys: Record<string, string> = {
   ai_question_empty: "questionEmpty",
   ai_question_too_long: "questionTooLong",
+  ai_request_invalid: "requestInvalid",
   ai_service_not_configured: "serviceNotConfigured",
   ai_service_unsupported: "serviceUnsupported",
   ai_read_only_required: "readOnlyRequired",
@@ -160,9 +164,10 @@ function AiSourcesDisclosure({ turnId, sources, onOpenSource }: AiSourcesDisclos
   );
 }
 
-function AiPendingAnswer() {
+function AiPendingAnswer({ thinking }: { thinking: string }) {
   const { t } = useTranslation();
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const thinkingRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     const startedAt = Date.now();
@@ -173,10 +178,22 @@ function AiPendingAnswer() {
     return () => window.clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    const scrollOwner = thinkingRef.current;
+    if (scrollOwner) scrollOwner.scrollTop = scrollOwner.scrollHeight;
+  }, [thinking]);
+
   return (
     <section className="file-space-ai-answer is-loading" role="status">
       <span><LoaderCircle className="is-spinning" size={16} /></span>
-      <p>{t("fileSpace.ai.asking")}</p>
+      <div className="file-space-ai-pending-copy">
+        <p>{t(thinking ? "fileSpace.ai.thinking" : "fileSpace.ai.asking")}</p>
+        {thinking ? (
+          <div className="file-space-ai-thinking" ref={thinkingRef} aria-live="polite">
+            {thinking}
+          </div>
+        ) : null}
+      </div>
       <small className="file-space-ai-processing-time">
         {t("fileSpace.ai.waiting", { seconds: elapsedSeconds })}
       </small>
@@ -221,11 +238,13 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const [turns, setTurns] = useState<FileSpaceAiTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingErrorCode, setPendingErrorCode] = useState<string | null>(null);
+  const [pendingThinking, setPendingThinking] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelCloseRef = useRef<HTMLButtonElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const conversationRef = useRef<HTMLDivElement>(null);
   const requestInFlightRef = useRef(false);
+  const activeRequestIdRef = useRef<string | null>(null);
   const shouldFollowConversationRef = useRef(true);
   const panelPresence = usePresence(panelOpen);
 
@@ -262,6 +281,23 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       window.removeEventListener("lumetrace:ai-service-settings-changed", refreshSettings);
     };
   }, [loadAiServiceSettings]);
+
+  useEffect(() => {
+    if (!isTauri()) return undefined;
+    let disposed = false;
+    let stopListening: (() => void) | undefined;
+    void listen<AiThinkingProgress>("file-space-ai-progress", ({ payload }) => {
+      if (!shouldAcceptAiThinkingProgress(activeRequestIdRef.current, payload)) return;
+      setPendingThinking(payload.thinking);
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stopListening = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stopListening?.();
+    };
+  }, []);
 
   const restoreTriggerFocus = useCallback(() => {
     window.requestAnimationFrame(() => triggerRef.current?.focus());
@@ -317,7 +353,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
         if (!settledScrollOwner || !shouldFollowConversationRef.current) return;
         settledScrollOwner.scrollTo({
           top: settledScrollOwner.scrollHeight,
-          behavior: requestState === "asking" ? "smooth" : "auto",
+          behavior: requestState === "asking" && !pendingThinking ? "smooth" : "auto",
         });
       });
     });
@@ -325,7 +361,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       window.cancelAnimationFrame(frame);
       window.cancelAnimationFrame(layoutFrame);
     };
-  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingQuestion, requestState, turns]);
+  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingQuestion, pendingThinking, requestState, turns]);
 
   const updateConversationFollowState = () => {
     const scrollOwner = conversationRef.current;
@@ -352,12 +388,15 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   ) => {
     const nextQuestion = (requestedQuestion ?? question).trim();
     if (!nextQuestion || requestInFlightRef.current || !canAsk || !isTauri()) return;
+    const requestId = crypto.randomUUID();
     requestInFlightRef.current = true;
+    activeRequestIdRef.current = requestId;
     shouldFollowConversationRef.current = true;
     if (composerRef.current) composerRef.current.value = "";
     setQuestion("");
     setRequestState("asking");
     setPendingErrorCode(null);
+    setPendingThinking("");
     if (retryTurnId) {
       setTurns((current) => current.map((turn) => (
         turn.id === retryTurnId
@@ -371,6 +410,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       const response = await invoke<FileSpaceAiTurn>("ask_file_space_ai", {
         question: nextQuestion,
         retryTurnId: retryTurnId ?? null,
+        requestId,
       });
       if (serviceSettings?.mode === "agentCli" && serviceSettings.agentCli) {
         recordAgentCliRuntimeSuccess(serviceSettings.agentCli.cli);
@@ -395,6 +435,8 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       }
     } finally {
       requestInFlightRef.current = false;
+      activeRequestIdRef.current = null;
+      setPendingThinking("");
       setRequestState("idle");
     }
   }, [canAsk, question, serviceSettings]);
@@ -485,7 +527,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                       <p>{turn.question}</p>
                     </section>
                     {turn.status === "pending" ? (
-                      <AiPendingAnswer />
+                      <AiPendingAnswer thinking={pendingThinking} />
                     ) : turn.status === "failed" && isAiNoSourcesError(turn.errorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
                     ) : turn.status === "failed" ? (
@@ -540,7 +582,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                       <p>{pendingQuestion}</p>
                     </section>
                     {requestState === "asking" ? (
-                      <AiPendingAnswer />
+                      <AiPendingAnswer thinking={pendingThinking} />
                     ) : isAiNoSourcesError(pendingErrorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
                     ) : (

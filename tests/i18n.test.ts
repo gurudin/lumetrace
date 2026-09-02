@@ -148,6 +148,8 @@ test("automatic version notification uses the requested Chinese actions", () => 
 
 test("AI waiting state exposes a live elapsed-seconds label", () => {
   assert.equal(zh.fileSpace.ai.waiting, "已等待 {{seconds}}s");
+  assert.equal(zh.fileSpace.ai.asking, "正在检索相关文件…");
+  assert.equal(zh.fileSpace.ai.thinking, "正在思考…");
   assert.match(en.fileSpace.ai.waiting, /{{seconds}}/);
 });
 

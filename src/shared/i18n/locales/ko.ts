@@ -376,7 +376,8 @@ export const ko = {
       unsupportedConfigurationDescription: "Agent CLI 모드는 현재 읽기 전용 Hermes만 지원합니다.",
       questionLabel: "내 질문",
       answerLabel: "Lumie 답변",
-      asking: "파일을 검색하고 AI 답변을 기다리는 중…",
+      asking: "관련 파일 검색 중…",
+      thinking: "생각하는 중…",
       waiting: "{{seconds}}초 대기 중",
       answerErrorTitle: "답변을 완료하지 못했습니다",
       retryAnswer: "다시 시도",
@@ -392,6 +393,7 @@ export const ko = {
       errors: {
         questionEmpty: "질문을 입력하세요.",
         questionTooLong: "질문이 너무 깁니다. 줄여서 다시 시도하세요.",
+        requestInvalid: "요청이 올바르지 않습니다. 다시 보내 주세요.",
         serviceNotConfigured: "AI 서비스가 설정되지 않았습니다.",
         serviceUnsupported: "Agent CLI 모드는 현재 Hermes만 지원합니다.",
         readOnlyRequired: "Hermes 파일 접근을 읽기 전용으로 변경하세요.",

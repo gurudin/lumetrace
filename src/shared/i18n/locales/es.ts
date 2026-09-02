@@ -376,7 +376,8 @@ export const es = {
       unsupportedConfigurationDescription: "El modo Agent CLI actualmente solo admite Hermes con acceso de solo lectura.",
       questionLabel: "Tu pregunta",
       answerLabel: "Respuesta de Lumie",
-      asking: "Buscando en tus archivos y esperando la respuesta de la IA…",
+      asking: "Buscando archivos relevantes…",
+      thinking: "Pensando…",
       waiting: "Esperando {{seconds}} s",
       answerErrorTitle: "No se pudo completar la respuesta",
       retryAnswer: "Reintentar",
@@ -392,6 +393,7 @@ export const es = {
       errors: {
         questionEmpty: "Escribe una pregunta.",
         questionTooLong: "La pregunta es demasiado larga. Acórtala y vuelve a intentarlo.",
+        requestInvalid: "La solicitud no es válida. Vuelve a enviarla.",
         serviceNotConfigured: "No hay ningún servicio de IA configurado.",
         serviceUnsupported: "El modo Agent CLI actualmente solo admite Hermes.",
         readOnlyRequired: "Cambia el acceso de archivos de Hermes a solo lectura.",

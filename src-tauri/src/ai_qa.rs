@@ -18,10 +18,11 @@ use std::{
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
-use tauri::Manager;
+use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
 const QUESTION_MAX_CHARACTERS: usize = 2_000;
+const REQUEST_ID_MAX_CHARACTERS: usize = 128;
 const SOURCE_EXCERPT_MAX_CHARACTERS: usize = 1_100;
 const SOURCE_CONTEXT_MAX_CHARACTERS: usize = 8_000;
 const HISTORY_RETURN_LIMIT: usize = 100;
@@ -52,6 +53,8 @@ const ERROR_HERMES_FAILED: &str = "ai_hermes_failed";
 const ERROR_HERMES_EMPTY: &str = "ai_hermes_empty";
 const ERROR_HERMES_OUTPUT_TOO_LARGE: &str = "ai_hermes_output_too_large";
 const ERROR_HISTORY_FAILED: &str = "ai_history_failed";
+const ERROR_REQUEST_INVALID: &str = "ai_request_invalid";
+const FILE_SPACE_AI_PROGRESS_EVENT: &str = "file-space-ai-progress";
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -79,6 +82,14 @@ pub struct FileSpaceAiTurn {
     duration_ms: Option<i64>,
     created_at: i64,
     updated_at: i64,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct FileSpaceAiProgress {
+    request_id: String,
+    phase: String,
+    thinking: String,
 }
 
 #[derive(Debug)]
@@ -321,6 +332,17 @@ fn validated_question(question: String) -> Result<String, String> {
     Ok(question)
 }
 
+fn validated_request_id(request_id: String) -> Result<String, String> {
+    let request_id = request_id.trim().to_owned();
+    if request_id.is_empty()
+        || request_id.chars().count() > REQUEST_ID_MAX_CHARACTERS
+        || request_id.chars().any(char::is_control)
+    {
+        return Err(ERROR_REQUEST_INVALID.to_owned());
+    }
+    Ok(request_id)
+}
+
 fn truncate_characters(value: &str, limit: usize) -> String {
     if value.chars().count() <= limit {
         value.to_owned()
@@ -471,6 +493,57 @@ fn push_unique(values: &mut Vec<String>, value: String) {
     }
 }
 
+fn compact_file_search_query(question: &str) -> Option<String> {
+    let original = question.trim();
+    let mut query = original.trim_matches(|character: char| {
+        character.is_whitespace() || "，。！？、,.!?：:；;".contains(character)
+    });
+    let mut transformed = false;
+    for prefix in [
+        "请帮我找一下",
+        "帮我找一下",
+        "帮忙找一下",
+        "请查找一下",
+        "查找一下",
+        "搜索一下",
+        "请查找",
+        "请搜索",
+        "找一下",
+        "查找",
+        "搜索",
+        "寻找",
+        "找",
+    ] {
+        if let Some(stripped) = query.strip_prefix(prefix) {
+            query = stripped.trim();
+            transformed = true;
+            break;
+        }
+    }
+    for suffix in [
+        "这个文件在哪里",
+        "这个文件在哪",
+        "相关文件",
+        "这些文件",
+        "文件在哪里",
+        "文件在哪",
+        "文件",
+        "文档",
+        "资料",
+    ] {
+        if let Some(stripped) = query.strip_suffix(suffix) {
+            query = stripped.trim();
+            transformed = true;
+            break;
+        }
+    }
+    let query = query.trim_matches(|character: char| {
+        character.is_whitespace() || "，。！？、,.!?：:；;".contains(character)
+    });
+    let query = if transformed { query } else { original };
+    (!query.is_empty() && query.chars().count() <= 120).then(|| query.to_owned())
+}
+
 fn build_retrieval_plan(question: &str, history: &[FileSpaceAiTurn]) -> RetrievalPlan {
     let mut recent_turns = history
         .iter()
@@ -504,6 +577,9 @@ fn build_retrieval_plan(question: &str, history: &[FileSpaceAiTurn]) -> Retrieva
     }
 
     let mut search_queries = vec![question.to_owned()];
+    if let Some(compact_query) = compact_file_search_query(question) {
+        push_unique(&mut search_queries, compact_query);
+    }
     if inherits_history {
         for turn in &recent_turns {
             push_unique(
@@ -782,8 +858,10 @@ fn ask_file_space_ai_blocking(
     app: tauri::AppHandle,
     question: String,
     retry_turn_id: Option<String>,
+    request_id: String,
 ) -> Result<FileSpaceAiTurn, String> {
     let question = validated_question(question)?;
+    let request_id = validated_request_id(request_id)?;
     let database = {
         let _operation =
             lock_file_space_operations().map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
@@ -856,7 +934,21 @@ fn ask_file_space_ai_blocking(
         };
         let generated_answer = match &executor {
             AiExecutor::Hermes(executable) => run_hermes(executable, &prompt)?,
-            AiExecutor::Local(settings) => run_local_llm(settings, &prompt)?,
+            AiExecutor::Local(settings) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    let _ = progress_app.emit(
+                        FILE_SPACE_AI_PROGRESS_EVENT,
+                        FileSpaceAiProgress {
+                            request_id: progress_request_id.clone(),
+                            phase: "thinking".to_owned(),
+                            thinking: thinking.to_owned(),
+                        },
+                    );
+                };
+                run_local_llm(settings, &prompt, &mut emit_thinking)?
+            }
         };
         let answer = sanitize_citations(&generated_answer, sources.len());
         if answer.trim().is_empty() {
@@ -880,9 +972,10 @@ pub async fn ask_file_space_ai(
     app: tauri::AppHandle,
     question: String,
     retry_turn_id: Option<String>,
+    request_id: String,
 ) -> Result<FileSpaceAiTurn, String> {
     tauri::async_runtime::spawn_blocking(move || {
-        ask_file_space_ai_blocking(app, question, retry_turn_id)
+        ask_file_space_ai_blocking(app, question, retry_turn_id, request_id)
     })
     .await
     .map_err(|_| ERROR_HERMES_FAILED.to_owned())?
@@ -942,6 +1035,25 @@ mod tests {
         assert_eq!(
             validated_question("x".repeat(QUESTION_MAX_CHARACTERS + 1)),
             Err(ERROR_QUESTION_TOO_LONG.to_owned())
+        );
+        assert_eq!(
+            validated_request_id(" request-1 ".to_owned()).unwrap(),
+            "request-1"
+        );
+        assert_eq!(
+            validated_request_id("\n".to_owned()),
+            Err(ERROR_REQUEST_INVALID.to_owned())
+        );
+    }
+
+    #[test]
+    fn file_lookup_questions_add_a_compact_chinese_search_term() {
+        let plan = build_retrieval_plan("找一下日报文件", &[]);
+        assert_eq!(plan.search_queries, vec!["找一下日报文件", "日报"]);
+        assert_eq!(compact_file_search_query("日报").as_deref(), Some("日报"));
+        assert_eq!(
+            compact_file_search_query("请帮我找一下产品日报文档").as_deref(),
+            Some("产品日报")
         );
     }
 

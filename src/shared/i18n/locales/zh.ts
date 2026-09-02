@@ -420,7 +420,8 @@ export const zh = {
       unsupportedConfigurationDescription: "Agent CLI 方式当前仅支持 Hermes，并且必须选择只读访问。",
       questionLabel: "你的问题",
       answerLabel: "Lumie 回答",
-      asking: "正在检索文件并等待 AI 回答…",
+      asking: "正在检索相关文件…",
+      thinking: "正在思考…",
       waiting: "已等待 {{seconds}}s",
       answerErrorTitle: "无法完成回答",
       retryAnswer: "重新尝试",
@@ -436,6 +437,7 @@ export const zh = {
       errors: {
         questionEmpty: "请输入问题。",
         questionTooLong: "问题过长，请缩短后重试。",
+        requestInvalid: "本次请求无效，请重新发送。",
         serviceNotConfigured: "尚未配置 AI 服务。",
         serviceUnsupported: "Agent CLI 方式当前仅支持 Hermes。",
         readOnlyRequired: "请将 Hermes 的文件权限改为只读访问。",

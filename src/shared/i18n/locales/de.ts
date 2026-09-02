@@ -376,7 +376,8 @@ export const de = {
       unsupportedConfigurationDescription: "Der Agent-CLI-Modus unterstützt derzeit nur Hermes mit schreibgeschütztem Zugriff.",
       questionLabel: "Ihre Frage",
       answerLabel: "Lumies Antwort",
-      asking: "Dateien werden durchsucht; die KI-Antwort wird vorbereitet …",
+      asking: "Relevante Dateien werden durchsucht …",
+      thinking: "Denkt nach …",
       waiting: "Wartezeit: {{seconds}} s",
       answerErrorTitle: "Antwort konnte nicht abgeschlossen werden",
       retryAnswer: "Erneut versuchen",
@@ -392,6 +393,7 @@ export const de = {
       errors: {
         questionEmpty: "Geben Sie eine Frage ein.",
         questionTooLong: "Die Frage ist zu lang. Kürzen Sie sie und versuchen Sie es erneut.",
+        requestInvalid: "Diese Anfrage ist ungültig. Senden Sie sie erneut.",
         serviceNotConfigured: "Es ist kein KI-Dienst konfiguriert.",
         serviceUnsupported: "Der Agent-CLI-Modus unterstützt derzeit nur Hermes.",
         readOnlyRequired: "Stellen Sie den Dateizugriff von Hermes auf schreibgeschützt.",
