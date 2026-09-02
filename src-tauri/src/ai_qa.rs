@@ -171,6 +171,7 @@ fn load_ai_history_record(
             )| {
                 let sources = serde_json::from_str::<Vec<FileSpaceAiSource>>(&sources_json)
                     .map_err(|error| format!("Unable to read AI conversation sources: {error}"))?;
+                let sources = retain_cited_sources(&answer, sources);
                 Ok(FileSpaceAiTurn {
                     id,
                     question,
@@ -640,6 +641,13 @@ fn sanitize_citations(answer: &str, source_count: usize) -> String {
     String::from_utf8(output).unwrap_or_default()
 }
 
+fn retain_cited_sources(answer: &str, sources: Vec<FileSpaceAiSource>) -> Vec<FileSpaceAiSource> {
+    sources
+        .into_iter()
+        .filter(|source| answer.contains(&format!("[{}]", source.citation_id)))
+        .collect()
+}
+
 fn validate_hermes_settings(
     settings: Option<&crate::agent_cli::AgentCliSettings>,
 ) -> Result<(), String> {
@@ -973,6 +981,7 @@ fn ask_file_space_ai_blocking(
                 AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
             });
         }
+        let sources = retain_cited_sources(&answer, sources);
         Ok((answer, sources))
     })();
     match answer_result {
@@ -1197,6 +1206,20 @@ mod tests {
         assert_eq!(
             sanitize_citations("结论 [S1]，错误 [S9]，联合 [S2][S3]。", 2),
             "结论 [S1]，错误 ，联合 [S2]。"
+        );
+    }
+
+    #[test]
+    fn only_sources_cited_by_the_answer_are_retained() {
+        let sources = vec![source(1, "first"), source(2, "second"), source(3, "third")];
+        let retained = retain_cited_sources("结论 [S1]，补充 [S3]。", sources);
+
+        assert_eq!(
+            retained
+                .iter()
+                .map(|source| source.citation_id.as_str())
+                .collect::<Vec<_>>(),
+            vec!["S1", "S3"]
         );
     }
 
