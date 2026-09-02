@@ -4986,6 +4986,14 @@ body.is-file-space-reordering * {
   opacity: 1;
 }
 
+.file-space-ai-service-example {
+  grid-column: 2;
+  margin-top: -6px;
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.35;
+}
+
 .file-space-ai-service-secret-field {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr);
@@ -7461,6 +7469,11 @@ button.file-space-ai-header-service:hover {
   .file-space-ai-service-form > label:not(:first-child),
   .file-space-ai-service-form > span:not(:first-child) {
     margin-top: 5px;
+  }
+
+  .file-space-ai-service-example {
+    grid-column: 1;
+    margin-top: -2px;
   }
 
   .file-space-ai-agent-grid {

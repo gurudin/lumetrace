@@ -150,6 +150,8 @@ export const en = {
         provider: "Service Type",
         agentCliProvider: "Agent CLI",
         baseUrl: "Base URL",
+        baseUrlPlaceholder: "Enter the service address",
+        baseUrlExample: "Example: {{url}}",
         apiKey: "API Key",
         model: "Model",
         executable: "Executable",

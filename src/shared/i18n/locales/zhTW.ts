@@ -111,6 +111,8 @@ export const zhTW = {
         provider: "服務類型",
         agentCliProvider: "Agent CLI",
         baseUrl: "Base URL",
+        baseUrlPlaceholder: "請輸入服務位址",
+        baseUrlExample: "範例：{{url}}",
         apiKey: "API Key",
         model: "模型",
         executable: "執行命令",

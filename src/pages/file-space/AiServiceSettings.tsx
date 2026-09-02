@@ -24,7 +24,11 @@ import {
   type AgentCliStatusResponse,
   wasAgentCliRecentlySuccessful,
 } from "./agentCliDetection";
-import { defaultAiServiceMode, type AiServiceMode } from "./aiServiceSettingsState";
+import {
+  defaultAiServiceMode,
+  defaultLocalBaseUrl,
+  type AiServiceMode,
+} from "./aiServiceSettingsState";
 
 type CloudProvider = "openaiCompatible";
 type LocalProvider = "ollama" | "lmStudio";
@@ -68,7 +72,7 @@ interface AiServiceSettingsProps {
 
 const cloudProviders: readonly CloudProvider[] = ["openaiCompatible"];
 const localProviders: readonly LocalProvider[] = ["ollama", "lmStudio"];
-const localProviderDefaultUrls: Record<LocalProvider, string> = {
+const localProviderExampleUrls: Record<LocalProvider, string> = {
   ollama: "http://127.0.0.1:11434/v1",
   lmStudio: "http://127.0.0.1:1234/v1",
 };
@@ -156,7 +160,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const [mode, setMode] = useState<AiServiceMode>(defaultAiServiceMode);
   const [cloudProvider, setCloudProvider] = useState<CloudProvider>("openaiCompatible");
   const [localProvider, setLocalProvider] = useState<LocalProvider>("ollama");
-  const [localBaseUrl, setLocalBaseUrl] = useState(localProviderDefaultUrls.ollama);
+  const [localBaseUrl, setLocalBaseUrl] = useState(defaultLocalBaseUrl);
   const [localModels, setLocalModels] = useState<string[]>([]);
   const [selectedLocalModel, setSelectedLocalModel] = useState("");
   const [localConnectionState, setLocalConnectionState] = useState<LocalConnectionState>("idle");
@@ -243,7 +247,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   );
 
   const baseUrlPlaceholder = mode === "local"
-    ? localProviderDefaultUrls[localProvider]
+    ? t("fileSpace.settings.aiService.baseUrlPlaceholder")
     : "https://api.openai.com/v1";
 
   const resetLocalConnection = () => {
@@ -256,7 +260,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
 
   const changeLocalProvider = (provider: LocalProvider) => {
     setLocalProvider(provider);
-    setLocalBaseUrl(localProviderDefaultUrls[provider]);
+    setLocalBaseUrl(defaultLocalBaseUrl);
     resetLocalConnection();
   };
 
@@ -529,6 +533,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 id="file-space-ai-service-base-url"
                 type="url"
                 value={localBaseUrl}
+                aria-describedby="file-space-ai-service-base-url-example"
                 disabled={localConnectionState === "checking" || savingSettings}
                 placeholder={baseUrlPlaceholder}
                 spellCheck={false}
@@ -536,6 +541,9 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 autoCorrect="off"
                 onChange={(event) => changeLocalBaseUrl(event.target.value)}
               />
+              <small id="file-space-ai-service-base-url-example" className="file-space-ai-service-example">
+                {t("fileSpace.settings.aiService.baseUrlExample", { url: localProviderExampleUrls[localProvider] })}
+              </small>
 
               <span>{t("fileSpace.settings.aiService.model")}</span>
               <MacSelect

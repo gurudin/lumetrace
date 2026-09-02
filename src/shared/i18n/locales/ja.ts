@@ -111,6 +111,8 @@ export const ja = {
         provider: "サービスタイプ",
         agentCliProvider: "Agent CLI",
         baseUrl: "Base URL",
+        baseUrlPlaceholder: "サービスアドレスを入力",
+        baseUrlExample: "例：{{url}}",
         apiKey: "API Key",
         model: "モデル",
         executable: "実行コマンド",

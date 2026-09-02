@@ -153,6 +153,8 @@ test("AI waiting state exposes a live elapsed-seconds label", () => {
 
 test("local model settings expose a real connection flow", () => {
   assert.equal(zh.fileSpace.settings.aiService.modelPlaceholder, "请先测试连接");
+  assert.equal(zh.fileSpace.settings.aiService.baseUrlPlaceholder, "请输入服务地址");
+  assert.equal(zh.fileSpace.settings.aiService.baseUrlExample, "示例：{{url}}");
   assert.match(zh.fileSpace.settings.aiService.localConnection.idle.description, /测试连接/);
   assert.match(zh.fileSpace.settings.aiService.localConnection.passed.description, /选择模型/);
   assert.doesNotMatch(zh.fileSpace.settings.aiService.localPrivacy, /未来/);

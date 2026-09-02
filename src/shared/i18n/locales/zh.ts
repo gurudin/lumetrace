@@ -150,6 +150,8 @@ export const zh = {
         provider: "服务类型",
         agentCliProvider: "Agent CLI",
         baseUrl: "Base URL",
+        baseUrlPlaceholder: "请输入服务地址",
+        baseUrlExample: "示例：{{url}}",
         apiKey: "API Key",
         model: "模型",
         executable: "可执行命令",

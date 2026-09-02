@@ -111,6 +111,8 @@ export const ko = {
         provider: "서비스 유형",
         agentCliProvider: "Agent CLI",
         baseUrl: "Base URL",
+        baseUrlPlaceholder: "서비스 주소 입력",
+        baseUrlExample: "예: {{url}}",
         apiKey: "API Key",
         model: "모델",
         executable: "실행 명령",
