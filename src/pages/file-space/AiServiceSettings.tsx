@@ -132,7 +132,7 @@ function getStartupAgentChecks() {
 export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const { t } = useTranslation();
   const legacySettings = useMemo(readLegacyAgentCliSettings, []);
-  const [mode, setMode] = useState<AiServiceMode>(legacySettings ? "agentCli" : "cloud");
+  const [mode, setMode] = useState<AiServiceMode>(legacySettings ? "agentCli" : "local");
   const [cloudProvider, setCloudProvider] = useState<CloudProvider>("openaiCompatible");
   const [localProvider, setLocalProvider] = useState<LocalProvider>("ollama");
   const [selectedAgent, setSelectedAgent] = useState<AgentCliKey>(legacySettings?.cli ?? "claude");
@@ -315,13 +315,13 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
           role="group"
           aria-label={t("fileSpace.settings.aiService.modeLabel")}
         >
-          <button className={mode === "cloud" ? "is-active" : ""} type="button" aria-pressed={mode === "cloud"} onClick={() => setMode("cloud")}>
-            <Cloud size={15} />
-            {t("fileSpace.settings.aiService.cloud")}
-          </button>
           <button className={mode === "local" ? "is-active" : ""} type="button" aria-pressed={mode === "local"} onClick={() => setMode("local")}>
             <HardDrive size={15} />
             {t("fileSpace.settings.aiService.local")}
+          </button>
+          <button className={mode === "cloud" ? "is-active" : ""} type="button" aria-pressed={mode === "cloud"} onClick={() => setMode("cloud")}>
+            <Cloud size={15} />
+            {t("fileSpace.settings.aiService.cloud")}
           </button>
           <button className={mode === "agentCli" ? "is-active" : ""} type="button" aria-pressed={mode === "agentCli"} onClick={() => setMode("agentCli")}>
             <Terminal size={15} />
