@@ -389,6 +389,9 @@ export const zhTW = {
       processedIn: "已處理 {{seconds}}s",
       sourceVersion: "第 {{version}} 版",
       sourceCurrentContent: "目前版本",
+      primaryEvidence: "主要證據",
+      contextEvidence: "背景資料",
+      sourceCitationCount: "引用 {{count}} 處",
       composerLabel: "向 Lumie 提問",
       errors: {
         questionEmpty: "請輸入問題。",

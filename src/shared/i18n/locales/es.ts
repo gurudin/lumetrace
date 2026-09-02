@@ -389,6 +389,9 @@ export const es = {
       processedIn: "Procesado en {{seconds}} s",
       sourceVersion: "Versión {{version}}",
       sourceCurrentContent: "Versión actual",
+      primaryEvidence: "Evidencia principal",
+      contextEvidence: "Contexto",
+      sourceCitationCount: "Citado {{count}}×",
       composerLabel: "Pregunta a Lumie",
       errors: {
         questionEmpty: "Escribe una pregunta.",

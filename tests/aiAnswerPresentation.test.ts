@@ -12,9 +12,9 @@ import {
 } from "../src/pages/file-space/aiAnswerPresentation.ts";
 
 const sources = [
-  { citationId: "S1", fileId: "file-a", fileName: "A.md" },
-  { citationId: "S2", fileId: "file-a", fileName: "A.md" },
-  { citationId: "S3", fileId: "file-b", fileName: "B.docx" },
+  { citationId: "S1", fileId: "file-a", fileName: "A.md", evidenceRole: "context" as const, citationCount: 1 },
+  { citationId: "S2", fileId: "file-a", fileName: "A.md", evidenceRole: "primary" as const, citationCount: 2 },
+  { citationId: "S3", fileId: "file-b", fileName: "B.docx", evidenceRole: "context" as const, citationCount: 1 },
 ];
 
 test("removes citation markers from the visible AI answer", () => {
@@ -24,18 +24,15 @@ test("removes citation markers from the visible AI answer", () => {
   );
 });
 
-test("lists every retrieved file and deduplicates chunks from the same file", () => {
-  assert.deepEqual(
-    referencedAiFiles(sources).map((source) => source.fileName),
-    ["A.md", "B.docx"],
-  );
-});
-
-test("keeps retrieved files visible even when the model cites only one", () => {
-  assert.deepEqual(
-    referencedAiFiles(sources).map((source) => source.fileName),
-    ["A.md", "B.docx"],
-  );
+test("aggregates citations by file and sorts primary evidence first", () => {
+  assert.deepEqual(referencedAiFiles(sources).map((source) => ({
+    fileName: source.fileName,
+    evidenceRole: source.evidenceRole,
+    citationCount: source.citationCount,
+  })), [
+    { fileName: "A.md", evidenceRole: "primary", citationCount: 3 },
+    { fileName: "B.docx", evidenceRole: "context", citationCount: 1 },
+  ]);
 });
 
 test("rounds answer processing time up to whole seconds", () => {

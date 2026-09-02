@@ -1,6 +1,8 @@
 export interface AiCitationSource {
   citationId: string;
   fileId: string;
+  evidenceRole: "primary" | "context";
+  citationCount: number;
 }
 
 export interface FileSpaceAiSourceReference extends AiCitationSource {
@@ -46,16 +48,29 @@ export function visibleAiAnswer(answer: string) {
 }
 
 export function referencedAiFiles<T extends AiCitationSource>(sources: readonly T[]) {
-  const referencedFiles: T[] = [];
-  const seenFileIds = new Set<string>();
+  const referencedFiles = new Map<string, T>();
 
   for (const source of sources) {
-    if (seenFileIds.has(source.fileId)) continue;
-    seenFileIds.add(source.fileId);
-    referencedFiles.push(source);
+    const existing = referencedFiles.get(source.fileId);
+    if (!existing) {
+      referencedFiles.set(source.fileId, { ...source });
+      continue;
+    }
+    referencedFiles.set(source.fileId, {
+      ...existing,
+      evidenceRole: existing.evidenceRole === "primary" || source.evidenceRole === "primary"
+        ? "primary"
+        : "context",
+      citationCount: existing.citationCount + source.citationCount,
+    });
   }
 
-  return referencedFiles;
+  return [...referencedFiles.values()].sort((left, right) => {
+    const roleDifference = Number(left.evidenceRole === "context")
+      - Number(right.evidenceRole === "context");
+    if (roleDifference !== 0) return roleDifference;
+    return right.citationCount - left.citationCount;
+  });
 }
 
 export function aiAnswerDurationSeconds(

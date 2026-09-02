@@ -433,6 +433,9 @@ export const en = {
       processedIn: "Processed in {{seconds}}s",
       sourceVersion: "Version {{version}}",
       sourceCurrentContent: "Current version",
+      primaryEvidence: "Primary evidence",
+      contextEvidence: "Background",
+      sourceCitationCount: "Cited {{count}}×",
       composerLabel: "Ask Lumie",
       errors: {
         questionEmpty: "Enter a question.",

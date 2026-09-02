@@ -433,6 +433,9 @@ export const zh = {
       processedIn: "已处理 {{seconds}}s",
       sourceVersion: "第 {{version}} 版",
       sourceCurrentContent: "当前版本",
+      primaryEvidence: "主要证据",
+      contextEvidence: "背景资料",
+      sourceCitationCount: "引用 {{count}} 处",
       composerLabel: "向 Lumie 提问",
       errors: {
         questionEmpty: "请输入问题。",

@@ -6981,8 +6981,18 @@ button.file-space-ai-header-service:hover {
 }
 
 .file-space-ai-source-list > button small {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   color: var(--text-muted);
   font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.file-space-ai-source-evidence.is-primary > span:first-child {
+  color: var(--text);
+  font-weight: 560;
 }
 
 .file-space-ai-unavailable strong {

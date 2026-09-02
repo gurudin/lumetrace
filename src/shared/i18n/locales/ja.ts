@@ -389,6 +389,9 @@ export const ja = {
       processedIn: "{{seconds}}秒で処理",
       sourceVersion: "バージョン {{version}}",
       sourceCurrentContent: "現在のバージョン",
+      primaryEvidence: "主な根拠",
+      contextEvidence: "背景資料",
+      sourceCitationCount: "引用 {{count}} 件",
       composerLabel: "Lumie に質問",
       errors: {
         questionEmpty: "質問を入力してください。",

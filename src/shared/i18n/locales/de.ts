@@ -389,6 +389,9 @@ export const de = {
       processedIn: "In {{seconds}} s verarbeitet",
       sourceVersion: "Version {{version}}",
       sourceCurrentContent: "Aktuelle Version",
+      primaryEvidence: "Hauptbeleg",
+      contextEvidence: "Hintergrund",
+      sourceCitationCount: "{{count}}× zitiert",
       composerLabel: "Lumie fragen",
       errors: {
         questionEmpty: "Geben Sie eine Frage ein.",

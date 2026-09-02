@@ -152,10 +152,14 @@ function AiSourcesDisclosure({ turnId, sources, onOpenSource }: AiSourcesDisclos
             >
               <span className="file-space-ai-source-index">{index + 1}</span>
               <strong>{source.fileName}</strong>
-              <small>
-                {source.versionNumber
-                  ? t("fileSpace.ai.sourceVersion", { version: source.versionNumber })
-                  : t("fileSpace.ai.sourceCurrentContent")}
+              <small className={`file-space-ai-source-evidence is-${source.evidenceRole}`}>
+                <span>
+                  {t(source.evidenceRole === "primary"
+                    ? "fileSpace.ai.primaryEvidence"
+                    : "fileSpace.ai.contextEvidence")}
+                </span>
+                <span aria-hidden="true">·</span>
+                <span>{t("fileSpace.ai.sourceCitationCount", { count: source.citationCount })}</span>
               </small>
             </button>
           ))}
