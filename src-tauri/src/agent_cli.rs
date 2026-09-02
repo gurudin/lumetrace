@@ -17,6 +17,15 @@ use tauri::State;
 const AGENT_CLI_SETTINGS_KEY: &str = "ai.agent_cli";
 const HERMES_CONNECTION_MARKER: &str = "LUMETRACE_HERMES_OK";
 const CODEX_CONNECTION_MARKER: &str = "LUMETRACE_CODEX_OK";
+const CODEX_HOST_ENVIRONMENT_KEYS: [&str; 7] = [
+    "CODEX_CI",
+    "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+    "CODEX_PERMISSION_PROFILE",
+    "CODEX_SANDBOX_NETWORK_DISABLED",
+    "CODEX_SESSION_ID",
+    "CODEX_SHELL",
+    "CODEX_THREAD_ID",
+];
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -301,6 +310,9 @@ pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Comma
         .arg("web_search=\"disabled\"")
         .arg("-")
         .current_dir(working_dir);
+    for key in CODEX_HOST_ENVIRONMENT_KEYS {
+        command.env_remove(key);
+    }
     command
 }
 
@@ -681,6 +693,19 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument.contains("LUMETRACE")));
+    }
+
+    #[test]
+    fn codex_child_does_not_inherit_the_outer_codex_host_environment() {
+        let command = codex_exec_command(Path::new("codex"), Path::new("/tmp"));
+        let removed_keys = command
+            .get_envs()
+            .filter_map(|(key, value)| value.is_none().then(|| key.to_string_lossy().into_owned()))
+            .collect::<Vec<_>>();
+        for key in CODEX_HOST_ENVIRONMENT_KEYS {
+            assert!(removed_keys.iter().any(|removed| removed == key));
+        }
+        assert!(!removed_keys.iter().any(|removed| removed == "CODEX_HOME"));
     }
 
     #[test]

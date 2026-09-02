@@ -92,7 +92,7 @@ Important boundaries:
 - Only retrieved excerpts are included in the selected AI-service prompt; the entire workspace is not sent.
 - Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
 - Hermes and Codex execution require the stored permission to be `readOnly`.
-- Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the prompt built from retrieved RAG excerpts, recent conversation context, and source metadata.
+- Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the prompt built from retrieved RAG excerpts, recent conversation context, and source metadata. Host-only `CODEX_*` session and sandbox variables are removed from the child process while the user's Codex authentication directory remains available.
 - Local-model settings and the active AI-service mode are persisted in SQLite and copied when creating or switching workspaces.
 
 ## Workspace removal safety
