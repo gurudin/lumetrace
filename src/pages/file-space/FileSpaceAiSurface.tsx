@@ -87,6 +87,10 @@ const aiErrorKeys: Record<string, string> = {
   ai_hermes_failed: "hermesFailed",
   ai_hermes_empty: "hermesEmpty",
   ai_hermes_output_too_large: "hermesOutputTooLarge",
+  ai_codex_unavailable: "codexUnavailable",
+  ai_codex_failed: "codexFailed",
+  ai_codex_empty: "codexEmpty",
+  ai_codex_output_too_large: "codexOutputTooLarge",
   ai_local_llm_unavailable: "localLlmUnavailable",
   ai_local_llm_timeout: "localLlmTimeout",
   ai_local_llm_failed: "localLlmFailed",
@@ -325,7 +329,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const canAsk = configurationState === "configured"
     && ((serviceSettings?.mode === "local" && Boolean(serviceSettings.local))
       || (serviceSettings?.mode === "agentCli"
-        && serviceSettings.agentCli?.cli === "hermes"
+        && (serviceSettings.agentCli?.cli === "hermes" || serviceSettings.agentCli?.cli === "codex")
         && serviceSettings.agentCli.permission === "readOnly"));
   const activeServiceLabel = serviceSettings?.mode === "local"
     ? serviceSettings.local?.model

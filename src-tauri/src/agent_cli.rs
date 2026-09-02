@@ -6,9 +6,9 @@ use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
 use std::{
     env,
-    io::Read,
-    path::PathBuf,
-    process::{ExitStatus, Stdio},
+    io::{Read, Write},
+    path::{Path, PathBuf},
+    process::{Command, ExitStatus, Stdio},
     thread,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -16,6 +16,7 @@ use tauri::State;
 
 const AGENT_CLI_SETTINGS_KEY: &str = "ai.agent_cli";
 const HERMES_CONNECTION_MARKER: &str = "LUMETRACE_HERMES_OK";
+const CODEX_CONNECTION_MARKER: &str = "LUMETRACE_CODEX_OK";
 
 #[derive(Clone, Copy, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -223,9 +224,18 @@ fn read_process_output(
 }
 
 fn run_command(executable: &PathBuf, args: &[&str]) -> CommandResult {
-    let mut child = match std::process::Command::new(executable)
-        .args(args)
-        .stdin(Stdio::null())
+    let mut command = Command::new(executable);
+    command.args(args);
+    run_prepared_command(command, None)
+}
+
+fn run_prepared_command(mut command: Command, stdin_input: Option<&str>) -> CommandResult {
+    let mut child = match command
+        .stdin(if stdin_input.is_some() {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
@@ -236,6 +246,17 @@ fn run_command(executable: &PathBuf, args: &[&str]) -> CommandResult {
         }
         Err(_) => return CommandResult::Failed,
     };
+    if let Some(input) = stdin_input {
+        let wrote_input = child
+            .stdin
+            .take()
+            .is_some_and(|mut stdin| stdin.write_all(input.as_bytes()).is_ok());
+        if !wrote_input {
+            let _ = child.kill();
+            let _ = child.wait();
+            return CommandResult::Failed;
+        }
+    }
 
     // Drain both pipes while the process is running. Some CLIs print enough diagnostic
     // output to fill an OS pipe and would otherwise block before they can exit.
@@ -253,6 +274,34 @@ fn run_command(executable: &PathBuf, args: &[&str]) -> CommandResult {
             CommandResult::Failed
         }
     }
+}
+
+pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("-a")
+        .arg("never")
+        .arg("exec")
+        .arg("--sandbox")
+        .arg("read-only")
+        .arg("--skip-git-repo-check")
+        .arg("--ephemeral")
+        .arg("--ignore-user-config")
+        .arg("--ignore-rules")
+        .arg("--color")
+        .arg("never")
+        .arg("--json")
+        .arg("--disable")
+        .arg("shell_tool")
+        .arg("--disable")
+        .arg("multi_agent")
+        .arg("--disable")
+        .arg("apps")
+        .arg("-c")
+        .arg("web_search=\"disabled\"")
+        .arg("-")
+        .current_dir(working_dir);
+    command
 }
 
 fn claude_is_authenticated(output: &str) -> bool {
@@ -324,6 +373,28 @@ fn hermes_connection_succeeded(output: &str) -> bool {
     output
         .lines()
         .any(|line| line.trim() == HERMES_CONNECTION_MARKER)
+}
+
+fn codex_agent_message(line: &str) -> Option<String> {
+    let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+    if event.get("type")?.as_str()? != "item.completed" {
+        return None;
+    }
+    let item = event.get("item")?;
+    (item.get("type")?.as_str()? == "agent_message")
+        .then(|| {
+            item.get("text")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+        .flatten()
+}
+
+fn codex_connection_succeeded(output: &str) -> bool {
+    output
+        .lines()
+        .filter_map(codex_agent_message)
+        .any(|message| message.trim() == CODEX_CONNECTION_MARKER)
 }
 
 fn definitions() -> [AgentCliDefinition; 4] {
@@ -422,7 +493,7 @@ fn failed_check_status(definition: AgentCliDefinition) -> AgentCliStatus {
 
 fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
     let status = inspect(definition);
-    if definition.key != "hermes"
+    if !matches!(definition.key, "hermes" | "codex")
         || !status.installed
         || status.check_state == AgentCliCheckState::NotConfigured
     {
@@ -436,37 +507,48 @@ fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
         };
     };
     let neutral_directory = std::env::temp_dir();
-    let Some(neutral_directory) = neutral_directory.to_str() else {
-        return AgentCliStatus {
-            check_state: AgentCliCheckState::CheckFailed,
-            reachable: false,
-            ..status
+    let result = if definition.key == "hermes" {
+        let Some(neutral_directory) = neutral_directory.to_str() else {
+            return AgentCliStatus {
+                check_state: AgentCliCheckState::CheckFailed,
+                reachable: false,
+                ..status
+            };
         };
+        run_command(
+            &executable,
+            &[
+                "chat",
+                "-q",
+                "Reply with exactly LUMETRACE_HERMES_OK.",
+                "-Q",
+                "--safe-mode",
+                "--reasoning",
+                "none",
+                "--max-turns",
+                "1",
+                "--source",
+                "tool",
+                "--toolsets",
+                "context_engine",
+                "--in",
+                neutral_directory,
+            ],
+        )
+    } else {
+        run_prepared_command(
+            codex_exec_command(&executable, &neutral_directory),
+            Some("Reply with exactly LUMETRACE_CODEX_OK. Do not call any tools."),
+        )
     };
-    let result = run_command(
-        &executable,
-        &[
-            "chat",
-            "-q",
-            "Reply with exactly LUMETRACE_HERMES_OK.",
-            "-Q",
-            "--safe-mode",
-            "--reasoning",
-            "none",
-            "--max-turns",
-            "1",
-            "--source",
-            "tool",
-            "--toolsets",
-            "context_engine",
-            "--in",
-            neutral_directory,
-        ],
-    );
     let passed = matches!(
         result,
         CommandResult::Completed(ref output)
-            if output.success && hermes_connection_succeeded(&output.combined())
+            if output.success && if definition.key == "hermes" {
+                hermes_connection_succeeded(&output.combined())
+            } else {
+                codex_connection_succeeded(&output.stdout)
+            }
     );
     AgentCliStatus {
         reachable: passed,
@@ -575,6 +657,30 @@ mod tests {
         assert!(!hermes_connection_succeeded(
             "session_id: test\nHermes is available\n"
         ));
+    }
+
+    #[test]
+    fn codex_connection_requires_an_exact_jsonl_agent_message() {
+        let valid = r#"{"type":"thread.started","thread_id":"test"}
+{"type":"item.completed","item":{"id":"item_0","type":"agent_message","text":"LUMETRACE_CODEX_OK"}}"#;
+        assert!(codex_connection_succeeded(valid));
+        assert!(!codex_connection_succeeded("LUMETRACE_CODEX_OK"));
+        assert!(!codex_connection_succeeded(
+            r#"{"type":"item.completed","item":{"type":"reasoning","text":"LUMETRACE_CODEX_OK"}}"#
+        ));
+    }
+
+    #[test]
+    fn codex_prompt_is_received_from_stdin_instead_of_process_arguments() {
+        let command = codex_exec_command(Path::new("codex"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert_eq!(arguments.last().map(String::as_str), Some("-"));
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument.contains("LUMETRACE")));
     }
 
     #[test]

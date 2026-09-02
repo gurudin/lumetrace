@@ -27,7 +27,7 @@ The selected AI service settings and installed semantic-model setting are copied
 | Semantic indexing | `src-tauri/src/semantic_search.rs` | Optional model installation, embedding queue, semantic ranking, status, pause, and retry. |
 | Agent CLI configuration | `src-tauri/src/agent_cli.rs` | CLI discovery, health checks, status classification, and persisted service settings. |
 | Local model service | `src-tauri/src/ai_service.rs` | OpenAI-compatible local-service connection checks, model discovery, normalized settings, and persistence. |
-| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, local-model or Hermes execution, history, follow-up context, and citations. |
+| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, local-model, Hermes, or Codex execution, history, follow-up context, and citations. |
 | File-space interface | `src/pages/file-space/` | Browser, previews, selection, drag/drop, search, settings, background status, version Diff, Trash, workspaces, and AI panel. |
 | Localization | `src/shared/i18n/locales/` | Eight synchronized language dictionaries. |
 
@@ -79,19 +79,20 @@ question + recent workspace history
   -> indexed lexical candidate retrieval
   -> optional local semantic chunk ranking
   -> bounded source excerpts with file/version IDs
-  -> selected OpenAI-compatible local model or read-only Hermes Agent CLI invocation
+  -> selected OpenAI-compatible local model or read-only Hermes/Codex Agent CLI invocation
   -> persisted answer, duration, and source references
 ```
 
 Important boundaries:
 
 - Ollama and LM Studio are supported through OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. Thinking-mode response fields are normalized and only final answer content is shown.
-- Hermes remains the only Agent CLI that currently executes file-space questions.
-- Claude Code, Codex CLI, and OpenCode can be detected and saved by the service UI, but they are not AI File Assistant runtimes yet.
+- Hermes and Codex currently execute file-space questions; Claude Code and OpenCode remain detectable configuration options only.
+- Claude Code and OpenCode can be detected and saved by the service UI, but they are not AI File Assistant runtimes yet.
 - Cloud OpenAI-compatible API configuration remains a placeholder; its execution and credential-storage path is not implemented.
 - Only retrieved excerpts are included in the selected AI-service prompt; the entire workspace is not sent.
 - Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
-- Hermes execution requires the stored permission to be `readOnly`.
+- Hermes and Codex execution require the stored permission to be `readOnly`.
+- Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the prompt built from retrieved RAG excerpts, recent conversation context, and source metadata.
 - Local-model settings and the active AI-service mode are persisted in SQLite and copied when creating or switching workspaces.
 
 ## Workspace removal safety
@@ -151,6 +152,6 @@ OS-owned interactions such as Finder-to-app drag/drop, app-to-app drag-out, nati
 - team identity, roles, permissions, sharing, or concurrent collaboration;
 - NAS or cloud synchronization and conflict resolution;
 - direct cloud OpenAI-compatible API execution;
-- file-space Q&A through Agent CLIs other than Hermes;
+- file-space Q&A through Agent CLIs other than Hermes and Codex;
 - Eagle-specific or other application-specific database migration;
 - OCR for image-only documents.

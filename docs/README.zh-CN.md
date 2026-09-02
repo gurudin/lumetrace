@@ -39,7 +39,7 @@ Lume Trace 面向个人与小团队的文件工作流。实体文件仍保存在
 - 先在本地检索有限数量的相关正文片段，仅将命中的片段发送给当前选中的 AI 服务，并在回答下方展示参考文件。
 - 回答会保留对应的文件和版本引用。
 - 每个文件空间独立保存对话历史；连续追问会注入最近上下文，重启应用后历史和追问上下文仍然保留。
-- 当前可通过 Ollama、LM Studio 等 OpenAI Compatible 本地模型服务执行问答，也可使用文件权限为“只读访问”的 Hermes Agent CLI。
+- 当前可通过 Ollama、LM Studio 等 OpenAI Compatible 本地模型服务执行问答，也可使用文件权限为“只读访问”的 Hermes 或 Codex Agent CLI。
 
 ### 文件管理与恢复
 
@@ -61,7 +61,7 @@ Lume Trace 面向个人与小团队的文件工作流。实体文件仍保存在
 
 - 团队账号、成员权限、实时协作、NAS 同步与云同步；
 - AI 文件助手直接调用云端 OpenAI Compatible API；
-- 通过 Claude Code、Codex CLI 或 OpenCode 执行文件空间问答；目前可以检测这些 CLI 的安装和配置状态，但实际问答只接通本地模型与 Hermes；
+- 通过 Claude Code 或 OpenCode 执行文件空间问答；目前可以检测这些 CLI 的安装和配置状态，但实际问答只接通本地模型、Hermes 与 Codex；
 - 从 Eagle 或其他软件私有数据库一键迁移；
 - 对纯图片文档进行 OCR。
 
@@ -71,11 +71,11 @@ Lume Trace 面向个人与小团队的文件工作流。实体文件仍保存在
 2. 后台任务异步提取可读取的正文并更新本地 FTS5 索引。
 3. 安装语义模型后，后台任务继续在本地生成 Embedding。
 4. 搜索从索引中获取有限候选结果，不在界面中加载或扫描全部文件。
-5. AI 提问先从当前文件空间检索相关片段，再调用当前选中的本地模型或 Hermes，最后在本地保存回答与来源。
+5. AI 提问先从当前文件空间检索相关片段，再调用当前选中的本地模型、Hermes 或 Codex，最后在本地保存回答与来源。
 
 ## 开发启动
 
-需要 Node.js、npm、Rust 工具链和 Tauri 2 对应的平台依赖。测试 AI 问答链路时，可配置 Ollama、LM Studio 等 OpenAI Compatible 本地模型服务，或安装并配置 Hermes Agent CLI。
+需要 Node.js、npm、Rust 工具链和 Tauri 2 对应的平台依赖。测试 AI 问答链路时，可配置 Ollama、LM Studio 等 OpenAI Compatible 本地模型服务，或安装并配置 Hermes/Codex Agent CLI。
 
 ```bash
 npm install

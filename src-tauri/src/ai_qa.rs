@@ -1,5 +1,5 @@
 use crate::{
-    agent_cli::resolve_agent_cli_executable,
+    agent_cli::{codex_exec_command, resolve_agent_cli_executable},
     ai_service::{load_active_ai_service_record, run_local_llm, ActiveAiService, LocalLlmSettings},
     database::{self, Database},
     file_space::lock_file_space_operations,
@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{
     collections::HashMap,
-    io::{BufRead, BufReader, Read},
+    io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
     sync::mpsc::{self, Receiver},
@@ -36,6 +36,8 @@ const RETRIEVAL_QUERY_MAX_CHARACTERS: usize = 3_200;
 const HERMES_OUTPUT_MAX_BYTES: usize = 256 * 1024;
 const HERMES_ANSWER_MAX_CHARACTERS: usize = 64_000;
 const HERMES_TIMEOUT: Duration = Duration::from_secs(120);
+const CODEX_OUTPUT_MAX_BYTES: usize = 512 * 1024;
+const CODEX_ANSWER_MAX_CHARACTERS: usize = 64_000;
 const ANSWER_START_MARKER: &str = "<LUMETRACE_ANSWER>";
 const ANSWER_END_MARKER: &str = "</LUMETRACE_ANSWER>";
 const EVIDENCE_START_MARKER: &str = "<LUMETRACE_EVIDENCE>";
@@ -53,6 +55,10 @@ const ERROR_HERMES_TIMEOUT: &str = "ai_hermes_timeout";
 const ERROR_HERMES_FAILED: &str = "ai_hermes_failed";
 const ERROR_HERMES_EMPTY: &str = "ai_hermes_empty";
 const ERROR_HERMES_OUTPUT_TOO_LARGE: &str = "ai_hermes_output_too_large";
+const ERROR_CODEX_UNAVAILABLE: &str = "ai_codex_unavailable";
+const ERROR_CODEX_FAILED: &str = "ai_codex_failed";
+const ERROR_CODEX_EMPTY: &str = "ai_codex_empty";
+const ERROR_CODEX_OUTPUT_TOO_LARGE: &str = "ai_codex_output_too_large";
 const ERROR_HISTORY_FAILED: &str = "ai_history_failed";
 const ERROR_REQUEST_INVALID: &str = "ai_request_invalid";
 const FILE_SPACE_AI_PROGRESS_EVENT: &str = "file-space-ai-progress";
@@ -110,6 +116,12 @@ struct HermesReasoningStream {
     thinking: String,
 }
 
+#[derive(Default)]
+struct CodexJsonStream {
+    thinking: String,
+    final_message: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RetrievalPlan {
     query: String,
@@ -132,6 +144,7 @@ struct GeneratedEvidenceSource {
 
 enum AiExecutor {
     Hermes(PathBuf),
+    Codex(PathBuf),
     Local(LocalLlmSettings),
 }
 
@@ -737,11 +750,11 @@ fn finalize_sources(
         .collect()
 }
 
-fn validate_hermes_settings(
+fn validate_agent_cli_settings(
     settings: Option<&crate::agent_cli::AgentCliSettings>,
 ) -> Result<(), String> {
     let settings = settings.ok_or_else(|| ERROR_SERVICE_NOT_CONFIGURED.to_owned())?;
-    if settings.cli != "hermes" {
+    if !matches!(settings.cli.as_str(), "hermes" | "codex") {
         return Err(ERROR_SERVICE_UNSUPPORTED.to_owned());
     }
     if settings.permission != "readOnly" {
@@ -874,6 +887,47 @@ fn drain_hermes_reasoning(
     }
 }
 
+impl CodexJsonStream {
+    fn push_line(&mut self, line: &str) -> Option<&str> {
+        let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        if event.get("type").and_then(serde_json::Value::as_str) != Some("item.completed") {
+            return None;
+        }
+        let item = event.get("item")?;
+        let text = item
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())?;
+        match item.get("type").and_then(serde_json::Value::as_str) {
+            Some("reasoning") => {
+                if !self.thinking.is_empty() {
+                    self.thinking.push('\n');
+                }
+                self.thinking.push_str(text);
+                Some(&self.thinking)
+            }
+            Some("agent_message") => {
+                self.final_message = Some(text.to_owned());
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+fn drain_codex_events(
+    receiver: &Receiver<String>,
+    stream: &mut CodexJsonStream,
+    on_thinking: &mut dyn FnMut(&str),
+) {
+    while let Ok(line) = receiver.try_recv() {
+        if let Some(thinking) = stream.push_line(&line) {
+            on_thinking(thinking);
+        }
+    }
+}
+
 fn extract_final_answer(output: &str) -> Option<String> {
     let start = output.rfind(ANSWER_START_MARKER)? + ANSWER_START_MARKER.len();
     let end = output[start..].find(ANSWER_END_MARKER)? + start;
@@ -981,6 +1035,83 @@ fn run_hermes(
     }
 }
 
+fn run_codex(
+    executable: &Path,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let neutral_directory = std::env::temp_dir();
+    let mut child = codex_exec_command(executable, &neutral_directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| ERROR_CODEX_UNAVAILABLE.to_owned())?;
+    let wrote_prompt = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(prompt.as_bytes()).is_ok());
+    if !wrote_prompt {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ERROR_CODEX_FAILED.to_owned());
+    }
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ERROR_CODEX_FAILED.to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ERROR_CODEX_FAILED.to_owned())?;
+    let (stdout_sender, stdout_receiver) = mpsc::channel();
+    let stdout_thread =
+        thread::spawn(move || read_limited_lines(stdout, CODEX_OUTPUT_MAX_BYTES, stdout_sender));
+    let stderr_thread = thread::spawn(move || read_limited(stderr, CODEX_OUTPUT_MAX_BYTES));
+    let mut json_stream = CodexJsonStream::default();
+    loop {
+        drain_codex_events(&stdout_receiver, &mut json_stream, on_thinking);
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let stderr = stderr_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let _ = child.wait();
+                drain_codex_events(&stdout_receiver, &mut json_stream, on_thinking);
+                if stdout.exceeded_limit || stderr.exceeded_limit {
+                    return Err(ERROR_CODEX_OUTPUT_TOO_LARGE.to_owned());
+                }
+                if !status.success() {
+                    return Err(ERROR_CODEX_FAILED.to_owned());
+                }
+                let generated = json_stream
+                    .final_message
+                    .filter(|answer| !answer.trim().is_empty())
+                    .ok_or_else(|| ERROR_CODEX_EMPTY.to_owned())?;
+                let answer =
+                    extract_final_answer(&generated).ok_or_else(|| ERROR_CODEX_EMPTY.to_owned())?;
+                if answer.chars().count() > CODEX_ANSWER_MAX_CHARACTERS {
+                    return Err(ERROR_CODEX_OUTPUT_TOO_LARGE.to_owned());
+                }
+                return Ok(answer);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(ERROR_CODEX_FAILED.to_owned());
+            }
+        }
+    }
+}
+
 fn ask_file_space_ai_blocking(
     app: tauri::AppHandle,
     question: String,
@@ -1001,10 +1132,19 @@ fn ask_file_space_ai_blocking(
     };
     let executor = match load_active_ai_service_record(&database)? {
         Some(ActiveAiService::AgentCli(settings)) => {
-            validate_hermes_settings(Some(&settings))?;
-            let executable = resolve_agent_cli_executable("hermes")
-                .ok_or_else(|| ERROR_HERMES_UNAVAILABLE.to_owned())?;
-            AiExecutor::Hermes(executable)
+            validate_agent_cli_settings(Some(&settings))?;
+            let executable = resolve_agent_cli_executable(&settings.cli).ok_or_else(|| {
+                if settings.cli == "codex" {
+                    ERROR_CODEX_UNAVAILABLE.to_owned()
+                } else {
+                    ERROR_HERMES_UNAVAILABLE.to_owned()
+                }
+            })?;
+            if settings.cli == "codex" {
+                AiExecutor::Codex(executable)
+            } else {
+                AiExecutor::Hermes(executable)
+            }
         }
         Some(ActiveAiService::Local(settings)) => AiExecutor::Local(settings),
         None => return Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned()),
@@ -1047,6 +1187,21 @@ fn ask_file_space_ai_blocking(
                 };
                 run_hermes(executable, &prompt, &mut emit_thinking)?
             }
+            AiExecutor::Codex(executable) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    let _ = progress_app.emit(
+                        FILE_SPACE_AI_PROGRESS_EVENT,
+                        FileSpaceAiProgress {
+                            request_id: progress_request_id.clone(),
+                            phase: "thinking".to_owned(),
+                            thinking: thinking.to_owned(),
+                        },
+                    );
+                };
+                run_codex(executable, &prompt, &mut emit_thinking)?
+            }
             AiExecutor::Local(settings) => {
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
@@ -1068,6 +1223,7 @@ fn ask_file_space_ai_blocking(
         if answer.trim().is_empty() {
             return Err(match executor {
                 AiExecutor::Hermes(_) => ERROR_HERMES_EMPTY.to_owned(),
+                AiExecutor::Codex(_) => ERROR_CODEX_EMPTY.to_owned(),
                 AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
             });
         }
@@ -1371,18 +1527,18 @@ mod tests {
     }
 
     #[test]
-    fn real_questions_require_read_only_hermes_settings() {
+    fn real_questions_require_a_supported_read_only_agent_cli() {
         assert_eq!(
-            validate_hermes_settings(None),
+            validate_agent_cli_settings(None),
             Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned())
         );
         let unsupported = crate::agent_cli::AgentCliSettings {
-            cli: "codex".to_owned(),
+            cli: "claude".to_owned(),
             permission: "readOnly".to_owned(),
             version: None,
         };
         assert_eq!(
-            validate_hermes_settings(Some(&unsupported)),
+            validate_agent_cli_settings(Some(&unsupported)),
             Err(ERROR_SERVICE_UNSUPPORTED.to_owned())
         );
         let write_access = crate::agent_cli::AgentCliSettings {
@@ -1391,7 +1547,7 @@ mod tests {
             version: None,
         };
         assert_eq!(
-            validate_hermes_settings(Some(&write_access)),
+            validate_agent_cli_settings(Some(&write_access)),
             Err(ERROR_READ_ONLY_REQUIRED.to_owned())
         );
         let read_only = crate::agent_cli::AgentCliSettings {
@@ -1399,7 +1555,48 @@ mod tests {
             permission: "readOnly".to_owned(),
             version: None,
         };
-        assert_eq!(validate_hermes_settings(Some(&read_only)), Ok(()));
+        assert_eq!(validate_agent_cli_settings(Some(&read_only)), Ok(()));
+
+        let codex = crate::agent_cli::AgentCliSettings {
+            cli: "codex".to_owned(),
+            permission: "readOnly".to_owned(),
+            version: None,
+        };
+        assert_eq!(validate_agent_cli_settings(Some(&codex)), Ok(()));
+    }
+
+    #[test]
+    fn codex_jsonl_stream_collects_reasoning_and_the_final_message() {
+        let mut stream = CodexJsonStream::default();
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Compare the evidence."}}"#
+            ),
+            Some("Compare the evidence.")
+        );
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"item.completed","item":{"id":"item_1","type":"reasoning","text":"Keep only supported claims."}}"#
+            ),
+            Some("Compare the evidence.\nKeep only supported claims.")
+        );
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"item.completed","item":{"id":"item_2","type":"agent_message","text":"<LUMETRACE_ANSWER>Answer [S1]</LUMETRACE_ANSWER>"}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            stream.final_message.as_deref(),
+            Some("<LUMETRACE_ANSWER>Answer [S1]</LUMETRACE_ANSWER>")
+        );
+        assert_eq!(
+            stream
+                .final_message
+                .as_deref()
+                .and_then(extract_final_answer),
+            Some("Answer [S1]".to_owned())
+        );
     }
 
     #[test]
