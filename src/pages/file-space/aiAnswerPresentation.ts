@@ -68,3 +68,11 @@ export function aiAnswerDurationSeconds(
     : updatedAt - createdAt;
   return Math.max(1, Math.ceil(Math.max(0, elapsedMs) / 1_000));
 }
+
+export function aiPendingElapsedSeconds(
+  startedAt: number | null | undefined,
+  now = Date.now(),
+) {
+  if (typeof startedAt !== "number" || !Number.isFinite(startedAt)) return 0;
+  return Math.max(0, Math.floor((now - startedAt) / 1_000));
+}

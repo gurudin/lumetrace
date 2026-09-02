@@ -21,6 +21,7 @@ import type { AgentCliKey } from "../../shared/brand/AgentCliLogo";
 import { usePresence } from "../../shared/ui/usePresence";
 import {
   aiAnswerDurationSeconds,
+  aiPendingElapsedSeconds,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
@@ -164,19 +165,27 @@ function AiSourcesDisclosure({ turnId, sources, onOpenSource }: AiSourcesDisclos
   );
 }
 
-function AiPendingAnswer({ thinking }: { thinking: string }) {
+function AiPendingAnswer({
+  thinking,
+  startedAt,
+}: {
+  thinking: string;
+  startedAt: number | null;
+}) {
   const { t } = useTranslation();
-  const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [elapsedSeconds, setElapsedSeconds] = useState(() => (
+    aiPendingElapsedSeconds(startedAt)
+  ));
   const thinkingRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    const startedAt = Date.now();
     const updateElapsedSeconds = () => {
-      setElapsedSeconds(Math.floor((Date.now() - startedAt) / 1_000));
+      setElapsedSeconds(aiPendingElapsedSeconds(startedAt));
     };
+    updateElapsedSeconds();
     const interval = window.setInterval(updateElapsedSeconds, 250);
     return () => window.clearInterval(interval);
-  }, []);
+  }, [startedAt]);
 
   useEffect(() => {
     const scrollOwner = thinkingRef.current;
@@ -239,6 +248,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingErrorCode, setPendingErrorCode] = useState<string | null>(null);
   const [pendingThinking, setPendingThinking] = useState("");
+  const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const panelCloseRef = useRef<HTMLButtonElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
@@ -391,6 +401,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     const requestId = crypto.randomUUID();
     requestInFlightRef.current = true;
     activeRequestIdRef.current = requestId;
+    setRequestStartedAt(Date.now());
     shouldFollowConversationRef.current = true;
     if (composerRef.current) composerRef.current.value = "";
     setQuestion("");
@@ -437,6 +448,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       requestInFlightRef.current = false;
       activeRequestIdRef.current = null;
       setPendingThinking("");
+      setRequestStartedAt(null);
       setRequestState("idle");
     }
   }, [canAsk, question, serviceSettings]);
@@ -452,18 +464,21 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       <div className="file-space-ai-menu">
         <button
           ref={triggerRef}
-          className={`file-space-toolbar-icon-button${panelOpen ? " is-active" : ""}`}
+          className={`file-space-toolbar-icon-button${panelOpen ? " is-active" : ""}${requestState === "asking" ? " is-ai-running" : ""}`}
           type="button"
           title={t("fileSpace.ai.openWorkspace")}
           aria-label={t("fileSpace.ai.openWorkspace")}
           aria-expanded={panelOpen}
           aria-pressed={panelOpen}
+          aria-busy={requestState === "asking"}
           onClick={() => setPanelOpen((open) => {
             if (!open) shouldFollowConversationRef.current = true;
             return !open;
           })}
         >
-          <Sparkles size={18} />
+          {requestState === "asking"
+            ? <LoaderCircle className="is-spinning" size={18} />
+            : <Sparkles size={18} />}
         </button>
       </div>
 
@@ -527,7 +542,10 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                       <p>{turn.question}</p>
                     </section>
                     {turn.status === "pending" ? (
-                      <AiPendingAnswer thinking={pendingThinking} />
+                      <AiPendingAnswer
+                        thinking={pendingThinking}
+                        startedAt={requestStartedAt ?? turn.updatedAt}
+                      />
                     ) : turn.status === "failed" && isAiNoSourcesError(turn.errorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
                     ) : turn.status === "failed" ? (
@@ -582,7 +600,10 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                       <p>{pendingQuestion}</p>
                     </section>
                     {requestState === "asking" ? (
-                      <AiPendingAnswer thinking={pendingThinking} />
+                      <AiPendingAnswer
+                        thinking={pendingThinking}
+                        startedAt={requestStartedAt}
+                      />
                     ) : isAiNoSourcesError(pendingErrorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
                     ) : (

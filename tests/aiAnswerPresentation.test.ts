@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   aiAnswerDurationSeconds,
+  aiPendingElapsedSeconds,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
@@ -44,6 +45,13 @@ test("rounds answer processing time up to whole seconds", () => {
 
 test("falls back to turn timestamps for legacy answers", () => {
   assert.equal(aiAnswerDurationSeconds(null, 1_000, 3_400), 3);
+});
+
+test("keeps pending answer time anchored when the panel is reopened", () => {
+  const startedAt = 1_000;
+  assert.equal(aiPendingElapsedSeconds(startedAt, 1_900), 0);
+  assert.equal(aiPendingElapsedSeconds(startedAt, 13_400), 12);
+  assert.equal(aiPendingElapsedSeconds(null, 13_400), 0);
 });
 
 test("treats no relevant sources as a non-retryable empty answer state", () => {

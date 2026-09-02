@@ -6339,6 +6339,14 @@ body.is-file-space-marquee-selecting {
   position: relative;
 }
 
+.file-space-ai-menu > .file-space-toolbar-icon-button.is-ai-running {
+  color: var(--highlight);
+}
+
+.file-space-ai-menu > .file-space-toolbar-icon-button > .is-spinning {
+  animation: file-space-spin 800ms linear infinite;
+}
+
 .file-space-ai-popover {
   position: absolute;
   z-index: 440;
@@ -7460,6 +7468,10 @@ button.file-space-ai-header-service:hover {
   .file-space-ai-sources-toggle > svg:last-child,
   .file-space-file-card > button:first-child {
     transition: none;
+  }
+
+  .file-space-ai-menu > .file-space-toolbar-icon-button > .is-spinning {
+    animation: none;
   }
 
 }
