@@ -214,6 +214,36 @@ CREATE TABLE IF NOT EXISTS file_space_search_chunks (
   UNIQUE(file_id, ordinal)
 );
 
+-- AI retrieval searches passages, not whole files. Keep this index independent
+-- from file_space_search_fts so a natural-language question can retrieve the
+-- exact evidence chunks that will be sent to the answer model. The trigram
+-- tokenizer supports fast substring recall for CJK text as well as ordinary
+-- Latin text without scanning file bodies.
+CREATE VIRTUAL TABLE IF NOT EXISTS file_space_search_chunks_fts USING fts5(
+  chunk_id UNINDEXED,
+  file_id UNINDEXED,
+  body_text,
+  tokenize='trigram'
+);
+
+CREATE TRIGGER IF NOT EXISTS file_space_search_chunks_fts_ai
+AFTER INSERT ON file_space_search_chunks BEGIN
+  INSERT INTO file_space_search_chunks_fts(rowid, chunk_id, file_id, body_text)
+  VALUES (new.rowid, new.id, new.file_id, new.body_text);
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_space_search_chunks_fts_ad
+AFTER DELETE ON file_space_search_chunks BEGIN
+  DELETE FROM file_space_search_chunks_fts WHERE rowid = old.rowid;
+END;
+
+CREATE TRIGGER IF NOT EXISTS file_space_search_chunks_fts_au
+AFTER UPDATE ON file_space_search_chunks BEGIN
+  DELETE FROM file_space_search_chunks_fts WHERE rowid = old.rowid;
+  INSERT INTO file_space_search_chunks_fts(rowid, chunk_id, file_id, body_text)
+  VALUES (new.rowid, new.id, new.file_id, new.body_text);
+END;
+
 CREATE TABLE IF NOT EXISTS file_space_semantic_embeddings (
   chunk_id    TEXT PRIMARY KEY REFERENCES file_space_search_chunks(id) ON DELETE CASCADE,
   model_id    TEXT NOT NULL,

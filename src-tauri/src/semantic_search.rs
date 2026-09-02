@@ -47,9 +47,15 @@ const SEMANTIC_ANN_SEARCH_LIMIT: usize = 256;
 const SEMANTIC_ANN_CONNECTIVITY: usize = 16;
 const SEMANTIC_ANN_EXPANSION_ADD: usize = 64;
 const SEMANTIC_ANN_EXPANSION_SEARCH: usize = 96;
-const AI_CONTEXT_CANDIDATE_FILE_LIMIT: usize = 40;
-const AI_CONTEXT_STORED_CHUNK_LIMIT: usize = 64;
-const AI_CONTEXT_LEXICAL_CHUNK_LIMIT: usize = 8;
+const AI_DENSE_SEARCH_LIMIT: usize = 48;
+const AI_LEXICAL_SEARCH_LIMIT: usize = 48;
+const AI_FUSED_CANDIDATE_LIMIT: usize = 20;
+const AI_CONTEXT_RESULT_LIMIT: usize = 6;
+const AI_CONTEXT_PER_FILE_LIMIT: usize = 3;
+const AI_RRF_K: f32 = 60.0;
+const AI_DENSE_SCORE_WINDOW: f32 = 0.035;
+const AI_CHUNK_FTS_BACKFILL_BATCH_SIZE: usize = 256;
+const AI_CHUNK_FTS_BACKFILL_CURSOR_KEY: &str = "search_chunks_fts.backfill_cursor.v1";
 const SEMANTIC_INTRA_THREADS: usize = 1;
 const SEMANTIC_COOLDOWN_MULTIPLIER: u32 = 2;
 const SEMANTIC_MIN_COOLDOWN: Duration = Duration::from_millis(80);
@@ -1566,6 +1572,80 @@ fn emit_status(app: &tauri::AppHandle, database: &Database, runtime: &SemanticSe
     let _ = app.emit(SEMANTIC_EVENT, status_record(database, runtime));
 }
 
+fn backfill_ai_chunk_fts_batch(database: &Database) -> Result<bool, String> {
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let cursor = connection
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [AI_CHUNK_FTS_BACKFILL_CURSOR_KEY],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to inspect AI passage search migration: {error}"))?
+        .and_then(|value| value.parse::<i64>().ok())
+        .unwrap_or(0);
+    let rows = {
+        let mut statement = connection
+            .prepare(
+                "SELECT rowid, id, file_id, body_text
+                 FROM file_space_search_chunks
+                 WHERE rowid > ?1
+                 ORDER BY rowid
+                 LIMIT ?2",
+            )
+            .map_err(|error| format!("Unable to prepare AI passage search migration: {error}"))?;
+        statement
+            .query_map(
+                params![cursor, AI_CHUNK_FTS_BACKFILL_BATCH_SIZE as i64],
+                |row| {
+                    Ok((
+                        row.get::<_, i64>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                        row.get::<_, String>(3)?,
+                    ))
+                },
+            )
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+            .map_err(|error| format!("Unable to read AI passage search migration: {error}"))?
+    };
+    let Some(last_rowid) = rows.last().map(|row| row.0) else {
+        return Ok(false);
+    };
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin AI passage search migration: {error}"))?;
+    for (rowid, chunk_id, file_id, body_text) in rows {
+        transaction
+            .execute(
+                "INSERT OR REPLACE INTO file_space_search_chunks_fts
+                   (rowid, chunk_id, file_id, body_text)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![rowid, chunk_id, file_id, body_text],
+            )
+            .map_err(|error| format!("Unable to index an AI passage: {error}"))?;
+    }
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![
+                AI_CHUNK_FTS_BACKFILL_CURSOR_KEY,
+                last_rowid.to_string(),
+                now_millis()
+            ],
+        )
+        .map_err(|error| format!("Unable to save AI passage search migration: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to finish AI passage search migration: {error}"))?;
+    Ok(true)
+}
+
 pub fn start_semantic_indexer(app: tauri::AppHandle) -> Result<(), String> {
     std::thread::Builder::new()
         .name("lumetrace-semantic-indexer".to_owned())
@@ -1579,12 +1659,6 @@ pub fn start_semantic_indexer(app: tauri::AppHandle) -> Result<(), String> {
                 let background = app.state::<FileSpaceBackgroundRuntime>();
                 if background.is_paused() {
                     std::thread::sleep(Duration::from_millis(250));
-                    continue;
-                }
-                let runtime = app.state::<SemanticSearchRuntime>();
-                if !runtime.is_installed() || runtime.download_running.load(AtomicOrdering::Relaxed)
-                {
-                    std::thread::sleep(SEMANTIC_IDLE_PAUSE);
                     continue;
                 }
                 let database = app.state::<Database>();
@@ -1601,6 +1675,27 @@ pub fn start_semantic_indexer(app: tauri::AppHandle) -> Result<(), String> {
                         eprintln!("Unable to recover semantic indexing: {error}");
                     }
                     active_workspace_id = Some(workspace_id.clone());
+                }
+                let lexical_work_started_at = Instant::now();
+                match lock_file_space_operations()
+                    .and_then(|_operation| backfill_ai_chunk_fts_batch(database.inner()))
+                {
+                    Ok(true) => {
+                        std::thread::sleep(semantic_index_cooldown(
+                            lexical_work_started_at.elapsed(),
+                        ));
+                        continue;
+                    }
+                    Ok(false) => {}
+                    Err(error) => {
+                        eprintln!("Unable to update the AI passage search index: {error}");
+                    }
+                }
+                let runtime = app.state::<SemanticSearchRuntime>();
+                if !runtime.is_installed() || runtime.download_running.load(AtomicOrdering::Relaxed)
+                {
+                    std::thread::sleep(SEMANTIC_IDLE_PAUSE);
+                    continue;
                 }
                 if let Err(error) = ensure_model_loaded(runtime.inner()) {
                     runtime.set_progress("failed", model_total_bytes(), None, Some(error.clone()));
@@ -1774,116 +1869,6 @@ pub fn semantic_file_ranks(
     Ok(ranked)
 }
 
-fn semantic_ann_candidate_rows(
-    database: &Database,
-    ann_keys: &[u64],
-) -> Result<Vec<(String, Vec<u8>, i64)>, String> {
-    if ann_keys.is_empty() {
-        return Ok(Vec::new());
-    }
-    let candidate_values = ann_keys
-        .iter()
-        .enumerate()
-        .map(|(rank, _)| format!("(?{}, {rank})", rank + 1))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let model_parameter = ann_keys.len() + 1;
-    let sql = format!(
-        "WITH candidates(ann_key, candidate_rank) AS (VALUES {candidate_values})
-         SELECT chunks.file_id, embeddings.vector, embeddings.dimensions
-         FROM candidates
-         JOIN file_space_semantic_ann_keys ann ON ann.ann_key = candidates.ann_key
-         JOIN file_space_semantic_embeddings embeddings ON embeddings.chunk_id = ann.chunk_id
-         JOIN file_space_search_chunks chunks ON chunks.id = ann.chunk_id
-         JOIN file_space_search_documents documents
-           ON documents.file_id = chunks.file_id
-          AND documents.indexed_at = chunks.document_indexed_at
-          AND documents.extraction_status = 'extracted'
-         JOIN files ON files.id = chunks.file_id
-         WHERE embeddings.model_id = ?{model_parameter}
-           AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
-         ORDER BY candidates.candidate_rank"
-    );
-    let mut parameters = ann_keys
-        .iter()
-        .map(|key| Value::Integer(*key as i64))
-        .collect::<Vec<_>>();
-    parameters.push(Value::Text(SEMANTIC_MODEL_ID.to_owned()));
-    let connection = database
-        .0
-        .lock()
-        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-    let mut statement = connection
-        .prepare(&sql)
-        .map_err(|error| format!("Unable to prepare full-space semantic recall: {error}"))?;
-    statement
-        .query_map(params_from_iter(parameters), |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
-        })
-        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .map_err(|error| format!("Unable to read full-space semantic recall: {error}"))
-}
-
-fn semantic_file_ranks_for_vector(
-    database: &Database,
-    runtime: &SemanticSearchRuntime,
-    query_vector: &[f32],
-) -> Result<Vec<(String, f32)>, String> {
-    let location = database.location()?;
-    let (data_revision, _) = semantic_ann_revisions(database)?;
-    let Some(index) = runtime.ann_snapshot_for(&location.workspace_id, data_revision)? else {
-        return Ok(Vec::new());
-    };
-    if index.size() == 0 {
-        return Ok(Vec::new());
-    }
-    let matches = index
-        .search(query_vector, SEMANTIC_ANN_SEARCH_LIMIT.min(index.size()))
-        .map_err(|error| format!("Unable to search the semantic ANN index: {error}"))?;
-    let rows = semantic_ann_candidate_rows(database, &matches.keys)?;
-    let mut file_scores = HashMap::<String, f32>::new();
-    for (file_id, blob, dimensions) in rows {
-        if dimensions != SEMANTIC_MODEL_DIMENSIONS as i64 {
-            continue;
-        }
-        let Some(vector) = vector_from_blob(&blob, SEMANTIC_MODEL_DIMENSIONS) else {
-            continue;
-        };
-        let similarity = cosine_similarity(query_vector, &vector);
-        if !similarity.is_finite() || similarity < SEMANTIC_MIN_SIMILARITY {
-            continue;
-        }
-        file_scores
-            .entry(file_id)
-            .and_modify(|score| *score = score.max(similarity))
-            .or_insert(similarity);
-    }
-    let mut ranked = file_scores.into_iter().collect::<Vec<_>>();
-    ranked.sort_by(|left, right| {
-        right
-            .1
-            .partial_cmp(&left.1)
-            .unwrap_or(Ordering::Equal)
-            .then_with(|| left.0.cmp(&right.0))
-    });
-    ranked.truncate(SEMANTIC_RESULT_LIMIT);
-    Ok(ranked)
-}
-
-pub(crate) fn semantic_file_ranks_global(
-    database: &Database,
-    runtime: &SemanticSearchRuntime,
-    query: &str,
-) -> Result<Vec<(String, f32)>, String> {
-    if !runtime.is_installed() || query.trim().is_empty() {
-        return Ok(Vec::new());
-    }
-    let Some(query_vector) = runtime.embed(&format!("query: {}", query.trim()))? else {
-        return Ok(Vec::new());
-    };
-    semantic_file_ranks_for_vector(database, runtime, &query_vector)
-}
-
 #[derive(Debug, Clone, PartialEq)]
 pub struct HybridSearchMatch {
     pub file_id: String,
@@ -1934,9 +1919,6 @@ pub fn merge_hybrid_matches(
         .collect()
 }
 
-const AI_CONTEXT_RESULT_LIMIT: usize = 8;
-const AI_CONTEXT_PER_FILE_LIMIT: usize = 3;
-
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) struct AiContextChunk {
     pub file_id: String,
@@ -1949,212 +1931,223 @@ pub(crate) struct AiContextChunk {
     pub semantic_similarity: Option<f32>,
 }
 
+#[derive(Debug, Clone)]
+struct StoredAiChunk {
+    chunk_id: String,
+    file_id: String,
+    file_name: String,
+    relative_path: String,
+    version_id: Option<String>,
+    version_number: Option<i64>,
+    ordinal: i64,
+    body_text: String,
+    vector_blob: Option<Vec<u8>>,
+    dimensions: Option<i64>,
+}
+
 #[derive(Debug)]
 struct RankedAiContextChunk {
     chunk: AiContextChunk,
     score: f32,
-    candidate_rank: usize,
+    dense_rank: Option<usize>,
+    lexical_rank: Option<usize>,
     ordinal: i64,
 }
 
-type StoredAiChunk = (
-    String,
-    String,
-    String,
-    Option<String>,
-    Option<i64>,
-    i64,
-    String,
-    Option<Vec<u8>>,
-    Option<i64>,
-);
-
-fn lexical_terms(query: &str) -> Vec<String> {
-    query
-        .to_lowercase()
-        .split(|character: char| character.is_whitespace() || character.is_ascii_punctuation())
-        .filter(|term| term.chars().count() >= 2)
-        .map(str::to_owned)
-        .collect()
+fn stored_ai_chunk_from_row(
+    row: &rusqlite::Row<'_>,
+    offset: usize,
+) -> rusqlite::Result<StoredAiChunk> {
+    Ok(StoredAiChunk {
+        chunk_id: row.get(offset)?,
+        file_id: row.get(offset + 1)?,
+        file_name: row.get(offset + 2)?,
+        relative_path: row.get(offset + 3)?,
+        version_id: row.get(offset + 4)?,
+        version_number: row.get(offset + 5)?,
+        ordinal: row.get(offset + 6)?,
+        body_text: row.get(offset + 7)?,
+        vector_blob: row.get(offset + 8)?,
+        dimensions: row.get(offset + 9)?,
+    })
 }
 
-fn lexical_relevance(value: &str, query: &str, terms: &[String]) -> f32 {
-    let value = value.to_lowercase();
-    let query = query.trim().to_lowercase();
-    if query.is_empty() {
-        return 0.0;
-    }
-    let exact = value.contains(&query) as u8 as f32;
-    if terms.is_empty() {
-        return exact;
-    }
-    let matches = terms
-        .iter()
-        .filter(|term| value.contains(term.as_str()))
-        .count();
-    exact.max(matches as f32 / terms.len() as f32)
-}
-
-fn stored_ai_chunks_for_file(
+fn semantic_ai_chunk_rows(
     database: &Database,
-    file_id: &str,
-) -> Result<Vec<StoredAiChunk>, String> {
-    let connection = database
-        .0
-        .lock()
-        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-    let mut statement = connection
-        .prepare(
-            "SELECT chunks.id, documents.file_name, files.storage_path,
-                    chunks.version_id, versions.version_number, chunks.ordinal,
-                    chunks.body_text, embeddings.vector, embeddings.dimensions
-             FROM file_space_search_chunks chunks
-             JOIN file_space_search_documents documents ON documents.file_id = chunks.file_id
-             JOIN files ON files.id = chunks.file_id
-             LEFT JOIN file_space_artifact_versions versions ON versions.id = chunks.version_id
-             LEFT JOIN file_space_semantic_embeddings embeddings
-               ON embeddings.chunk_id = chunks.id AND embeddings.model_id = ?2
-             WHERE chunks.file_id = ?1
-               AND chunks.document_indexed_at = documents.indexed_at
-               AND documents.extraction_status = 'extracted'
-               AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
-             ORDER BY chunks.ordinal
-             LIMIT ?3",
-        )
-        .map_err(|error| format!("Unable to prepare AI context retrieval: {error}"))?;
-    statement
-        .query_map(
-            params![
-                file_id,
-                SEMANTIC_MODEL_ID,
-                AI_CONTEXT_STORED_CHUNK_LIMIT as i64
-            ],
-            |row| {
-                Ok((
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    row.get(4)?,
-                    row.get(5)?,
-                    row.get(6)?,
-                    row.get(7)?,
-                    row.get(8)?,
-                ))
-            },
-        )
-        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .map_err(|error| format!("Unable to read AI context: {error}"))
-}
-
-fn lexical_needles(queries: &[String]) -> Vec<String> {
-    let mut needles = Vec::new();
-    let mut seen = HashSet::new();
-    for query in queries {
-        let query = query.trim().to_lowercase();
-        if query.chars().count() >= 2 && seen.insert(query.clone()) {
-            needles.push(query.clone());
-        }
-        for term in lexical_terms(&query) {
-            if seen.insert(term.clone()) {
-                needles.push(term);
-            }
-        }
-        if needles.len() >= 16 {
-            break;
-        }
-    }
-    needles.truncate(16);
-    needles
-}
-
-fn lexical_ai_chunks_for_file(
-    database: &Database,
-    file_id: &str,
-    needles: &[String],
-) -> Result<Vec<StoredAiChunk>, String> {
-    if needles.is_empty() {
+    ann_keys: &[u64],
+) -> Result<Vec<(usize, StoredAiChunk)>, String> {
+    if ann_keys.is_empty() {
         return Ok(Vec::new());
     }
-    let conditions = needles
+    let candidate_values = ann_keys
         .iter()
         .enumerate()
-        .map(|(index, _)| format!("instr(lower(chunks.body_text), ?{}) > 0", index + 3))
-        .collect::<Vec<_>>();
-    let score = conditions
-        .iter()
-        .enumerate()
-        .map(|(index, condition)| {
-            format!(
-                "CASE WHEN {condition} THEN {} ELSE 0 END",
-                needles.len() - index
-            )
-        })
+        .map(|(rank, _)| format!("(?{}, {rank})", rank + 1))
         .collect::<Vec<_>>()
-        .join(" + ");
-    let limit_parameter = needles.len() + 3;
+        .join(", ");
+    let model_parameter = ann_keys.len() + 1;
     let sql = format!(
-        "SELECT chunks.id, documents.file_name, files.storage_path,
+        "WITH candidates(ann_key, candidate_rank) AS (VALUES {candidate_values})
+         SELECT candidates.candidate_rank,
+                chunks.id, chunks.file_id, documents.file_name, files.storage_path,
                 chunks.version_id, versions.version_number, chunks.ordinal,
                 chunks.body_text, embeddings.vector, embeddings.dimensions
-         FROM file_space_search_chunks chunks
-         JOIN file_space_search_documents documents ON documents.file_id = chunks.file_id
+         FROM candidates
+         JOIN file_space_semantic_ann_keys ann ON ann.ann_key = candidates.ann_key
+         JOIN file_space_semantic_embeddings embeddings ON embeddings.chunk_id = ann.chunk_id
+         JOIN file_space_search_chunks chunks ON chunks.id = ann.chunk_id
+         JOIN file_space_search_documents documents
+           ON documents.file_id = chunks.file_id
+          AND documents.indexed_at = chunks.document_indexed_at
+          AND documents.extraction_status = 'extracted'
          JOIN files ON files.id = chunks.file_id
          LEFT JOIN file_space_artifact_versions versions ON versions.id = chunks.version_id
-         LEFT JOIN file_space_semantic_embeddings embeddings
-           ON embeddings.chunk_id = chunks.id AND embeddings.model_id = ?2
-         WHERE chunks.file_id = ?1
-           AND chunks.document_indexed_at = documents.indexed_at
-           AND documents.extraction_status = 'extracted'
+         WHERE embeddings.model_id = ?{model_parameter}
            AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
-           AND ({})
-         ORDER BY ({score}) DESC, chunks.ordinal
-         LIMIT ?{limit_parameter}",
-        conditions.join(" OR ")
+         ORDER BY candidates.candidate_rank"
     );
-    let mut parameters = Vec::with_capacity(needles.len() + 3);
-    parameters.push(Value::Text(file_id.to_owned()));
+    let mut parameters = ann_keys
+        .iter()
+        .map(|key| Value::Integer(*key as i64))
+        .collect::<Vec<_>>();
     parameters.push(Value::Text(SEMANTIC_MODEL_ID.to_owned()));
-    parameters.extend(needles.iter().cloned().map(Value::Text));
-    parameters.push(Value::Integer(AI_CONTEXT_LEXICAL_CHUNK_LIMIT as i64));
     let connection = database
         .0
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
     let mut statement = connection
         .prepare(&sql)
-        .map_err(|error| format!("Unable to prepare lexical AI context retrieval: {error}"))?;
+        .map_err(|error| format!("Unable to prepare AI semantic passage recall: {error}"))?;
     statement
         .query_map(params_from_iter(parameters), |row| {
             Ok((
-                row.get(0)?,
-                row.get(1)?,
-                row.get(2)?,
-                row.get(3)?,
-                row.get(4)?,
-                row.get(5)?,
-                row.get(6)?,
-                row.get(7)?,
-                row.get(8)?,
+                row.get::<_, i64>(0)?.max(0) as usize,
+                stored_ai_chunk_from_row(row, 1)?,
             ))
         })
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-        .map_err(|error| format!("Unable to read lexical AI context: {error}"))
+        .map_err(|error| format!("Unable to read AI semantic passages: {error}"))
 }
 
-fn lexical_document_excerpt_for_file(
+fn dense_ai_context_chunks(
     database: &Database,
-    file_id: &str,
-    needles: &[String],
-) -> Result<Option<StoredAiChunk>, String> {
-    if needles.is_empty() {
-        return Ok(None);
+    runtime: &SemanticSearchRuntime,
+    query: &str,
+) -> Result<Vec<(StoredAiChunk, f32)>, String> {
+    if !runtime.is_installed() || query.trim().is_empty() {
+        return Ok(Vec::new());
+    }
+    let Some(query_vector) = runtime.embed(&format!("query: {}", query.trim()))? else {
+        return Ok(Vec::new());
+    };
+    dense_ai_context_chunks_for_vector(database, runtime, &query_vector)
+}
+
+fn dense_ai_context_chunks_for_vector(
+    database: &Database,
+    runtime: &SemanticSearchRuntime,
+    query_vector: &[f32],
+) -> Result<Vec<(StoredAiChunk, f32)>, String> {
+    let location = database.location()?;
+    let (data_revision, _) = semantic_ann_revisions(database)?;
+    let Some(index) = runtime.ann_snapshot_for(&location.workspace_id, data_revision)? else {
+        return Ok(Vec::new());
+    };
+    if index.size() == 0 {
+        return Ok(Vec::new());
+    }
+    let matches = index
+        .search(&query_vector, SEMANTIC_ANN_SEARCH_LIMIT.min(index.size()))
+        .map_err(|error| format!("Unable to search AI semantic passages: {error}"))?;
+    let rows = semantic_ai_chunk_rows(database, &matches.keys)?;
+    let mut ranked = rows
+        .into_iter()
+        .filter_map(|(ann_rank, chunk)| {
+            let similarity = match (&chunk.vector_blob, chunk.dimensions) {
+                (Some(blob), Some(dimensions))
+                    if dimensions == SEMANTIC_MODEL_DIMENSIONS as i64 =>
+                {
+                    vector_from_blob(blob, SEMANTIC_MODEL_DIMENSIONS)
+                        .map(|vector| cosine_similarity(&query_vector, &vector))
+                        .filter(|similarity| similarity.is_finite())
+                }
+                _ => None,
+            }?;
+            (similarity >= SEMANTIC_MIN_SIMILARITY).then_some((chunk, similarity, ann_rank))
+        })
+        .collect::<Vec<_>>();
+    ranked.sort_by(|left, right| {
+        right
+            .1
+            .partial_cmp(&left.1)
+            .unwrap_or(Ordering::Equal)
+            .then_with(|| left.2.cmp(&right.2))
+            .then_with(|| left.0.chunk_id.cmp(&right.0.chunk_id))
+    });
+    if let Some(best_similarity) = ranked.first().map(|result| result.1) {
+        let relative_cutoff =
+            (best_similarity - AI_DENSE_SCORE_WINDOW).max(SEMANTIC_MIN_SIMILARITY);
+        ranked.retain(|result| result.1 >= relative_cutoff);
+    }
+    ranked.truncate(AI_DENSE_SEARCH_LIMIT);
+    Ok(ranked
+        .into_iter()
+        .map(|(chunk, similarity, _)| (chunk, similarity))
+        .collect())
+}
+
+fn lexical_ai_query_terms(queries: &[String]) -> Vec<String> {
+    let mut terms = Vec::new();
+    let mut seen = HashSet::new();
+    for query in queries {
+        for token in query
+            .to_lowercase()
+            .split(|character: char| !character.is_alphanumeric())
+            .filter(|token| !token.is_empty())
+        {
+            let characters = token.chars().collect::<Vec<_>>();
+            if characters.len() < 3 {
+                continue;
+            }
+            if characters.iter().all(|character| character.is_ascii()) {
+                if seen.insert(token.to_owned()) {
+                    terms.push(token.to_owned());
+                }
+            } else {
+                for window in characters.windows(3) {
+                    let term = window.iter().collect::<String>();
+                    if seen.insert(term.clone()) {
+                        terms.push(term);
+                    }
+                    if terms.len() >= 48 {
+                        break;
+                    }
+                }
+            }
+            if terms.len() >= 48 {
+                break;
+            }
+        }
+        if terms.len() >= 48 {
+            break;
+        }
+    }
+    terms
+}
+
+fn lexical_ai_context_chunks(
+    database: &Database,
+    queries: &[String],
+) -> Result<Vec<StoredAiChunk>, String> {
+    let terms = lexical_ai_query_terms(queries);
+    if terms.is_empty() {
+        return Ok(Vec::new());
     }
     let expression = format!(
         "body_text : ({})",
-        needles
+        terms
             .iter()
-            .map(|needle| format!("\"{}\"*", needle.replace('"', "\"\"")))
+            .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
             .collect::<Vec<_>>()
             .join(" OR ")
     );
@@ -2162,103 +2155,57 @@ fn lexical_document_excerpt_for_file(
         .0
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-    connection
-        .query_row(
-            "SELECT documents.file_name, files.storage_path,
-                    artifacts.current_version_id, versions.version_number,
-                    snippet(file_space_search_fts, 1, '', '', ' … ', 64)
-             FROM file_space_search_fts
+    let mut statement = connection
+        .prepare(
+            "SELECT chunks.id, chunks.file_id, documents.file_name, files.storage_path,
+                    chunks.version_id, versions.version_number, chunks.ordinal,
+                    chunks.body_text, embeddings.vector, embeddings.dimensions
+             FROM file_space_search_chunks_fts
+             JOIN file_space_search_chunks chunks
+               ON chunks.rowid = file_space_search_chunks_fts.rowid
+              AND chunks.id = file_space_search_chunks_fts.chunk_id
              JOIN file_space_search_documents documents
-               ON documents.rowid = file_space_search_fts.rowid
-             JOIN files ON files.id = documents.file_id
-             LEFT JOIN file_space_artifacts artifacts ON artifacts.file_id = documents.file_id
-             LEFT JOIN file_space_artifact_versions versions
-               ON versions.id = artifacts.current_version_id
-             WHERE documents.file_id = ?1
-               AND documents.extraction_status = 'extracted'
+               ON documents.file_id = chunks.file_id
+              AND documents.indexed_at = chunks.document_indexed_at
+              AND documents.extraction_status = 'extracted'
+             JOIN files ON files.id = chunks.file_id
+             LEFT JOIN file_space_artifact_versions versions ON versions.id = chunks.version_id
+             LEFT JOIN file_space_semantic_embeddings embeddings
+               ON embeddings.chunk_id = chunks.id AND embeddings.model_id = ?2
+             WHERE file_space_search_chunks_fts MATCH ?1
                AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
-               AND file_space_search_fts MATCH ?2",
-            params![file_id, expression],
-            |row| {
-                Ok((
-                    format!("{file_id}:fts-snippet"),
-                    row.get(0)?,
-                    row.get(1)?,
-                    row.get(2)?,
-                    row.get(3)?,
-                    -1,
-                    row.get(4)?,
-                    None,
-                    None,
-                ))
-            },
+             ORDER BY bm25(file_space_search_chunks_fts)
+             LIMIT ?3",
         )
-        .optional()
-        .map_err(|error| format!("Unable to read lexical document excerpt: {error}"))
+        .map_err(|error| format!("Unable to prepare AI lexical passage recall: {error}"))?;
+    statement
+        .query_map(
+            params![
+                expression,
+                SEMANTIC_MODEL_ID,
+                AI_LEXICAL_SEARCH_LIMIT as i64
+            ],
+            |row| stored_ai_chunk_from_row(row, 0),
+        )
+        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        .map_err(|error| format!("Unable to read AI lexical passages: {error}"))
 }
 
-fn fallback_ai_chunks_for_file(
-    database: &Database,
-    file_id: &str,
-) -> Result<Vec<StoredAiChunk>, String> {
-    let connection = database
-        .0
-        .lock()
-        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-    let document = connection
-        .query_row(
-            "SELECT documents.file_name, files.storage_path,
-                    artifacts.current_version_id, versions.version_number,
-                    documents.body_text
-             FROM file_space_search_documents documents
-             JOIN files ON files.id = documents.file_id
-             LEFT JOIN file_space_artifacts artifacts ON artifacts.file_id = documents.file_id
-             LEFT JOIN file_space_artifact_versions versions
-               ON versions.id = artifacts.current_version_id
-             WHERE documents.file_id = ?1
-               AND documents.extraction_status = 'extracted'
-               AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL",
-            [file_id],
-            |row| {
-                Ok((
-                    row.get::<_, String>(0)?,
-                    row.get::<_, String>(1)?,
-                    row.get::<_, Option<String>>(2)?,
-                    row.get::<_, Option<i64>>(3)?,
-                    row.get::<_, String>(4)?,
-                ))
-            },
-        )
-        .optional()
-        .map_err(|error| format!("Unable to read AI fallback context: {error}"))?;
-    let Some((file_name, relative_path, version_id, version_number, body_text)) = document else {
-        return Ok(Vec::new());
-    };
-    let bounded_body = body_text
-        .chars()
-        .take(AI_CONTEXT_STORED_CHUNK_LIMIT * (SEMANTIC_CHUNK_CHARACTERS - SEMANTIC_CHUNK_OVERLAP))
-        .collect::<String>();
-    let chunks = split_search_text(bounded_body.trim());
-    if chunks.is_empty() {
-        return Ok(Vec::new());
+fn into_ai_context_chunk(
+    chunk: StoredAiChunk,
+    lexical_match: bool,
+    semantic_similarity: Option<f32>,
+) -> AiContextChunk {
+    AiContextChunk {
+        file_id: chunk.file_id,
+        file_name: chunk.file_name,
+        relative_path: chunk.relative_path,
+        version_id: chunk.version_id,
+        version_number: chunk.version_number,
+        body_text: chunk.body_text.trim().to_owned(),
+        lexical_match,
+        semantic_similarity,
     }
-    Ok(chunks
-        .into_iter()
-        .enumerate()
-        .map(|(ordinal, chunk)| {
-            (
-                format!("{file_id}:fallback:{ordinal}"),
-                file_name.clone(),
-                relative_path.clone(),
-                version_id.clone(),
-                version_number,
-                ordinal as i64,
-                chunk.body_text,
-                None,
-                None,
-            )
-        })
-        .collect())
 }
 
 pub(crate) fn retrieve_ai_context_chunks(
@@ -2266,157 +2213,100 @@ pub(crate) fn retrieve_ai_context_chunks(
     runtime: &SemanticSearchRuntime,
     query: &str,
     lexical_queries: &[String],
-    candidates: &[HybridSearchMatch],
+    preferred_file_ids: &[String],
 ) -> Result<Vec<AiContextChunk>, String> {
+    let started_at = Instant::now();
     let query = query.trim();
-    if query.is_empty() || candidates.is_empty() {
+    if query.is_empty() {
         return Ok(Vec::new());
     }
-    let query_vector = if runtime.is_installed() {
-        runtime.embed(&format!("query: {query}"))?
-    } else {
-        None
-    };
-    let lexical_profiles = lexical_queries
-        .iter()
-        .map(|query| (query.trim().to_owned(), lexical_terms(query)))
-        .filter(|(query, _)| !query.is_empty())
-        .collect::<Vec<_>>();
-    let needles = lexical_needles(lexical_queries);
-    let mut ranked = Vec::new();
-    for (candidate_rank, candidate) in candidates
-        .iter()
-        .take(AI_CONTEXT_CANDIDATE_FILE_LIMIT)
-        .enumerate()
-    {
-        let mut chunks = stored_ai_chunks_for_file(database, &candidate.file_id)?;
-        if chunks.is_empty() {
-            chunks = fallback_ai_chunks_for_file(database, &candidate.file_id)?;
-        }
-        if candidate.lexical_match {
-            let mut stored_ids = chunks
-                .iter()
-                .map(|chunk| chunk.0.clone())
-                .collect::<HashSet<_>>();
-            let mut lexical_chunks =
-                lexical_ai_chunks_for_file(database, &candidate.file_id, &needles)?;
-            let existing_chunk_matches = chunks.iter().any(|chunk| {
-                lexical_profiles
-                    .iter()
-                    .any(|(query, terms)| lexical_relevance(&chunk.6, query, terms) > 0.0)
-            });
-            if lexical_chunks.is_empty() && !existing_chunk_matches {
-                if let Some(chunk) =
-                    lexical_document_excerpt_for_file(database, &candidate.file_id, &needles)?
-                {
-                    lexical_chunks.push(chunk);
-                }
-            }
-            for chunk in lexical_chunks {
-                if stored_ids.insert(chunk.0.clone()) {
-                    chunks.push(chunk);
-                }
-            }
-        }
-        for (
-            _chunk_id,
-            file_name,
-            relative_path,
-            version_id,
-            version_number,
-            ordinal,
-            body_text,
-            vector_blob,
-            dimensions,
-        ) in chunks
-        {
-            let metadata = format!("{file_name}\n{relative_path}");
-            let body_lexical = lexical_profiles
-                .iter()
-                .map(|(query, terms)| lexical_relevance(&body_text, query, terms))
-                .fold(0.0, f32::max);
-            let metadata_lexical = lexical_profiles
-                .iter()
-                .map(|(query, terms)| lexical_relevance(&metadata, query, terms))
-                .fold(0.0, f32::max);
-            let lexical_score = body_lexical.max(metadata_lexical);
-            let lexical_match = candidate.lexical_match && lexical_score > 0.0;
-            let semantic_similarity = match (&query_vector, vector_blob, dimensions) {
-                (Some(query_vector), Some(blob), Some(dimensions))
-                    if dimensions == SEMANTIC_MODEL_DIMENSIONS as i64 =>
-                {
-                    vector_from_blob(&blob, SEMANTIC_MODEL_DIMENSIONS)
-                        .map(|vector| cosine_similarity(query_vector, &vector))
-                        .filter(|similarity| similarity.is_finite())
-                }
-                _ => None,
-            };
-            let semantic_match =
-                semantic_similarity.is_some_and(|similarity| similarity >= SEMANTIC_MIN_SIMILARITY);
-            if !lexical_match && !semantic_match {
-                continue;
-            }
-            let lexical_component = if lexical_match {
-                0.16 + lexical_score * 0.24
+    let dense = dense_ai_context_chunks(database, runtime, query)?;
+    let lexical = lexical_ai_context_chunks(database, lexical_queries)?;
+    let dense_count = dense.len();
+    let lexical_count = lexical.len();
+    let preferred_files = preferred_file_ids.iter().collect::<HashSet<_>>();
+    let mut fused = HashMap::<String, RankedAiContextChunk>::new();
+    for (rank, (chunk, similarity)) in dense.into_iter().enumerate() {
+        let chunk_id = chunk.chunk_id.clone();
+        let ordinal = chunk.ordinal;
+        let preferred_boost = if preferred_files.contains(&chunk.file_id) {
+            1.0 / (AI_RRF_K + 1.0)
+        } else {
+            0.0
+        };
+        fused.insert(
+            chunk_id,
+            RankedAiContextChunk {
+                chunk: into_ai_context_chunk(chunk, false, Some(similarity)),
+                score: 1.0 / (AI_RRF_K + rank as f32 + 1.0) + preferred_boost,
+                dense_rank: Some(rank),
+                lexical_rank: None,
+                ordinal,
+            },
+        );
+    }
+    for (rank, chunk) in lexical.into_iter().enumerate() {
+        let chunk_id = chunk.chunk_id.clone();
+        if let Some(existing) = fused.get_mut(&chunk_id) {
+            existing.score += 1.0 / (AI_RRF_K + rank as f32 + 1.0);
+            existing.lexical_rank = Some(rank);
+            existing.chunk.lexical_match = true;
+        } else {
+            let ordinal = chunk.ordinal;
+            let preferred_boost = if preferred_files.contains(&chunk.file_id) {
+                1.0 / (AI_RRF_K + 1.0)
             } else {
                 0.0
             };
-            let semantic_component = semantic_similarity.unwrap_or(0.0) * 0.64;
-            let rank_component = 0.04 / (candidate_rank as f32 + 1.0);
-            ranked.push(RankedAiContextChunk {
-                chunk: AiContextChunk {
-                    file_id: candidate.file_id.clone(),
-                    file_name,
-                    relative_path,
-                    version_id,
-                    version_number,
-                    body_text: body_text.trim().to_owned(),
-                    lexical_match,
-                    semantic_similarity,
+            fused.insert(
+                chunk_id,
+                RankedAiContextChunk {
+                    chunk: into_ai_context_chunk(chunk, true, None),
+                    score: 1.0 / (AI_RRF_K + rank as f32 + 1.0) + preferred_boost,
+                    dense_rank: None,
+                    lexical_rank: Some(rank),
+                    ordinal,
                 },
-                score: lexical_component + semantic_component + rank_component,
-                candidate_rank,
-                ordinal,
-            });
+            );
         }
     }
+    let mut ranked = fused.into_values().collect::<Vec<_>>();
     ranked.sort_by(|left, right| {
         right
             .score
             .partial_cmp(&left.score)
             .unwrap_or(Ordering::Equal)
-            .then_with(|| left.candidate_rank.cmp(&right.candidate_rank))
+            .then_with(|| {
+                left.dense_rank
+                    .unwrap_or(usize::MAX)
+                    .cmp(&right.dense_rank.unwrap_or(usize::MAX))
+            })
+            .then_with(|| {
+                left.lexical_rank
+                    .unwrap_or(usize::MAX)
+                    .cmp(&right.lexical_rank.unwrap_or(usize::MAX))
+            })
             .then_with(|| left.ordinal.cmp(&right.ordinal))
     });
-    let mut seen_files = HashSet::new();
-    let mut first_per_file = Vec::new();
-    let mut additional = Vec::new();
-    for result in ranked {
-        if seen_files.insert(result.chunk.file_id.clone()) {
-            first_per_file.push(result);
-        } else {
-            additional.push(result);
-        }
-    }
+    ranked.truncate(AI_FUSED_CANDIDATE_LIMIT);
     let mut per_file = HashMap::<String, usize>::new();
     let mut selected = Vec::new();
-    for result in first_per_file.into_iter().take(AI_CONTEXT_RESULT_LIMIT) {
-        per_file.insert(result.chunk.file_id.clone(), 1);
-        selected.push(result.chunk);
-    }
-    for result in additional {
+    for result in ranked {
         if selected.len() >= AI_CONTEXT_RESULT_LIMIT {
             break;
         }
-        let Some(count) = per_file.get_mut(&result.chunk.file_id) else {
-            continue;
-        };
+        let count = per_file.entry(result.chunk.file_id.clone()).or_default();
         if *count >= AI_CONTEXT_PER_FILE_LIMIT {
             continue;
         }
         *count += 1;
         selected.push(result.chunk);
     }
+    eprintln!(
+        "Lume Trace AI retrieval: dense={dense_count}, lexical={lexical_count}, selected={}, elapsed_ms={}",
+        selected.len(),
+        started_at.elapsed().as_millis()
+    );
     Ok(selected)
 }
 
@@ -2658,7 +2548,7 @@ mod tests {
     }
 
     #[test]
-    fn ann_recall_finds_a_semantic_file_without_lexical_candidates() {
+    fn ann_recall_preserves_ranked_chunks_instead_of_collapsing_files() {
         let root = std::env::temp_dir().join(format!("lumetrace-ann-recall-{}", Uuid::new_v4()));
         {
             let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
@@ -2719,8 +2609,57 @@ mod tests {
 
             let runtime = SemanticSearchRuntime::new(&root);
             reconcile_semantic_ann_index(&database, &runtime).unwrap();
-            let ranked = semantic_file_ranks_for_vector(&database, &runtime, &near_vector).unwrap();
-            assert_eq!(ranked, vec![("near-file".to_owned(), 1.0)]);
+            let ranked =
+                dense_ai_context_chunks_for_vector(&database, &runtime, &near_vector).unwrap();
+            assert_eq!(ranked.len(), 1);
+            assert_eq!(ranked[0].0.chunk_id, "near-chunk");
+            assert_eq!(ranked[0].0.file_id, "near-file");
+            assert!((ranked[0].1 - 1.0).abs() < 0.0001);
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn chunk_fts_backfill_restores_existing_passages_in_bounded_batches() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-chunk-fts-backfill-{}", Uuid::new_v4()));
+        {
+            let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
+            let connection = database.0.lock().unwrap();
+            connection
+                .execute_batch(
+                    "INSERT INTO files
+                       (id, original_name, storage_path, size_bytes, source_kind,
+                        updated_at, created_at)
+                     VALUES ('file-1', 'weekly.md', 'weekly.md', 32, 'user_import', 10, 10);
+                     INSERT INTO file_space_search_documents
+                       (file_id, file_name, body_text, extraction_status, extraction_version,
+                        tag_text, task_text, cell_text, file_updated_at, size_bytes, indexed_at)
+                     VALUES ('file-1', 'weekly.md', '断流恢复策略已调整', 'extracted', 1,
+                             '', '', '', 10, 32, 11);
+                     INSERT INTO file_space_search_chunks
+                       (id, file_id, document_indexed_at, content_hash, ordinal,
+                        start_character, end_character, body_text, character_count, created_at)
+                     VALUES ('chunk-1', 'file-1', 11, 'hash', 0, 0, 9,
+                             '断流恢复策略已调整', 9, 11);
+                     DELETE FROM file_space_search_chunks_fts;",
+                )
+                .unwrap();
+            let missing = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM file_space_search_chunks_fts",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .unwrap();
+            assert_eq!(missing, 0);
+            drop(connection);
+
+            assert!(backfill_ai_chunk_fts_batch(&database).unwrap());
+            assert!(!backfill_ai_chunk_fts_batch(&database).unwrap());
+            let restored = lexical_ai_context_chunks(&database, &["断流恢复".to_owned()]).unwrap();
+            assert_eq!(restored.len(), 1);
+            assert_eq!(restored[0].chunk_id, "chunk-1");
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -2749,26 +2688,24 @@ mod tests {
                     [],
                 )
                 .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO file_space_search_chunks
+                     (id, file_id, document_indexed_at, content_hash, ordinal,
+                      start_character, end_character, body_text, character_count, created_at)
+                     VALUES ('chunk-1', 'file-1', 11, 'chunk-1', 0, 0, 31,
+                             'The release decision is Friday.', 31, 11)",
+                    [],
+                )
+                .unwrap();
             drop(connection);
             let runtime = SemanticSearchRuntime::new(&root);
-            let candidates = vec![
-                HybridSearchMatch {
-                    file_id: "file-1".to_owned(),
-                    lexical_match: true,
-                    semantic_similarity: None,
-                },
-                HybridSearchMatch {
-                    file_id: "model-invented-file".to_owned(),
-                    lexical_match: true,
-                    semantic_similarity: None,
-                },
-            ];
             let chunks = retrieve_ai_context_chunks(
                 &database,
                 &runtime,
                 "release decision",
                 &["release decision".to_owned()],
-                &candidates,
+                &[],
             )
             .unwrap();
             assert_eq!(chunks.len(), 1);
@@ -2780,7 +2717,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_context_reserves_evidence_for_each_relevant_file_before_extra_chunks() {
+    fn ai_context_returns_relevant_passages_without_scanning_candidate_files() {
         let root =
             std::env::temp_dir().join(format!("lumetrace-ai-context-diversity-{}", Uuid::new_v4()));
         {
@@ -2813,24 +2750,31 @@ mod tests {
                         params![&file_id, &file_name, &body, body.len() as i64],
                     )
                     .unwrap();
+                transaction
+                    .execute(
+                        "INSERT INTO file_space_search_chunks
+                         (id, file_id, document_indexed_at, content_hash, ordinal,
+                          start_character, end_character, body_text, character_count, created_at)
+                         VALUES (?1, ?2, 11, ?1, 0, 0, ?4, ?3, ?4, 11)",
+                        params![
+                            format!("chunk-{index}"),
+                            &file_id,
+                            &body,
+                            body.chars().count() as i64
+                        ],
+                    )
+                    .unwrap();
             }
             transaction.commit().unwrap();
             drop(connection);
 
             let runtime = SemanticSearchRuntime::new(&root);
-            let candidates = (1..=4)
-                .map(|index| HybridSearchMatch {
-                    file_id: format!("file-{index}"),
-                    lexical_match: true,
-                    semantic_similarity: None,
-                })
-                .collect::<Vec<_>>();
             let chunks = retrieve_ai_context_chunks(
                 &database,
                 &runtime,
                 "断流恢复",
                 &["断流恢复".to_owned()],
-                &candidates,
+                &[],
             )
             .unwrap();
             let file_ids = chunks
@@ -2838,7 +2782,7 @@ mod tests {
                 .map(|chunk| chunk.file_id.as_str())
                 .collect::<HashSet<_>>();
             assert_eq!(file_ids.len(), 4);
-            assert_eq!(chunks.len(), AI_CONTEXT_RESULT_LIMIT);
+            assert_eq!(chunks.len(), 4);
         }
         fs::remove_dir_all(root).unwrap();
     }
@@ -2898,17 +2842,12 @@ mod tests {
             drop(connection);
 
             let runtime = SemanticSearchRuntime::new(&root);
-            let candidates = vec![HybridSearchMatch {
-                file_id: "file-1".to_owned(),
-                lexical_match: true,
-                semantic_similarity: None,
-            }];
             let chunks = retrieve_ai_context_chunks(
                 &database,
                 &runtime,
                 "断流恢复",
                 &["断流恢复".to_owned()],
-                &candidates,
+                &[],
             )
             .unwrap();
             assert_eq!(chunks.len(), 1);
@@ -2919,7 +2858,7 @@ mod tests {
     }
 
     #[test]
-    fn ai_context_uses_the_full_text_excerpt_while_semantic_indexing_is_pending() {
+    fn ai_context_does_not_scan_full_documents_while_chunk_indexing_is_pending() {
         let root = std::env::temp_dir().join(format!(
             "lumetrace-ai-pending-index-context-{}",
             Uuid::new_v4()
@@ -2952,63 +2891,95 @@ mod tests {
             drop(connection);
 
             let runtime = SemanticSearchRuntime::new(&root);
-            let candidates = vec![HybridSearchMatch {
-                file_id: "file-1".to_owned(),
-                lexical_match: true,
-                semantic_similarity: None,
-            }];
             let chunks = retrieve_ai_context_chunks(
                 &database,
                 &runtime,
                 "断流恢复",
                 &["断流恢复".to_owned()],
-                &candidates,
+                &[],
             )
             .unwrap();
-            assert_eq!(chunks.len(), 1);
-            assert!(chunks[0].body_text.contains("也必须提供给 AI"));
-            assert!(chunks[0].lexical_match);
+            assert!(chunks.is_empty());
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn ai_fallback_context_has_a_hard_per_file_chunk_limit() {
+    fn ai_context_has_hard_result_and_per_file_limits() {
         let root =
             std::env::temp_dir().join(format!("lumetrace-ai-context-limit-{}", Uuid::new_v4()));
         {
             let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
-            let oversized_body = "bounded local context ".repeat(4_000);
-            let connection = database.0.lock().unwrap();
-            connection
-                .execute(
-                    "INSERT INTO files
-                     (id, original_name, storage_path, size_bytes, source_kind, updated_at, created_at)
-                     VALUES ('file-1', 'large.txt', 'large.txt', ?1, 'user_import', 10, 10)",
-                    [oversized_body.len() as i64],
-                )
-                .unwrap();
-            connection
-                .execute(
-                    "INSERT INTO file_space_search_documents
-                     (file_id, file_name, body_text, tag_text, task_text, cell_text,
-                      extraction_status, extraction_version, file_updated_at, size_bytes, indexed_at)
-                     VALUES ('file-1', 'large.txt', ?1, '', '', '',
-                             'extracted', 1, 10, ?2, 11)",
-                    params![oversized_body, oversized_body.len() as i64],
-                )
-                .unwrap();
+            let mut connection = database.0.lock().unwrap();
+            let transaction = connection.transaction().unwrap();
+            for file_index in 0..4 {
+                let file_id = format!("file-{file_index}");
+                let file_name = format!("file-{file_index}.md");
+                transaction
+                    .execute(
+                        "INSERT INTO files
+                         (id, original_name, storage_path, size_bytes, source_kind,
+                          updated_at, created_at)
+                         VALUES (?1, ?2, ?2, 100, 'user_import', 10, 10)",
+                        params![&file_id, &file_name],
+                    )
+                    .unwrap();
+                transaction
+                    .execute(
+                        "INSERT INTO file_space_search_documents
+                         (file_id, file_name, body_text, tag_text, task_text, cell_text,
+                          extraction_status, extraction_version, file_updated_at,
+                          size_bytes, indexed_at)
+                         VALUES (?1, ?2, '断流恢复', '', '', '', 'extracted', 1, 10, 100, 11)",
+                        params![&file_id, &file_name],
+                    )
+                    .unwrap();
+                for ordinal in 0..4 {
+                    let chunk_id = format!("chunk-{file_index}-{ordinal}");
+                    let body = format!("断流恢复的第 {file_index}-{ordinal} 条证据");
+                    transaction
+                        .execute(
+                            "INSERT INTO file_space_search_chunks
+                             (id, file_id, document_indexed_at, content_hash, ordinal,
+                              start_character, end_character, body_text, character_count, created_at)
+                             VALUES (?1, ?2, 11, ?1, ?3, 0, ?4, ?5, ?4, 11)",
+                            params![
+                                chunk_id,
+                                &file_id,
+                                ordinal,
+                                body.chars().count() as i64,
+                                body
+                            ],
+                        )
+                        .unwrap();
+                }
+            }
+            transaction.commit().unwrap();
             drop(connection);
 
-            let chunks = fallback_ai_chunks_for_file(&database, "file-1").unwrap();
-            assert!(!chunks.is_empty());
-            assert!(chunks.len() <= AI_CONTEXT_STORED_CHUNK_LIMIT);
+            let runtime = SemanticSearchRuntime::new(&root);
+            let chunks = retrieve_ai_context_chunks(
+                &database,
+                &runtime,
+                "断流恢复",
+                &["断流恢复".to_owned()],
+                &[],
+            )
+            .unwrap();
+            assert!(chunks.len() <= AI_CONTEXT_RESULT_LIMIT);
+            let mut per_file = HashMap::<String, usize>::new();
+            for chunk in chunks {
+                *per_file.entry(chunk.file_id).or_default() += 1;
+            }
+            assert!(per_file
+                .values()
+                .all(|count| *count <= AI_CONTEXT_PER_FILE_LIMIT));
         }
         fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
-    fn ai_fallback_never_uses_a_filename_as_document_content() {
+    fn ai_context_never_uses_stale_chunks_as_document_content() {
         let root =
             std::env::temp_dir().join(format!("lumetrace-ai-empty-content-{}", Uuid::new_v4()));
         {
@@ -3042,9 +3013,15 @@ mod tests {
                 )
                 .unwrap();
             drop(connection);
-            let stored = stored_ai_chunks_for_file(&database, "file-1").unwrap();
-            assert!(stored.is_empty());
-            let chunks = fallback_ai_chunks_for_file(&database, "file-1").unwrap();
+            let runtime = SemanticSearchRuntime::new(&root);
+            let chunks = retrieve_ai_context_chunks(
+                &database,
+                &runtime,
+                "confidential.xlsx",
+                &["confidential.xlsx".to_owned()],
+                &[],
+            )
+            .unwrap();
             assert!(chunks.is_empty());
         }
         fs::remove_dir_all(root).unwrap();
