@@ -132,7 +132,7 @@ function getStartupAgentChecks() {
 export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const { t } = useTranslation();
   const legacySettings = useMemo(readLegacyAgentCliSettings, []);
-  const [mode, setMode] = useState<AiServiceMode>(legacySettings ? "agentCli" : "local");
+  const [mode, setMode] = useState<AiServiceMode>("local");
   const [cloudProvider, setCloudProvider] = useState<CloudProvider>("openaiCompatible");
   const [localProvider, setLocalProvider] = useState<LocalProvider>("ollama");
   const [selectedAgent, setSelectedAgent] = useState<AgentCliKey>(legacySettings?.cli ?? "claude");
@@ -165,7 +165,6 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
           if (!cancelled) {
             setSelectedAgent(settings.cli);
             setPermission(settings.permission);
-            setMode("agentCli");
             window.dispatchEvent(new CustomEvent("lumetrace:agent-cli-settings-changed", { detail: settings }));
           }
         }
