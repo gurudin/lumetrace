@@ -6,6 +6,8 @@ export const ja = {
     root: {
       title: "Lume Traceを使い始める",
       description: "ファイルワークスペースを新規作成するか、既存の物理ファイルとフォルダから初期化します。",
+      opening: "ファイルワークスペースを開いています",
+      openingDescription: "ローカルファイルと前回の状態を読み込んでいます…",
       privacy: "Lume Traceはほかのアプリのデータベースを読み取りません。初期化時に元のファイルが移動または削除されることはありません。",
       choose: "保存先を選択",
       choosing: "フォルダ選択画面を開いています…",
@@ -758,8 +760,8 @@ export const ja = {
     },
     trash: {
       title: "ゴミ箱",
-      emptyTitle: "ゴミ箱は空です",
-      emptyDescription: "ゴミ箱のファイルとフォルダは30日間保持され、その間は復元できます。",
+      emptyTitle: "復元する項目はありません",
+      emptyDescription: "削除したファイルとフォルダはここに30日間保持され、その間は復元できます。",
       emptyAction: "ゴミ箱を空にする",
       emptyConfirmTitle: "ゴミ箱を空にしますか？",
       emptyConfirmDescription_one: "ゴミ箱内の{{count}}項目とすべてのバージョン履歴が完全に削除されます。この操作は取り消せません。",

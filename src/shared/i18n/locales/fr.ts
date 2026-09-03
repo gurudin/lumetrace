@@ -6,6 +6,8 @@ export const fr = {
     root: {
       title: "Premiers pas avec Lume Trace",
       description: "Créez un espace de fichiers ou initialisez-en un à partir de fichiers et dossiers locaux déjà présents.",
+      opening: "Ouverture de l’espace de fichiers",
+      openingDescription: "Chargement des fichiers locaux et du dernier état utilisé…",
       privacy: "Lume Trace ne lit pas la base de données d’une autre app. L’initialisation ne déplace ni ne supprime jamais les fichiers d’origine.",
       choose: "Choisir l’emplacement de stockage",
       choosing: "Ouverture du sélecteur de dossier…",
@@ -758,8 +760,8 @@ export const fr = {
     },
     trash: {
       title: "Corbeille",
-      emptyTitle: "La corbeille est vide",
-      emptyDescription: "Les fichiers et dossiers restent 30 jours dans la corbeille et peuvent être restaurés pendant cette période.",
+      emptyTitle: "Aucun élément à restaurer",
+      emptyDescription: "Les fichiers et dossiers supprimés restent ici 30 jours et peuvent être restaurés pendant cette période.",
       emptyAction: "Vider la corbeille",
       emptyConfirmTitle: "Vider la corbeille ?",
       emptyConfirmDescription_one: "{{count}} élément de la corbeille et tout son historique de versions seront définitivement supprimés. Cette action est irréversible.",

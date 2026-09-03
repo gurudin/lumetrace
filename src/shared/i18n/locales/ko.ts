@@ -6,6 +6,8 @@ export const ko = {
     root: {
       title: "Lume Trace 시작하기",
       description: "파일 작업 공간을 새로 만들거나 기존 실제 파일과 폴더에서 초기화하세요.",
+      opening: "파일 공간을 여는 중",
+      openingDescription: "로컬 파일과 마지막 사용 상태를 불러오는 중…",
       privacy: "Lume Trace는 다른 앱의 데이터베이스를 읽지 않습니다. 초기화할 때 원본 파일을 이동하거나 삭제하지 않습니다.",
       choose: "저장 위치 선택",
       choosing: "폴더 선택기 여는 중…",
@@ -758,8 +760,8 @@ export const ko = {
     },
     trash: {
       title: "휴지통",
-      emptyTitle: "휴지통이 비어 있습니다",
-      emptyDescription: "휴지통의 파일과 폴더는 30일 동안 보관되며 그동안 복원할 수 있습니다.",
+      emptyTitle: "복원할 항목이 없습니다",
+      emptyDescription: "삭제한 파일과 폴더는 여기에 30일 동안 보관되며 그동안 복원할 수 있습니다.",
       emptyAction: "휴지통 비우기",
       emptyConfirmTitle: "휴지통을 비우시겠습니까?",
       emptyConfirmDescription_one: "휴지통의 항목 {{count}}개와 모든 버전 기록이 영구 삭제됩니다. 이 작업은 취소할 수 없습니다.",

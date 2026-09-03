@@ -37,7 +37,7 @@ export function FileSpaceTrashView({
 
   if (items.length === 0) {
     return (
-      <div className="file-space-trash-empty">
+      <div className="file-space-trash-empty" role="status">
         <span aria-hidden="true"><Trash2 size={28} strokeWidth={1.35} /></span>
         <strong>{t("fileSpace.trash.emptyTitle")}</strong>
         <p>{t("fileSpace.trash.emptyDescription")}</p>

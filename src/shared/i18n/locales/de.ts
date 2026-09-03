@@ -6,6 +6,8 @@ export const de = {
     root: {
       title: "Erste Schritte mit Lume Trace",
       description: "Erstellen Sie einen Datei-Arbeitsbereich oder initialisieren Sie ihn aus bereits vorhandenen lokalen Dateien und Ordnern.",
+      opening: "Datei-Arbeitsbereich wird geöffnet",
+      openingDescription: "Lokale Dateien und letzter Arbeitsstand werden geladen…",
       privacy: "Lume Trace liest keine Datenbank einer anderen App. Bei der Initialisierung werden die Originaldateien weder verschoben noch gelöscht.",
       choose: "Speicherort auswählen",
       choosing: "Ordnerauswahl wird geöffnet…",
@@ -758,8 +760,8 @@ export const de = {
     },
     trash: {
       title: "Papierkorb",
-      emptyTitle: "Der Papierkorb ist leer",
-      emptyDescription: "Dateien und Ordner bleiben 30 Tage im Papierkorb und können in dieser Zeit wiederhergestellt werden.",
+      emptyTitle: "Nichts wiederherzustellen",
+      emptyDescription: "Gelöschte Dateien und Ordner bleiben hier 30 Tage und können in dieser Zeit wiederhergestellt werden.",
       emptyAction: "Papierkorb leeren",
       emptyConfirmTitle: "Papierkorb leeren?",
       emptyConfirmDescription_one: "{{count}} Objekt im Papierkorb und sein gesamter Versionsverlauf werden dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.",

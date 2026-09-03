@@ -6,6 +6,8 @@ export const en = {
     root: {
       title: "Get started with Lume Trace",
       description: "Create a file workspace or initialize one from the physical files and folders that already exist.",
+      opening: "Opening your file space",
+      openingDescription: "Loading local files and your last workspace state…",
       privacy: "Lume Trace does not read another app's database. Initialization never moves or deletes the original files.",
       choose: "Choose Storage Path",
       choosing: "Opening folder picker…",
@@ -633,7 +635,7 @@ export const en = {
       emptyDropTitle: "Drop files or folders here",
       emptyDropActiveTitle: "Release to add to this folder",
       emptyDropDescription: "Drop multiple files or folders at once to add them to the current folder.",
-      uploadLocalFiles: "Upload Local Files",
+      uploadLocalFiles: "Import Local Files",
       uploading: "Importing…",
       createSubfolder: "Create Subfolder",
       dropOverlayTitle: "Drop files here to add them",
@@ -802,8 +804,8 @@ export const en = {
     },
     trash: {
       title: "Trash",
-      emptyTitle: "Trash is Empty",
-      emptyDescription: "Files and folders in Trash are kept for 30 days and can be restored during that time.",
+      emptyTitle: "Nothing to Restore",
+      emptyDescription: "Deleted files and folders stay here for 30 days and can be restored during that time.",
       emptyAction: "Empty Trash",
       emptyConfirmTitle: "Empty Trash?",
       emptyConfirmDescription_one: "{{count}} item in Trash and all its version history will be permanently deleted. This can’t be undone.",

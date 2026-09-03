@@ -6,6 +6,8 @@ export const es = {
     root: {
       title: "Empieza a usar Lume Trace",
       description: "Crea un espacio de archivos o inicializa uno a partir de los archivos y carpetas físicos existentes.",
+      opening: "Abriendo el espacio de archivos",
+      openingDescription: "Cargando los archivos locales y el último estado…",
       privacy: "Lume Trace no lee la base de datos de otras apps. La inicialización nunca mueve ni elimina los archivos originales.",
       choose: "Elegir ubicación de almacenamiento",
       choosing: "Abriendo el selector de carpetas…",
@@ -758,8 +760,8 @@ export const es = {
     },
     trash: {
       title: "Papelera",
-      emptyTitle: "La papelera está vacía",
-      emptyDescription: "Los archivos y carpetas se conservan 30 días en la papelera y pueden restaurarse durante ese periodo.",
+      emptyTitle: "No hay nada que restaurar",
+      emptyDescription: "Los archivos y carpetas eliminados se conservan aquí 30 días y pueden restaurarse durante ese periodo.",
       emptyAction: "Vaciar papelera",
       emptyConfirmTitle: "¿Vaciar la papelera?",
       emptyConfirmDescription_one: "{{count}} elemento de la papelera y todo su historial de versiones se eliminarán permanentemente. Esta acción no se puede deshacer.",

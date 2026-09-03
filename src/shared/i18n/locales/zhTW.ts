@@ -6,6 +6,8 @@ export const zhTW = {
     root: {
       title: "開始使用 Lume Trace",
       description: "建立新的檔案空間，或從現有的實體檔案與資料夾進行初始化。",
+      opening: "正在開啟檔案空間",
+      openingDescription: "正在讀取本機檔案與上次使用狀態…",
       privacy: "Lume Trace 不會讀取其他 App 的資料庫。初始化不會移動或刪除原始檔案。",
       choose: "選擇儲存位置",
       choosing: "正在開啟資料夾選擇器…",
@@ -758,8 +760,8 @@ export const zhTW = {
     },
     trash: {
       title: "垃圾桶",
-      emptyTitle: "垃圾桶是空的",
-      emptyDescription: "移到垃圾桶的檔案與資料夾會保留 30 天，期間可隨時復原。",
+      emptyTitle: "這裡沒有需要復原的項目",
+      emptyDescription: "刪除的檔案與資料夾會在這裡保留 30 天，期間可隨時復原。",
       emptyAction: "清空垃圾桶",
       emptyConfirmTitle: "清空垃圾桶？",
       emptyConfirmDescription_one: "其中的 {{count}} 個項目及其所有版本記錄將被永久刪除，且無法復原。",

@@ -6,6 +6,8 @@ export const zh = {
     root: {
       title: "开始使用 Lume Trace",
       description: "新建一个文件空间，或者把已有文件夹的层级和实体文件初始化导入。",
+      opening: "正在打开文件空间",
+      openingDescription: "正在读取本地文件和上次使用状态…",
       privacy: "Lume Trace 不读取其他软件的数据库。初始化导入不会移动或删除原文件。",
       choose: "选择存储路径",
       choosing: "正在打开文件夹选择器…",
@@ -633,7 +635,7 @@ export const zh = {
       emptyDropTitle: "拖放文件或文件夹到这里",
       emptyDropActiveTitle: "松开以添加到当前文件夹",
       emptyDropDescription: "支持一次拖入多个文件或文件夹，内容将添加到当前文件夹。",
-      uploadLocalFiles: "上传本地文件",
+      uploadLocalFiles: "导入本地文件",
       uploading: "正在导入…",
       createSubfolder: "创建子文件夹",
       dropOverlayTitle: "将文件拖放到这里进行添加",
@@ -802,8 +804,8 @@ export const zh = {
     },
     trash: {
       title: "废纸篓",
-      emptyTitle: "废纸篓为空",
-      emptyDescription: "移到废纸篓的文件和文件夹会保留 30 天，期间可随时恢复。",
+      emptyTitle: "这里没有需要恢复的项目",
+      emptyDescription: "删除的文件和文件夹会在这里保留 30 天，期间可随时恢复。",
       emptyAction: "清空废纸篓",
       emptyConfirmTitle: "清空废纸篓？",
       emptyConfirmDescription_one: "其中的 {{count}} 个项目及其所有版本记录将被永久删除，且无法恢复。",

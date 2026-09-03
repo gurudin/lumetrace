@@ -1809,12 +1809,46 @@ export function FileSpacePage() {
     if (!isTauri()) {
       if (import.meta.env.DEV) {
         const previewParameters = new URLSearchParams(window.location.search);
-        if (previewParameters.has("fileSpacePreview") || previewParameters.has("trashPreview")) {
+        if (previewParameters.has("setupPreview")) {
+          const setupPreview = previewParameters.get("setupPreview");
+          setSnapshot({
+            ...emptySnapshot,
+            rootPath: setupPreview === "missing" ? "/Volumes/Design Archive/Lume Trace" : null,
+            rootStatus: setupPreview === "missing" ? "missing" : "unconfigured",
+          });
+          if (setupPreview === "busy") {
+            setBusyAction("configure");
+            setRootSetupMode("new");
+          }
+        } else if (
+          previewParameters.has("fileSpacePreview")
+          || previewParameters.has("trashPreview")
+          || previewParameters.has("emptyPreview")
+        ) {
           const fixture = createVisualFixture();
           if (previewParameters.get("trashPreview") === "empty") {
             fixture.trashItems = [];
           }
+          const emptyPreview = previewParameters.get("emptyPreview");
+          if (emptyPreview === "folder") {
+            fixture.folders.push({
+              id: "fixture-empty",
+              parentId: "fixture-research",
+              name: "待整理",
+              relativePath: "Clipboard X/市场调研/待整理",
+              manualOrder: 2,
+              directFileCount: 0,
+              fileCount: 0,
+              childFolderCount: 0,
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            });
+          }
+          if (emptyPreview === "filter") {
+            fixture.files = fixture.files.map((file) => ({ ...file, folderId: "fixture-comments" }));
+          }
           setSnapshot(fixture);
+          setFilePageTotal(emptyPreview ? 0 : fixture.files.length);
           setWorkspaceDirectory({
             currentWorkspaceId: "fixture-workspace",
             workspaces: [{
@@ -1829,7 +1863,15 @@ export function FileSpacePage() {
             }],
           });
           setExpandedFolders(new Set(fixture.folders.map((folder) => folder.id)));
-          setCurrentFolderId("fixture-research");
+          setCurrentFolderId(
+            emptyPreview === "folder"
+              ? "fixture-empty"
+              : emptyPreview === "filter"
+                ? "fixture-comments"
+                : "fixture-research",
+          );
+          if (emptyPreview === "search") setQuery("找不到的文件");
+          if (emptyPreview === "filter") setTagFilter("未使用的标签");
           if (previewParameters.has("trashPreview")) setActiveCollection("trash");
           if (previewParameters.has("versionNotificationPreview")) {
             const file = fixture.files[0];
@@ -1880,6 +1922,7 @@ export function FileSpacePage() {
         if (previewParameters.has("importSheetPreview")) {
           setPendingImportPath("/Volumes/NAS Studio/产品资料");
         }
+        if (previewParameters.get("setupPreview") === "loading") return;
       }
       setLoading(false);
       return;
@@ -2529,6 +2572,17 @@ export function FileSpacePage() {
       typeFilter,
       updatedAfter,
     ]);
+  useEffect(() => {
+    if (isTauri() || !import.meta.env.DEV) return;
+    const previewParameters = new URLSearchParams(window.location.search);
+    if (
+      previewParameters.has("fileSpacePreview")
+      || previewParameters.has("trashPreview")
+      || previewParameters.has("emptyPreview")
+    ) {
+      setFilePageTotal(sortedVisibleFiles.length);
+    }
+  }, [sortedVisibleFiles.length]);
   const visibleFileById = useMemo(
     () => new Map(sortedVisibleFiles.map((file) => [file.id, file])),
     [sortedVisibleFiles],
@@ -3031,6 +3085,9 @@ export function FileSpacePage() {
     || timeFilter !== "all"
     || sortOption !== "manual"
     || searchScopes.length !== 3;
+  const hasRestrictiveFilters = typeFilter !== "all"
+    || tagFilter !== "all"
+    || timeFilter !== "all";
   const chooseStorageRoot = async (mode: RootSetupMode, returnFocusTarget?: HTMLElement) => {
     if (mode === "import" && returnFocusTarget) {
       importExistingTriggerRef.current = returnFocusTarget;
@@ -5190,7 +5247,11 @@ export function FileSpacePage() {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
-        <span className="file-space-loading-mark" />
+        <div className="file-space-loading-state" role="status" aria-live="polite">
+          <span className="file-space-loading-mark" aria-hidden="true" />
+          <strong>{t("fileSpace.root.opening")}</strong>
+          <span>{t("fileSpace.root.openingDescription")}</span>
+        </div>
       </section>
     );
   }
@@ -5216,39 +5277,54 @@ export function FileSpacePage() {
           <p className="file-space-setup-description">{t("fileSpace.root.description")}</p>
           {snapshot.rootPath ? (
             <div className="file-space-invalid-path">
-              <strong>{rootStatusMessage}</strong>
-              <span>{snapshot.rootPath}</span>
+              <span className="file-space-invalid-path-icon" aria-hidden="true"><FolderOpen size={18} /></span>
+              <span className="file-space-invalid-path-copy">
+                <strong>{rootStatusMessage}</strong>
+                <span>{snapshot.rootPath}</span>
+              </span>
             </div>
           ) : null}
           <div className="file-space-setup-options">
-            <div>
-              <button
-                className="file-space-primary-button"
-                type="button"
-                disabled={busyAction === "configure"}
-                onClick={() => void chooseStorageRoot("new")}
-              >
-                <FolderPlus size={16} />
+            <button
+              className="file-space-setup-option is-primary"
+              type="button"
+              disabled={busyAction === "configure"}
+              aria-busy={busyAction === "configure" && rootSetupMode === "new"}
+              onClick={() => void chooseStorageRoot("new")}
+            >
+              <span className="file-space-setup-option-icon" aria-hidden="true">
                 {busyAction === "configure" && rootSetupMode === "new"
+                  ? <LoaderCircle className="is-spinning" size={19} />
+                  : <FolderPlus size={19} />}
+              </span>
+              <span className="file-space-setup-option-copy">
+                <strong>{busyAction === "configure" && rootSetupMode === "new"
                   ? t("fileSpace.root.choosingNew")
-                  : t("fileSpace.root.createNew")}
-              </button>
-              <small>{t("fileSpace.root.createNewDescription")}</small>
-            </div>
-            <div>
-              <button
-                className="file-space-secondary-button"
-                type="button"
-                disabled={busyAction === "configure"}
-                onClick={(event) => void chooseStorageRoot("import", event.currentTarget)}
-              >
-                <Upload size={16} />
+                  : t("fileSpace.root.createNew")}</strong>
+                <small>{t("fileSpace.root.createNewDescription")}</small>
+              </span>
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
+            <button
+              className="file-space-setup-option"
+              type="button"
+              disabled={busyAction === "configure"}
+              aria-busy={busyAction === "configure" && rootSetupMode === "import"}
+              onClick={(event) => void chooseStorageRoot("import", event.currentTarget)}
+            >
+              <span className="file-space-setup-option-icon" aria-hidden="true">
                 {busyAction === "configure" && rootSetupMode === "import"
+                  ? <LoaderCircle className="is-spinning" size={19} />
+                  : <Upload size={19} />}
+              </span>
+              <span className="file-space-setup-option-copy">
+                <strong>{busyAction === "configure" && rootSetupMode === "import"
                   ? t("fileSpace.root.importingExisting")
-                  : t("fileSpace.root.importExisting")}
-              </button>
-              <small>{t("fileSpace.root.importExistingDescription")}</small>
-            </div>
+                  : t("fileSpace.root.importExisting")}</strong>
+                <small>{t("fileSpace.root.importExistingDescription")}</small>
+              </span>
+              <ChevronRight size={16} aria-hidden="true" />
+            </button>
           </div>
           {setupCancelled ? <p className="file-space-setup-feedback">{t("fileSpace.root.cancel")}</p> : null}
           {error ? <p className="file-space-error" role="alert">{error}</p> : null}
@@ -5757,11 +5833,30 @@ export function FileSpacePage() {
 
           {visibleFolders.length === 0 && filePageTotal === 0 && !filePageLoading ? (
             !showEmptyDropZone ? (
-              <div className="file-space-empty file-space-empty--search">
-                {searchLoading ? <LoaderCircle className="is-spinning" size={25} /> : <FolderOpen size={27} strokeWidth={1.4} />}
-                <strong>{searchLoading
+              <div
+                className="file-space-empty file-space-empty--search"
+                role="region"
+                aria-label={searchLoading ? t("fileSpace.content.searching") : t("fileSpace.content.noResults")}
+              >
+                <span className="file-space-empty-symbol" aria-hidden="true">
+                  {searchLoading ? <LoaderCircle className="is-spinning" size={22} /> : <Search size={22} strokeWidth={1.5} />}
+                </span>
+                <strong role="status" aria-live="polite">{searchLoading
                   ? t("fileSpace.content.searching")
                   : t("fileSpace.content.noResults")}</strong>
+                {!searchLoading ? <span>{t("fileSpace.globalSearch.noResultsDescription")}</span> : null}
+                {!searchLoading && (normalizedQuery || hasRestrictiveFilters) ? (
+                  <div className="file-space-empty-recovery">
+                    {normalizedQuery ? (
+                      <button className="is-primary" type="button" onClick={() => setQuery("")}>
+                        {t("fileSpace.toolbar.clearSearch")}
+                      </button>
+                    ) : null}
+                    {hasRestrictiveFilters ? (
+                      <button type="button" onClick={resetFilters}>{t("fileSpace.toolbar.reset")}</button>
+                    ) : null}
+                  </div>
+                ) : null}
               </div>
             ) : (
               <div
@@ -5770,37 +5865,25 @@ export function FileSpacePage() {
                 aria-label={t("fileSpace.content.emptyDropTitle")}
                 aria-busy={busyAction === "import"}
               >
-                <div className="file-space-empty-illustration" aria-hidden="true">
-                  <svg className="file-space-empty-thread" viewBox="0 0 350 184" preserveAspectRatio="none">
-                    <path d="M64 49 C112 44 114 75 148 86" />
-                    <path d="M112 136 C130 132 137 114 149 104" />
-                    <path d="M201 85 C236 70 247 51 279 51" />
-                    <path d="M201 105 C229 115 236 130 247 135" />
-                    <circle cx="148" cy="86" r="3.5" />
-                    <circle cx="149" cy="104" r="3.5" />
-                    <circle cx="201" cy="85" r="3.5" />
-                    <circle cx="201" cy="105" r="3.5" />
-                  </svg>
-                  <span className="file-space-empty-node is-document"><FileText size={21} strokeWidth={1.45} /></span>
-                  <span className="file-space-empty-node is-image"><FileImage size={21} strokeWidth={1.45} /></span>
-                  <span className="file-space-empty-node is-sheet"><FileSpreadsheet size={21} strokeWidth={1.45} /></span>
-                  <span className="file-space-empty-node is-note"><FileText size={21} strokeWidth={1.45} /></span>
-                  <span className="file-space-empty-destination">
-                    <span className="file-space-empty-folder-mark">
-                      <Folder size={49} strokeWidth={1.25} />
-                    </span>
-                  </span>
+                <div className="file-space-empty-folder-symbol" aria-hidden="true">
+                  <Folder size={34} strokeWidth={1.35} />
+                  <span><Upload size={13} strokeWidth={1.8} /></span>
                 </div>
                 <strong role="status" aria-live="polite" aria-atomic="true">
                   {busyAction === "import"
                     ? t("fileSpace.content.uploading")
                     : isFileDragOver
                       ? t("fileSpace.content.emptyDropActiveTitle")
-                      : t("fileSpace.content.emptyDropTitle")}
+                      : t("fileSpace.content.emptyTitle")}
                 </strong>
-                <span>{t("fileSpace.content.emptyDropDescription")}</span>
+                <span>{isFileDragOver
+                  ? t("fileSpace.content.emptyDropDescription")
+                  : t("fileSpace.content.emptyDescription")}</span>
+                {!isFileDragOver ? (
+                  <span className="file-space-empty-drop-hint"><Upload size={13} />{t("fileSpace.content.emptyDropTitle")}</span>
+                ) : null}
                 <div className="file-space-empty-actions">
-                  <button type="button" disabled={Boolean(busyAction)} onClick={() => void importFiles()}>
+                  <button className="is-primary" type="button" disabled={Boolean(busyAction)} onClick={() => void importFiles()}>
                     <Upload size={16} />
                     {busyAction === "import" ? t("fileSpace.content.uploading") : t("fileSpace.content.uploadLocalFiles")}
                   </button>
