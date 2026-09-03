@@ -16,6 +16,8 @@ import {
 import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import type { AgentCliKey } from "../../shared/brand/AgentCliLogo";
 import { usePresence } from "../../shared/ui/usePresence";
@@ -246,6 +248,25 @@ function AiNoSourcesAnswer({ onOpenBackgroundStatus }: AiNoSourcesAnswerProps) {
         {t("fileSpace.ai.noSourcesAfter")}
       </p>
     </section>
+  );
+}
+
+function AiMarkdownAnswer({ answer }: { answer: string }) {
+  return (
+    <div className="file-space-ai-answer-content">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        skipHtml
+        disallowedElements={["img"]}
+        components={{
+          a: ({ children, ...props }) => (
+            <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>
+          ),
+        }}
+      >
+        {visibleAiAnswer(answer)}
+      </ReactMarkdown>
+    </div>
   );
 }
 
@@ -588,7 +609,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                             <span className="file-space-ai-answer-mark" aria-hidden="true">
                               <img src={lumeTraceLogo} alt="" />
                             </span>
-                            <p>{visibleAiAnswer(turn.answer)}</p>
+                            <AiMarkdownAnswer answer={turn.answer} />
                             <small className="file-space-ai-processing-time">
                               {t("fileSpace.ai.processedIn", {
                                 seconds: aiAnswerDurationSeconds(

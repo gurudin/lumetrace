@@ -6789,6 +6789,124 @@ button.file-space-ai-header-service:hover {
   white-space: pre-wrap;
 }
 
+.file-space-ai-answer-content {
+  min-width: 0;
+  margin: 1px 0 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.68;
+  overflow-wrap: anywhere;
+}
+
+.file-space-ai-answer-content > :first-child { margin-top: 0; }
+.file-space-ai-answer-content > :last-child { margin-bottom: 0; }
+
+.file-space-ai-answer-content p {
+  margin: 0 0 9px;
+}
+
+.file-space-ai-answer-content ul,
+.file-space-ai-answer-content ol {
+  margin: 3px 0 10px;
+  padding-inline-start: 20px;
+}
+
+.file-space-ai-answer-content li {
+  margin: 2px 0;
+  padding-inline-start: 1px;
+}
+
+.file-space-ai-answer-content li > p { margin: 0; }
+.file-space-ai-answer-content strong { font-weight: 650; }
+
+.file-space-ai-answer-content h1,
+.file-space-ai-answer-content h2,
+.file-space-ai-answer-content h3,
+.file-space-ai-answer-content h4,
+.file-space-ai-answer-content h5,
+.file-space-ai-answer-content h6 {
+  margin: 14px 0 6px;
+  font-size: 12px;
+  font-weight: 680;
+  line-height: 1.45;
+}
+
+.file-space-ai-answer-content blockquote {
+  margin: 9px 0;
+  padding: 1px 0 1px 9px;
+  border-left: 2px solid color-mix(in srgb, var(--text-muted) 38%, var(--separator));
+  color: var(--text-muted);
+}
+
+.file-space-ai-answer-content blockquote > :last-child { margin-bottom: 0; }
+
+.file-space-ai-answer-content a {
+  color: var(--highlight);
+  text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
+  text-underline-offset: 2px;
+}
+
+.file-space-ai-answer-content a:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid color-mix(in srgb, var(--highlight) 44%, transparent);
+  outline-offset: 2px;
+}
+
+.file-space-ai-answer-content code {
+  padding: 1px 4px;
+  border: 1px solid color-mix(in srgb, var(--separator) 72%, transparent);
+  border-radius: 4px;
+  background: var(--surface-subtle);
+  font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+  font-size: 11px;
+}
+
+.file-space-ai-answer-content pre {
+  max-width: 100%;
+  margin: 9px 0;
+  padding: 9px 10px;
+  overflow-x: auto;
+  border: 1px solid var(--separator);
+  border-radius: 7px;
+  background: var(--surface-subtle);
+}
+
+.file-space-ai-answer-content pre code {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  line-height: 1.55;
+  white-space: pre;
+}
+
+.file-space-ai-answer-content table {
+  display: block;
+  max-width: 100%;
+  margin: 9px 0;
+  overflow-x: auto;
+  border-collapse: collapse;
+}
+
+.file-space-ai-answer-content th,
+.file-space-ai-answer-content td {
+  padding: 5px 7px;
+  border: 1px solid var(--separator);
+  text-align: left;
+  vertical-align: top;
+}
+
+.file-space-ai-answer-content th {
+  background: var(--surface-subtle);
+  font-weight: 650;
+}
+
+.file-space-ai-answer-content hr {
+  height: 1px;
+  margin: 12px 0;
+  border: 0;
+  background: var(--separator);
+}
+
 .file-space-ai-no-sources-link {
   margin: 0;
   padding: 0;

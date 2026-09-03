@@ -25,6 +25,13 @@ test("removes citation markers from the visible AI answer", () => {
   );
 });
 
+test("preserves Markdown structure while removing citations", () => {
+  assert.equal(
+    visibleAiAnswer("- **关键改进** [S1]\n- 使用 `15 秒` 窗口 [S2]"),
+    "- **关键改进**\n- 使用 `15 秒` 窗口",
+  );
+});
+
 test("aggregates citations by file and sorts primary evidence first", () => {
   assert.deepEqual(referencedAiFiles(sources).map((source) => ({
     fileName: source.fileName,
