@@ -779,7 +779,7 @@ fn cloud_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Valu
     json!({
         "model": settings.model,
         "messages": [{ "role": "user", "content": prompt }],
-        "reasoning_effort": "none",
+        "reasoning_effort": "high",
         "stream": true,
     })
 }
@@ -1266,7 +1266,7 @@ mod tests {
         assert!(openai.get("max_tokens").is_none());
 
         let cloud = cloud_chat_request_payload(&settings, "question");
-        assert_eq!(cloud["reasoning_effort"], "none");
+        assert_eq!(cloud["reasoning_effort"], "high");
         assert!(cloud.get("temperature").is_none());
         assert!(cloud.get("max_tokens").is_none());
 
