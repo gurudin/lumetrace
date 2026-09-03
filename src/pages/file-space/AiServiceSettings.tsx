@@ -80,7 +80,7 @@ interface AiServiceSettingsProps {
 }
 
 const cloudProvider: CloudProvider = "openai";
-const defaultCloudBaseUrl = "https://api.openai.com/v1";
+const defaultCloudBaseUrl = "";
 const localProviders: readonly LocalProvider[] = ["ollama", "lmStudio"];
 const localProviderExampleUrls: Record<LocalProvider, string> = {
   ollama: "http://127.0.0.1:11434",
