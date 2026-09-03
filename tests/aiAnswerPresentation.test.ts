@@ -2,11 +2,12 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   aiAnswerDurationSeconds,
+  aiPendingStatusKey,
   aiPendingElapsedSeconds,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
-  shouldAcceptAiThinkingProgress,
+  shouldAcceptAiProgress,
   shouldSelectAiSourceFromClickDetail,
   visibleAiAnswer,
 } from "../src/pages/file-space/aiAnswerPresentation.ts";
@@ -67,17 +68,23 @@ test("AI source clicks select once while leaving double-click to open", () => {
   assert.equal(shouldSelectAiSourceFromClickDetail(2), false);
 });
 
-test("AI thinking events update only their active request", () => {
+test("AI progress events update only their active request", () => {
   const progress = {
     requestId: "request-current",
-    phase: "thinking",
+    phase: "thinking" as const,
     thinking: "checking sources",
   };
-  assert.equal(shouldAcceptAiThinkingProgress("request-current", progress), true);
-  assert.equal(shouldAcceptAiThinkingProgress("request-old", progress), false);
-  assert.equal(shouldAcceptAiThinkingProgress(null, progress), false);
+  assert.equal(shouldAcceptAiProgress("request-current", progress), true);
+  assert.equal(shouldAcceptAiProgress("request-old", progress), false);
+  assert.equal(shouldAcceptAiProgress(null, progress), false);
   assert.equal(
-    shouldAcceptAiThinkingProgress("request-current", { ...progress, phase: "answer" }),
+    shouldAcceptAiProgress("request-current", { ...progress, phase: "answer" as never }),
     false,
   );
+});
+
+test("AI progress phases map to distinct waiting copy", () => {
+  assert.equal(aiPendingStatusKey("retrieving"), "asking");
+  assert.equal(aiPendingStatusKey("generating"), "generating");
+  assert.equal(aiPendingStatusKey("thinking"), "thinking");
 });

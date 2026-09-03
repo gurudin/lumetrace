@@ -21,14 +21,16 @@ import type { AgentCliKey } from "../../shared/brand/AgentCliLogo";
 import { usePresence } from "../../shared/ui/usePresence";
 import {
   aiAnswerDurationSeconds,
+  aiPendingStatusKey,
   aiPendingElapsedSeconds,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
-  shouldAcceptAiThinkingProgress,
+  shouldAcceptAiProgress,
   shouldSelectAiSourceFromClickDetail,
   visibleAiAnswer,
-  type AiThinkingProgress,
+  type AiProgress,
+  type AiProgressPhase,
   type FileSpaceAiSourceReference,
 } from "./aiAnswerPresentation";
 import { recordAgentCliRuntimeSuccess } from "./agentCliDetection";
@@ -174,9 +176,11 @@ function AiSourcesDisclosure({ turnId, sources, onOpenSource }: AiSourcesDisclos
 }
 
 function AiPendingAnswer({
+  phase,
   thinking,
   startedAt,
 }: {
+  phase: AiProgressPhase;
   thinking: string;
   startedAt: number | null;
 }) {
@@ -204,7 +208,7 @@ function AiPendingAnswer({
     <section className="file-space-ai-answer is-loading" role="status">
       <span><LoaderCircle className="is-spinning" size={16} /></span>
       <div className="file-space-ai-pending-copy">
-        <p>{t(thinking ? "fileSpace.ai.thinking" : "fileSpace.ai.asking")}</p>
+        <p>{t(`fileSpace.ai.${aiPendingStatusKey(phase)}`)}</p>
         {thinking ? (
           <div className="file-space-ai-thinking" ref={thinkingRef} aria-live="polite">
             {thinking}
@@ -255,6 +259,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const [turns, setTurns] = useState<FileSpaceAiTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingErrorCode, setPendingErrorCode] = useState<string | null>(null);
+  const [pendingPhase, setPendingPhase] = useState<AiProgressPhase>("retrieving");
   const [pendingThinking, setPendingThinking] = useState("");
   const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -304,9 +309,10 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     if (!isTauri()) return undefined;
     let disposed = false;
     let stopListening: (() => void) | undefined;
-    void listen<AiThinkingProgress>("file-space-ai-progress", ({ payload }) => {
-      if (!shouldAcceptAiThinkingProgress(activeRequestIdRef.current, payload)) return;
-      setPendingThinking(payload.thinking);
+    void listen<AiProgress>("file-space-ai-progress", ({ payload }) => {
+      if (!shouldAcceptAiProgress(activeRequestIdRef.current, payload)) return;
+      setPendingPhase(payload.phase);
+      setPendingThinking(payload.phase === "thinking" ? payload.thinking : "");
     }).then((unlisten) => {
       if (disposed) unlisten();
       else stopListening = unlisten;
@@ -379,7 +385,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       window.cancelAnimationFrame(frame);
       window.cancelAnimationFrame(layoutFrame);
     };
-  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingQuestion, pendingThinking, requestState, turns]);
+  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingPhase, pendingQuestion, pendingThinking, requestState, turns]);
 
   const updateConversationFollowState = () => {
     const scrollOwner = conversationRef.current;
@@ -415,6 +421,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     setQuestion("");
     setRequestState("asking");
     setPendingErrorCode(null);
+    setPendingPhase("retrieving");
     setPendingThinking("");
     if (retryTurnId) {
       setTurns((current) => current.map((turn) => (
@@ -455,6 +462,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     } finally {
       requestInFlightRef.current = false;
       activeRequestIdRef.current = null;
+      setPendingPhase("retrieving");
       setPendingThinking("");
       setRequestStartedAt(null);
       setRequestState("idle");
@@ -551,6 +559,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                     </section>
                     {turn.status === "pending" ? (
                       <AiPendingAnswer
+                        phase={pendingPhase}
                         thinking={pendingThinking}
                         startedAt={requestStartedAt ?? turn.updatedAt}
                       />
@@ -609,6 +618,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                     </section>
                     {requestState === "asking" ? (
                       <AiPendingAnswer
+                        phase={pendingPhase}
                         thinking={pendingThinking}
                         startedAt={requestStartedAt}
                       />

@@ -421,6 +421,7 @@ export const zh = {
       questionLabel: "你的问题",
       answerLabel: "Lumie 回答",
       asking: "正在检索相关文件…",
+      generating: "正在等待 AI 响应…",
       thinking: "正在思考…",
       waiting: "已等待 {{seconds}}s",
       answerErrorTitle: "无法完成回答",

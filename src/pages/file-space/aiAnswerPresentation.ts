@@ -17,19 +17,27 @@ export interface FileSpaceAiSourceReference extends AiCitationSource {
 
 export const openBackgroundStatusEventName = "lumetrace:open-background-status";
 
-export interface AiThinkingProgress {
+export type AiProgressPhase = "retrieving" | "generating" | "thinking";
+
+export interface AiProgress {
   requestId: string;
-  phase: string;
+  phase: AiProgressPhase;
   thinking: string;
 }
 
-export function shouldAcceptAiThinkingProgress(
+export function shouldAcceptAiProgress(
   activeRequestId: string | null | undefined,
-  progress: AiThinkingProgress,
+  progress: AiProgress,
 ) {
   return Boolean(activeRequestId)
     && progress.requestId === activeRequestId
-    && progress.phase === "thinking";
+    && ["retrieving", "generating", "thinking"].includes(progress.phase);
+}
+
+export function aiPendingStatusKey(phase: AiProgressPhase) {
+  if (phase === "generating") return "generating";
+  if (phase === "thinking") return "thinking";
+  return "asking";
 }
 
 export function isAiNoSourcesError(errorCode: string | null | undefined) {

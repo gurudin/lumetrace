@@ -1,5 +1,5 @@
 use crate::{
-    agent_cli::{codex_exec_command, resolve_agent_cli_executable},
+    agent_cli::{codex_answer_command, resolve_agent_cli_executable},
     ai_service::{load_active_ai_service_record, run_local_llm, ActiveAiService, LocalLlmSettings},
     database::{self, Database},
     file_space::lock_file_space_operations,
@@ -101,6 +101,22 @@ struct FileSpaceAiProgress {
     request_id: String,
     phase: String,
     thinking: String,
+}
+
+fn emit_file_space_ai_progress(
+    app: &tauri::AppHandle,
+    request_id: &str,
+    phase: &str,
+    thinking: &str,
+) {
+    let _ = app.emit(
+        FILE_SPACE_AI_PROGRESS_EVENT,
+        FileSpaceAiProgress {
+            request_id: request_id.to_owned(),
+            phase: phase.to_owned(),
+            thinking: thinking.to_owned(),
+        },
+    );
 }
 
 #[derive(Debug)]
@@ -890,16 +906,21 @@ fn drain_hermes_reasoning(
 impl CodexJsonStream {
     fn push_line(&mut self, line: &str) -> Option<&str> {
         let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
-        if event.get("type").and_then(serde_json::Value::as_str) != Some("item.completed") {
+        let event_type = event.get("type").and_then(serde_json::Value::as_str)?;
+        let item = event.get("item")?;
+        let item_type = item.get("type").and_then(serde_json::Value::as_str);
+        if event_type == "item.started" && item_type == Some("reasoning") {
+            return Some(&self.thinking);
+        }
+        if event_type != "item.completed" {
             return None;
         }
-        let item = event.get("item")?;
         let text = item
             .get("text")
             .and_then(serde_json::Value::as_str)
             .map(str::trim)
             .filter(|text| !text.is_empty())?;
-        match item.get("type").and_then(serde_json::Value::as_str) {
+        match item_type {
             Some("reasoning") => {
                 if !self.thinking.is_empty() {
                     self.thinking.push('\n');
@@ -1041,7 +1062,7 @@ fn run_codex(
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
-    let mut child = codex_exec_command(executable, &neutral_directory)
+    let mut child = codex_answer_command(executable, &neutral_directory)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -1154,6 +1175,7 @@ fn ask_file_space_ai_blocking(
     let turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
     let answer_result = (|| {
+        emit_file_space_ai_progress(&app, &request_id, "retrieving", "");
         let retrieval_plan = build_retrieval_plan(&question, &history);
         let semantic_runtime = app.state::<SemanticSearchRuntime>();
         let (prompt, sources) = {
@@ -1171,18 +1193,17 @@ fn ask_file_space_ai_blocking(
             }
             (build_prompt(&question, &sources, &history), sources)
         };
+        emit_file_space_ai_progress(&app, &request_id, "generating", "");
         let generated_answer = match &executor {
             AiExecutor::Hermes(executable) => {
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
                 let mut emit_thinking = move |thinking: &str| {
-                    let _ = progress_app.emit(
-                        FILE_SPACE_AI_PROGRESS_EVENT,
-                        FileSpaceAiProgress {
-                            request_id: progress_request_id.clone(),
-                            phase: "thinking".to_owned(),
-                            thinking: thinking.to_owned(),
-                        },
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
                     );
                 };
                 run_hermes(executable, &prompt, &mut emit_thinking)?
@@ -1191,13 +1212,11 @@ fn ask_file_space_ai_blocking(
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
                 let mut emit_thinking = move |thinking: &str| {
-                    let _ = progress_app.emit(
-                        FILE_SPACE_AI_PROGRESS_EVENT,
-                        FileSpaceAiProgress {
-                            request_id: progress_request_id.clone(),
-                            phase: "thinking".to_owned(),
-                            thinking: thinking.to_owned(),
-                        },
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
                     );
                 };
                 run_codex(executable, &prompt, &mut emit_thinking)?
@@ -1206,13 +1225,11 @@ fn ask_file_space_ai_blocking(
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
                 let mut emit_thinking = move |thinking: &str| {
-                    let _ = progress_app.emit(
-                        FILE_SPACE_AI_PROGRESS_EVENT,
-                        FileSpaceAiProgress {
-                            request_id: progress_request_id.clone(),
-                            phase: "thinking".to_owned(),
-                            thinking: thinking.to_owned(),
-                        },
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
                     );
                 };
                 run_local_llm(settings, &prompt, &mut emit_thinking)?
@@ -1568,6 +1585,12 @@ mod tests {
     #[test]
     fn codex_jsonl_stream_collects_reasoning_and_the_final_message() {
         let mut stream = CodexJsonStream::default();
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"item.started","item":{"id":"item_0","type":"reasoning","text":""}}"#
+            ),
+            Some("")
+        );
         assert_eq!(
             stream.push_line(
                 r#"{"type":"item.completed","item":{"id":"item_0","type":"reasoning","text":"Compare the evidence."}}"#

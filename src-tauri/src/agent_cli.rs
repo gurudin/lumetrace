@@ -340,7 +340,11 @@ fn run_prepared_command(mut command: Command, stdin_input: Option<&str>) -> Comm
     }
 }
 
-pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Command {
+fn configured_codex_exec_command(
+    executable: &Path,
+    working_dir: &Path,
+    include_reasoning_summary: bool,
+) -> Command {
     let mut command = Command::new(executable);
     command
         .arg("-a")
@@ -369,6 +373,15 @@ pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Comma
         .arg("-c")
         .arg("web_search=\"disabled\"")
         .current_dir(working_dir);
+    if include_reasoning_summary {
+        command
+            .arg("-c")
+            .arg("model_reasoning_effort=\"low\"")
+            .arg("-c")
+            .arg("model_reasoning_summary=\"auto\"")
+            .arg("-c")
+            .arg("hide_agent_reasoning=false");
+    }
     // Keep the user's model/provider/auth configuration, but do not start the
     // user's unrelated MCP servers for a RAG answer whose complete evidence is
     // already supplied by Lume Trace in the prompt.
@@ -382,6 +395,14 @@ pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Comma
         command.env_remove(key);
     }
     command
+}
+
+pub(crate) fn codex_exec_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_codex_exec_command(executable, working_dir, false)
+}
+
+pub(crate) fn codex_answer_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_codex_exec_command(executable, working_dir, true)
 }
 
 fn claude_is_authenticated(output: &str) -> bool {
@@ -783,6 +804,35 @@ mod tests {
         ] {
             assert!(arguments.iter().any(|argument| argument == feature));
         }
+    }
+
+    #[test]
+    fn codex_answers_request_low_reasoning_with_visible_summaries() {
+        let command = codex_answer_command(Path::new("codex"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        for config in [
+            "model_reasoning_effort=\"low\"",
+            "model_reasoning_summary=\"auto\"",
+            "hide_agent_reasoning=false",
+        ] {
+            assert!(arguments.iter().any(|argument| argument == config));
+        }
+        assert_eq!(arguments.last().map(String::as_str), Some("-"));
+    }
+
+    #[test]
+    fn codex_connection_check_does_not_enable_reasoning() {
+        let command = codex_exec_command(Path::new("codex"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument.starts_with("model_reasoning_")));
     }
 
     #[test]

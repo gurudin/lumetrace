@@ -377,6 +377,7 @@ export const de = {
       questionLabel: "Ihre Frage",
       answerLabel: "Lumies Antwort",
       asking: "Relevante Dateien werden durchsucht …",
+      generating: "Auf KI-Antwort warten …",
       thinking: "Denkt nach …",
       waiting: "Wartezeit: {{seconds}} s",
       answerErrorTitle: "Antwort konnte nicht abgeschlossen werden",

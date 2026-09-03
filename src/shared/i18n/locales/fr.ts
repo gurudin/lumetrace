@@ -377,6 +377,7 @@ export const fr = {
       questionLabel: "Votre question",
       answerLabel: "Réponse de Lumie",
       asking: "Recherche des fichiers pertinents…",
+      generating: "En attente de la réponse de l’IA…",
       thinking: "Réflexion en cours…",
       waiting: "Attente : {{seconds}} s",
       answerErrorTitle: "Impossible de terminer la réponse",

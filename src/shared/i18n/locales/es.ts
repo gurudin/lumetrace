@@ -377,6 +377,7 @@ export const es = {
       questionLabel: "Tu pregunta",
       answerLabel: "Respuesta de Lumie",
       asking: "Buscando archivos relevantes…",
+      generating: "Esperando la respuesta de la IA…",
       thinking: "Pensando…",
       waiting: "Esperando {{seconds}} s",
       answerErrorTitle: "No se pudo completar la respuesta",

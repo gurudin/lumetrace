@@ -377,6 +377,7 @@ export const ko = {
       questionLabel: "내 질문",
       answerLabel: "Lumie 답변",
       asking: "관련 파일 검색 중…",
+      generating: "AI 응답을 기다리는 중…",
       thinking: "생각하는 중…",
       waiting: "{{seconds}}초 대기 중",
       answerErrorTitle: "답변을 완료하지 못했습니다",

@@ -377,6 +377,7 @@ export const ja = {
       questionLabel: "あなたの質問",
       answerLabel: "Lumie の回答",
       asking: "関連ファイルを検索中…",
+      generating: "AI の応答を待っています…",
       thinking: "考えています…",
       waiting: "{{seconds}}秒待機中",
       answerErrorTitle: "回答を完了できませんでした",

@@ -421,6 +421,7 @@ export const en = {
       questionLabel: "Your question",
       answerLabel: "Lumie answer",
       asking: "Searching relevant files…",
+      generating: "Waiting for AI response…",
       thinking: "Thinking…",
       waiting: "Waiting {{seconds}}s",
       answerErrorTitle: "Couldn’t complete the answer",

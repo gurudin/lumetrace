@@ -377,6 +377,7 @@ export const zhTW = {
       questionLabel: "你的問題",
       answerLabel: "Lumie 回答",
       asking: "正在檢索相關檔案…",
+      generating: "正在等待 AI 回應…",
       thinking: "正在思考…",
       waiting: "已等待 {{seconds}}s",
       answerErrorTitle: "無法完成回答",
