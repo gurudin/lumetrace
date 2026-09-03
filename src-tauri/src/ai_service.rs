@@ -31,6 +31,10 @@ pub(crate) const ERROR_LOCAL_LLM_TIMEOUT: &str = "ai_local_llm_timeout";
 pub(crate) const ERROR_LOCAL_LLM_FAILED: &str = "ai_local_llm_failed";
 pub(crate) const ERROR_LOCAL_LLM_EMPTY: &str = "ai_local_llm_empty";
 pub(crate) const ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE: &str = "ai_local_llm_output_too_large";
+pub(crate) const ERROR_CLOUD_AI_UNAVAILABLE: &str = "ai_cloud_unavailable";
+pub(crate) const ERROR_CLOUD_AI_FAILED: &str = "ai_cloud_failed";
+pub(crate) const ERROR_CLOUD_AI_EMPTY: &str = "ai_cloud_empty";
+pub(crate) const ERROR_CLOUD_AI_OUTPUT_TOO_LARGE: &str = "ai_cloud_output_too_large";
 
 const ERROR_LOCAL_LLM_INVALID_URL: &str = "local_llm_invalid_url";
 const ERROR_LOCAL_LLM_CONNECTION_FAILED: &str = "local_llm_connection_failed";
@@ -44,6 +48,26 @@ struct StoredCloudAiSettings {
     provider: String,
     base_url: String,
     model: String,
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) struct CloudAiRuntimeSettings {
+    provider: String,
+    pub(crate) base_url: String,
+    pub(crate) model: String,
+    api_key: String,
+}
+
+impl std::fmt::Debug for CloudAiRuntimeSettings {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CloudAiRuntimeSettings")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("api_key", &"[redacted]")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -105,6 +129,7 @@ pub struct AiServiceSettingsSnapshot {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) enum ActiveAiService {
+    Cloud(CloudAiRuntimeSettings),
     Local(LocalLlmSettings),
     AgentCli(AgentCliSettings),
 }
@@ -252,10 +277,27 @@ fn load_stored_cloud_ai_settings_record(
 }
 
 fn cloud_ai_is_configured(database: &Database) -> Result<bool, String> {
-    let has_settings = load_stored_cloud_ai_settings_record(database)?.is_some();
-    let has_api_key = read_setting(database, CLOUD_AI_API_KEY_KEY)?
-        .is_some_and(|api_key| validate_api_key(api_key).is_ok());
-    Ok(has_settings && has_api_key)
+    Ok(load_cloud_ai_runtime_settings_record(database)?.is_some())
+}
+
+fn load_cloud_ai_runtime_settings_record(
+    database: &Database,
+) -> Result<Option<CloudAiRuntimeSettings>, String> {
+    let Some(settings) = load_stored_cloud_ai_settings_record(database)? else {
+        return Ok(None);
+    };
+    let Some(api_key) = read_setting(database, CLOUD_AI_API_KEY_KEY)? else {
+        return Ok(None);
+    };
+    let Ok(api_key) = validate_api_key(api_key) else {
+        return Ok(None);
+    };
+    Ok(Some(CloudAiRuntimeSettings {
+        provider: settings.provider,
+        base_url: settings.base_url,
+        model: settings.model,
+        api_key,
+    }))
 }
 
 pub(crate) fn load_local_llm_settings_record(
@@ -292,16 +334,17 @@ fn resolved_mode(
 pub(crate) fn load_active_ai_service_record(
     database: &Database,
 ) -> Result<Option<ActiveAiService>, String> {
-    let cloud_configured = cloud_ai_is_configured(database)?;
+    let cloud = load_cloud_ai_runtime_settings_record(database)?;
     let local = load_local_llm_settings_record(database)?;
     let agent_cli = load_agent_cli_settings_record(database)?;
     let mode = resolved_mode(
         load_service_mode_record(database)?,
-        cloud_configured,
+        cloud.is_some(),
         &local,
         &agent_cli,
     );
     Ok(match mode.as_deref() {
+        Some(AI_SERVICE_MODE_CLOUD) => cloud.map(ActiveAiService::Cloud),
         Some(AI_SERVICE_MODE_LOCAL) => local.map(ActiveAiService::Local),
         Some(AI_SERVICE_MODE_AGENT_CLI) => agent_cli.map(ActiveAiService::AgentCli),
         _ => None,
@@ -748,14 +791,19 @@ fn run_openai_stream(
     client: &Client,
     settings: &LocalLlmSettings,
     prompt: &str,
+    api_key: Option<&str>,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
     let request_body = serde_json::to_vec(&openai_chat_request_payload(settings, prompt))
         .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
-    let response = client
+    let mut request = client
         .post(chat_endpoint(&settings.base_url))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(request_body)
+        .body(request_body);
+    if let Some(api_key) = api_key {
+        request = request.bearer_auth(api_key);
+    }
+    let response = request
         .send()
         .map_err(|error| {
             if error.is_timeout() {
@@ -872,8 +920,66 @@ pub(crate) fn run_local_llm(
     if settings.provider == "ollama" {
         final_stream_answer(run_ollama_stream(&client, &settings, prompt, on_thinking)?)
     } else {
-        final_stream_answer(run_openai_stream(&client, &settings, prompt, on_thinking)?)
+        final_stream_answer(run_openai_stream(
+            &client,
+            &settings,
+            prompt,
+            None,
+            on_thinking,
+        )?)
     }
+}
+
+fn cloud_runtime_error(error: String) -> String {
+    match error.as_str() {
+        ERROR_LOCAL_LLM_UNAVAILABLE | ERROR_LOCAL_LLM_TIMEOUT => {
+            ERROR_CLOUD_AI_UNAVAILABLE.to_owned()
+        }
+        ERROR_LOCAL_LLM_EMPTY => ERROR_CLOUD_AI_EMPTY.to_owned(),
+        ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE => ERROR_CLOUD_AI_OUTPUT_TOO_LARGE.to_owned(),
+        _ => ERROR_CLOUD_AI_FAILED.to_owned(),
+    }
+}
+
+pub(crate) fn run_cloud_ai(
+    settings: &CloudAiRuntimeSettings,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let settings = CloudAiRuntimeSettings {
+        provider: validate_cloud_provider(settings.provider.clone())
+            .map_err(|_| ERROR_CLOUD_AI_UNAVAILABLE.to_owned())?,
+        base_url: normalize_cloud_base_url(&settings.base_url)
+            .map_err(|_| ERROR_CLOUD_AI_UNAVAILABLE.to_owned())?,
+        model: validate_model(settings.model.clone())
+            .map_err(|_| ERROR_CLOUD_AI_UNAVAILABLE.to_owned())?,
+        api_key: validate_api_key(settings.api_key.clone())
+            .map_err(|_| ERROR_CLOUD_AI_UNAVAILABLE.to_owned())?,
+    };
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .build()
+        .map_err(|_| ERROR_CLOUD_AI_UNAVAILABLE.to_owned())?;
+    let CloudAiRuntimeSettings {
+        base_url,
+        model,
+        api_key,
+        ..
+    } = settings;
+    let compatible_settings = LocalLlmSettings {
+        provider: "lmStudio".to_owned(),
+        base_url,
+        model,
+    };
+    let result = run_openai_stream(
+        &client,
+        &compatible_settings,
+        prompt,
+        Some(&api_key),
+        on_thinking,
+    )
+    .map_err(cloud_runtime_error)?;
+    final_stream_answer(result).map_err(cloud_runtime_error)
 }
 
 #[tauri::command]
@@ -948,7 +1054,60 @@ pub fn save_local_llm_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        sync::mpsc,
+        thread,
+        time::Duration,
+    };
     use uuid::Uuid;
+
+    fn spawn_cloud_chat_server() -> (String, mpsc::Receiver<String>, thread::JoinHandle<()>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let (request_sender, request_receiver) = mpsc::channel();
+        let server = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = BufReader::new(stream.try_clone().unwrap());
+            let mut request = String::new();
+            let mut content_length = 0usize;
+            loop {
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                if line == "\r\n" || line.is_empty() {
+                    break;
+                }
+                if let Some(value) = line
+                    .to_ascii_lowercase()
+                    .strip_prefix("content-length:")
+                    .map(str::trim)
+                {
+                    content_length = value.parse().unwrap();
+                }
+                request.push_str(&line);
+            }
+            let mut body = vec![0u8; content_length];
+            reader.read_exact(&mut body).unwrap();
+            request.push_str("\r\n");
+            request.push_str(std::str::from_utf8(&body).unwrap());
+            request_sender.send(request).unwrap();
+
+            let response_body = r#"{"choices":[{"message":{"content":"<LUMETRACE_ANSWER>云端回答 [S1]</LUMETRACE_ANSWER>"}}]}"#;
+            write!(
+                stream,
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                response_body.len(),
+                response_body
+            )
+            .unwrap();
+            stream.flush().unwrap();
+        });
+        (format!("http://{address}/v1"), request_receiver, server)
+    }
 
     #[test]
     fn base_urls_are_normalized_and_unsafe_shapes_are_rejected() {
@@ -1182,6 +1341,15 @@ mod tests {
             load_service_mode_record(&database).unwrap().as_deref(),
             Some("cloud")
         );
+        let active = load_active_ai_service_record(&database).unwrap().unwrap();
+        let ActiveAiService::Cloud(runtime) = active else {
+            panic!("saved cloud settings must activate cloud AI");
+        };
+        assert_eq!(runtime.base_url, "https://api.openai.com/v1");
+        assert_eq!(runtime.model, "gpt-5-mini");
+        let debug = format!("{runtime:?}");
+        assert!(debug.contains("[redacted]"));
+        assert!(!debug.contains("sk-local-test-value"));
         assert_eq!(
             read_setting(&database, CLOUD_AI_API_KEY_KEY)
                 .unwrap()
@@ -1209,5 +1377,34 @@ mod tests {
 
         drop(database);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cloud_chat_uses_the_saved_model_and_bearer_key() {
+        let (base_url, request_receiver, server) = spawn_cloud_chat_server();
+        let answer = run_cloud_ai(
+            &CloudAiRuntimeSettings {
+                provider: "openai".to_owned(),
+                base_url,
+                model: "test-cloud-model".to_owned(),
+                api_key: "sk-cloud-test-secret".to_owned(),
+            },
+            "只使用检索片段回答",
+            &mut |_| {},
+        )
+        .unwrap();
+        assert_eq!(answer, "云端回答 [S1]");
+
+        let request = request_receiver
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        let normalized = request.to_ascii_lowercase();
+        assert!(normalized.starts_with("post /v1/chat/completions "));
+        assert!(normalized.contains("authorization: bearer sk-cloud-test-secret"));
+        let body = request.split_once("\r\n\r\n").unwrap().1;
+        let payload = serde_json::from_str::<Value>(body).unwrap();
+        assert_eq!(payload["model"], "test-cloud-model");
+        assert_eq!(payload["messages"][0]["content"], "只使用检索片段回答");
+        server.join().unwrap();
     }
 }

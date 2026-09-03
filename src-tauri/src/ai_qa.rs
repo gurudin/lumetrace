@@ -1,6 +1,9 @@
 use crate::{
     agent_cli::{codex_answer_command, resolve_agent_cli_executable},
-    ai_service::{load_active_ai_service_record, run_local_llm, ActiveAiService, LocalLlmSettings},
+    ai_service::{
+        load_active_ai_service_record, run_cloud_ai, run_local_llm, ActiveAiService,
+        CloudAiRuntimeSettings, LocalLlmSettings,
+    },
     database::{self, Database},
     file_space::lock_file_space_operations,
     semantic_search::{retrieve_ai_context_chunks, AiContextChunk, SemanticSearchRuntime},
@@ -161,6 +164,7 @@ struct GeneratedEvidenceSource {
 enum AiExecutor {
     Hermes(PathBuf),
     Codex(PathBuf),
+    Cloud(CloudAiRuntimeSettings),
     Local(LocalLlmSettings),
 }
 
@@ -1167,6 +1171,7 @@ fn ask_file_space_ai_blocking(
                 AiExecutor::Hermes(executable)
             }
         }
+        Some(ActiveAiService::Cloud(settings)) => AiExecutor::Cloud(settings),
         Some(ActiveAiService::Local(settings)) => AiExecutor::Local(settings),
         None => return Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned()),
     };
@@ -1221,6 +1226,19 @@ fn ask_file_space_ai_blocking(
                 };
                 run_codex(executable, &prompt, &mut emit_thinking)?
             }
+            AiExecutor::Cloud(settings) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
+                    );
+                };
+                run_cloud_ai(settings, &prompt, &mut emit_thinking)?
+            }
             AiExecutor::Local(settings) => {
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
@@ -1241,6 +1259,7 @@ fn ask_file_space_ai_blocking(
             return Err(match executor {
                 AiExecutor::Hermes(_) => ERROR_HERMES_EMPTY.to_owned(),
                 AiExecutor::Codex(_) => ERROR_CODEX_EMPTY.to_owned(),
+                AiExecutor::Cloud(_) => crate::ai_service::ERROR_CLOUD_AI_EMPTY.to_owned(),
                 AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
             });
         }

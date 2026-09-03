@@ -36,6 +36,7 @@ import {
   type FileSpaceAiSourceReference,
 } from "./aiAnswerPresentation";
 import { recordAgentCliRuntimeSuccess } from "./agentCliDetection";
+import { isAiServiceConfigured } from "./aiServiceSettingsState";
 
 export type { FileSpaceAiSourceReference } from "./aiAnswerPresentation";
 
@@ -108,6 +109,10 @@ const aiErrorKeys: Record<string, string> = {
   ai_local_llm_failed: "localLlmFailed",
   ai_local_llm_empty: "localLlmEmpty",
   ai_local_llm_output_too_large: "localLlmOutputTooLarge",
+  ai_cloud_unavailable: "cloudUnavailable",
+  ai_cloud_failed: "cloudFailed",
+  ai_cloud_empty: "cloudEmpty",
+  ai_cloud_output_too_large: "cloudOutputTooLarge",
   ai_history_failed: "historyFailed",
   ai_interrupted: "interrupted",
 };
@@ -319,8 +324,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     setConfigurationState("loading");
     try {
       const settings = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
-      const configured = (settings.mode === "local" && Boolean(settings.local))
-        || (settings.mode === "agentCli" && Boolean(settings.agentCli));
+      const configured = isAiServiceConfigured(settings);
       setServiceSettings(settings);
       if (configured) {
         const history = await invoke<FileSpaceAiTurn[]>("get_file_space_ai_history");
@@ -372,13 +376,17 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   }, [restoreTriggerFocus]);
 
   const canAsk = configurationState === "configured"
-    && ((serviceSettings?.mode === "local" && Boolean(serviceSettings.local))
+    && ((serviceSettings?.mode === "cloud"
+      && Boolean(serviceSettings.cloud?.hasApiKey && serviceSettings.cloud.model))
+      || (serviceSettings?.mode === "local" && Boolean(serviceSettings.local))
       || (serviceSettings?.mode === "agentCli"
         && (serviceSettings.agentCli?.cli === "hermes" || serviceSettings.agentCli?.cli === "codex")
         && serviceSettings.agentCli.permission === "readOnly"));
-  const activeServiceLabel = serviceSettings?.mode === "local"
-    ? serviceSettings.local?.model
-    : serviceSettings?.mode === "agentCli" && serviceSettings.agentCli
+  const activeServiceLabel = serviceSettings?.mode === "cloud"
+    ? serviceSettings.cloud?.model
+    : serviceSettings?.mode === "local"
+      ? serviceSettings.local?.model
+      : serviceSettings?.mode === "agentCli" && serviceSettings.agentCli
       ? t(`fileSpace.settings.aiService.providers.${serviceSettings.agentCli.cli}`)
       : null;
 
