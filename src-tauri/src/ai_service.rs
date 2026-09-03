@@ -37,6 +37,7 @@ const ERROR_LOCAL_LLM_CONNECTION_FAILED: &str = "local_llm_connection_failed";
 const ERROR_LOCAL_LLM_NO_MODELS: &str = "local_llm_no_models";
 const ERROR_CLOUD_AI_CONNECTION_FAILED: &str = "cloud_ai_connection_failed";
 const ERROR_CLOUD_AI_INVALID_KEY: &str = "cloud_ai_invalid_key";
+const ERROR_CLOUD_AI_MODEL_REQUIRED: &str = "cloud_ai_model_required";
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -52,6 +53,7 @@ pub struct CloudAiConnectionRequest {
     provider: String,
     base_url: String,
     api_key: Option<String>,
+    model: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -518,6 +520,7 @@ fn request_cloud_models(
     provider: String,
     base_url: String,
     api_key: String,
+    model: Option<String>,
 ) -> Result<LocalLlmConnectionResult, String> {
     validate_cloud_provider(provider)?;
     let base_url = normalize_cloud_base_url(&base_url)?;
@@ -527,16 +530,70 @@ fn request_cloud_models(
         .timeout(CLOUD_AI_CONNECTION_TIMEOUT)
         .build()
         .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+
+    if let Some(model) = model
+        .filter(|value| !value.trim().is_empty())
+        .map(validate_model)
+        .transpose()?
+    {
+        let response = client
+            .post(chat_endpoint(&base_url))
+            .bearer_auth(&api_key)
+            .header(reqwest::header::CONTENT_TYPE, "application/json")
+            .body(
+                json!({
+                    "model": model,
+                    "messages": [{ "role": "user", "content": "Reply with OK only." }],
+                    "max_tokens": 1,
+                    "stream": false
+                })
+                .to_string(),
+            )
+            .send()
+            .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+        if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+        ) {
+            return Err(ERROR_CLOUD_AI_INVALID_KEY.to_owned());
+        }
+        let response = response
+            .error_for_status()
+            .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+        let body = read_bounded_response(response, 1024 * 1024, ERROR_CLOUD_AI_CONNECTION_FAILED)?;
+        let document = serde_json::from_slice::<Value>(&body)
+            .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+        if !document
+            .get("choices")
+            .and_then(Value::as_array)
+            .is_some_and(|choices| !choices.is_empty())
+        {
+            return Err(ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned());
+        }
+        return Ok(LocalLlmConnectionResult {
+            base_url,
+            models: vec![model],
+        });
+    }
+
     let response = client
         .get(models_endpoint(&base_url))
         .bearer_auth(api_key)
         .send()
         .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
-    if matches!(
-        response.status(),
-        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
-    ) {
-        return Err(ERROR_CLOUD_AI_INVALID_KEY.to_owned());
+    if !response.status().is_success() {
+        return Err(if matches!(
+            response.status(),
+            reqwest::StatusCode::UNAUTHORIZED
+                | reqwest::StatusCode::FORBIDDEN
+                | reqwest::StatusCode::NOT_FOUND
+                | reqwest::StatusCode::METHOD_NOT_ALLOWED
+        ) {
+            ERROR_CLOUD_AI_MODEL_REQUIRED
+        } else {
+            ERROR_CLOUD_AI_CONNECTION_FAILED
+        }
+        .to_owned());
     }
     let response = response
         .error_for_status()
@@ -912,7 +969,7 @@ pub async fn check_cloud_ai_connection(
 ) -> Result<LocalLlmConnectionResult, String> {
     let api_key = resolve_cloud_api_key(database.inner(), request.api_key)?;
     tauri::async_runtime::spawn_blocking(move || {
-        request_cloud_models(request.provider, request.base_url, api_key)
+        request_cloud_models(request.provider, request.base_url, api_key, request.model)
     })
     .await
     .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?
@@ -948,7 +1005,33 @@ pub fn save_local_llm_settings(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{
+        io::{Read, Write},
+        net::TcpListener,
+        thread::{self, JoinHandle},
+    };
     use uuid::Uuid;
+
+    fn single_response_server(
+        status: &'static str,
+        body: &'static str,
+    ) -> (String, JoinHandle<String>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = vec![0_u8; 16 * 1024];
+            let length = stream.read(&mut request).unwrap();
+            let request = String::from_utf8_lossy(&request[..length]).into_owned();
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            request
+        });
+        (format!("http://{address}/v1"), handle)
+    }
 
     #[test]
     fn base_urls_are_normalized_and_unsafe_shapes_are_rejected() {
@@ -992,6 +1075,45 @@ mod tests {
             parse_model_list(br#"{"data":[]}"#),
             Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
         );
+    }
+
+    #[test]
+    fn cloud_connection_with_an_explicit_model_probes_the_real_chat_endpoint() {
+        let (base_url, request_handle) = single_response_server(
+            "200 OK",
+            r#"{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"length"}]}"#,
+        );
+        let result = request_cloud_models(
+            "openai".to_owned(),
+            base_url,
+            "sk-test-valid".to_owned(),
+            Some("k3-256k".to_owned()),
+        )
+        .unwrap();
+        assert_eq!(result.models, vec!["k3-256k"]);
+        let request = request_handle.join().unwrap();
+        assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
+        assert!(request
+            .to_ascii_lowercase()
+            .contains("authorization: bearer sk-test-valid"));
+    }
+
+    #[test]
+    fn cloud_connection_requests_a_model_when_listing_is_not_permitted() {
+        let (base_url, request_handle) = single_response_server(
+            "401 Unauthorized",
+            r#"{"error":{"message":"unauthorized"}}"#,
+        );
+        let error = request_cloud_models(
+            "openai".to_owned(),
+            base_url,
+            "sk-test-valid".to_owned(),
+            None,
+        )
+        .unwrap_err();
+        assert_eq!(error, ERROR_CLOUD_AI_MODEL_REQUIRED);
+        let request = request_handle.join().unwrap();
+        assert!(request.starts_with("GET /v1/models HTTP/1.1"));
     }
 
     #[test]
