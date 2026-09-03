@@ -534,7 +534,7 @@ fn openai_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Val
         "model": settings.model,
         "messages": [{ "role": "user", "content": prompt }],
         "temperature": 0.2,
-        "reasoning_effort": "low",
+        "reasoning_effort": "none",
         "stream": true,
     })
 }
@@ -857,7 +857,7 @@ mod tests {
             model: "qwen3.5:27b".to_owned(),
         };
         let openai = openai_chat_request_payload(&settings, "question");
-        assert_eq!(openai["reasoning_effort"], "low");
+        assert_eq!(openai["reasoning_effort"], "none");
         assert!(openai.get("max_tokens").is_none());
 
         let ollama = ollama_chat_request_payload(&settings, "question");
