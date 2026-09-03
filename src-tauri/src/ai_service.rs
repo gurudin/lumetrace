@@ -775,6 +775,15 @@ fn openai_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Val
     })
 }
 
+fn cloud_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Value {
+    json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "reasoning_effort": "none",
+        "stream": true,
+    })
+}
+
 fn ollama_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Value {
     json!({
         "model": settings.model,
@@ -790,12 +799,12 @@ fn ollama_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Val
 fn run_openai_stream(
     client: &Client,
     settings: &LocalLlmSettings,
-    prompt: &str,
+    request_payload: Value,
     api_key: Option<&str>,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
-    let request_body = serde_json::to_vec(&openai_chat_request_payload(settings, prompt))
-        .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let request_body =
+        serde_json::to_vec(&request_payload).map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let mut request = client
         .post(chat_endpoint(&settings.base_url))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -923,7 +932,7 @@ pub(crate) fn run_local_llm(
         final_stream_answer(run_openai_stream(
             &client,
             &settings,
-            prompt,
+            openai_chat_request_payload(&settings, prompt),
             None,
             on_thinking,
         )?)
@@ -974,7 +983,7 @@ pub(crate) fn run_cloud_ai(
     let result = run_openai_stream(
         &client,
         &compatible_settings,
-        prompt,
+        cloud_chat_request_payload(&compatible_settings, prompt),
         Some(&api_key),
         on_thinking,
     )
@@ -1256,6 +1265,11 @@ mod tests {
         assert_eq!(openai["reasoning_effort"], "none");
         assert!(openai.get("max_tokens").is_none());
 
+        let cloud = cloud_chat_request_payload(&settings, "question");
+        assert_eq!(cloud["reasoning_effort"], "none");
+        assert!(cloud.get("temperature").is_none());
+        assert!(cloud.get("max_tokens").is_none());
+
         let ollama = ollama_chat_request_payload(&settings, "question");
         assert_eq!(ollama["think"], false);
         assert!(ollama["options"].get("num_predict").is_none());
@@ -1405,6 +1419,7 @@ mod tests {
         let payload = serde_json::from_str::<Value>(body).unwrap();
         assert_eq!(payload["model"], "test-cloud-model");
         assert_eq!(payload["messages"][0]["content"], "只使用检索片段回答");
+        assert!(payload.get("temperature").is_none());
         server.join().unwrap();
     }
 }
