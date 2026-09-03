@@ -79,20 +79,20 @@ question + recent workspace history
   -> indexed lexical candidate retrieval
   -> optional local semantic chunk ranking
   -> bounded source excerpts with file/version IDs
-  -> selected OpenAI-compatible local model or read-only Hermes/Codex Agent CLI invocation
+  -> selected OpenAI-compatible local/cloud model or read-only Agent CLI invocation
   -> persisted answer, duration, and source references
 ```
 
 Important boundaries:
 
 - Ollama and LM Studio are supported through OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. Thinking-mode response fields are normalized and only final answer content is shown.
-- Hermes and Codex currently execute file-space questions; Claude Code and OpenCode remain detectable configuration options only.
-- Claude Code and OpenCode can be detected and saved by the service UI, but they are not AI File Assistant runtimes yet.
-- Cloud OpenAI-compatible API configuration remains a placeholder; its execution and credential-storage path is not implemented.
+- Claude Code, Hermes, Codex, and OpenCode execute file-space questions non-interactively after an exact-marker connection check.
+- Cloud OpenAI-compatible APIs use model discovery before saving and execute through the same bounded RAG prompt path.
 - Only retrieved excerpts are included in the selected AI-service prompt; the entire workspace is not sent.
 - Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
-- Hermes and Codex execution require the stored permission to be `readOnly`.
+- Every Agent CLI execution requires the stored permission to be `readOnly`.
 - Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the prompt built from retrieved RAG excerpts, recent conversation context, and source metadata. Host-only `CODEX_*` session and sandbox variables are removed from the child process while the user's Codex authentication directory remains available.
+- Claude Code runs in print/stream-JSON mode with safe mode enabled and its tool list empty. OpenCode runs in JSON mode in a neutral directory with project instructions, external skills, default plugins, sharing, auto-update, and all tool permissions disabled. Both receive the RAG prompt through stdin rather than process arguments.
 - Local-model settings and the active AI-service mode are persisted in SQLite and copied when creating or switching workspaces.
 
 ## Workspace removal safety
@@ -151,7 +151,5 @@ OS-owned interactions such as Finder-to-app drag/drop, app-to-app drag-out, nati
 
 - team identity, roles, permissions, sharing, or concurrent collaboration;
 - NAS or cloud synchronization and conflict resolution;
-- direct cloud OpenAI-compatible API execution;
-- file-space Q&A through Agent CLIs other than Hermes and Codex;
 - Eagle-specific or other application-specific database migration;
 - OCR for image-only documents.

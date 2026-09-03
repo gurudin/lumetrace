@@ -15,8 +15,13 @@ interface AiServiceConfigurationSnapshot {
     hasApiKey?: boolean;
   } | null;
   local?: unknown | null;
-  agentCli?: unknown | null;
+  agentCli?: {
+    cli?: string;
+    permission?: string;
+  } | null;
 }
+
+export const questionAnswerAgentCliKeys = ["claude", "hermes", "codex", "opencode"] as const;
 
 export function isAiServiceConfigured(settings: AiServiceConfigurationSnapshot) {
   if (settings.mode === "cloud") {
@@ -25,4 +30,16 @@ export function isAiServiceConfigured(settings: AiServiceConfigurationSnapshot) 
   if (settings.mode === "local") return Boolean(settings.local);
   if (settings.mode === "agentCli") return Boolean(settings.agentCli);
   return false;
+}
+
+export function canAskConfiguredAiService(settings: AiServiceConfigurationSnapshot) {
+  if (settings.mode === "cloud") {
+    return Boolean(settings.cloud?.hasApiKey && settings.cloud.model?.trim());
+  }
+  if (settings.mode === "local") return Boolean(settings.local);
+  if (settings.mode !== "agentCli") return false;
+  return settings.agentCli?.permission === "readOnly"
+    && questionAnswerAgentCliKeys.includes(
+      settings.agentCli.cli as (typeof questionAnswerAgentCliKeys)[number],
+    );
 }

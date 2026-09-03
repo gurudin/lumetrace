@@ -36,7 +36,10 @@ import {
   type FileSpaceAiSourceReference,
 } from "./aiAnswerPresentation";
 import { recordAgentCliRuntimeSuccess } from "./agentCliDetection";
-import { isAiServiceConfigured } from "./aiServiceSettingsState";
+import {
+  canAskConfiguredAiService,
+  isAiServiceConfigured,
+} from "./aiServiceSettingsState";
 
 export type { FileSpaceAiSourceReference } from "./aiAnswerPresentation";
 
@@ -104,6 +107,14 @@ const aiErrorKeys: Record<string, string> = {
   ai_codex_failed: "codexFailed",
   ai_codex_empty: "codexEmpty",
   ai_codex_output_too_large: "codexOutputTooLarge",
+  ai_claude_unavailable: "claudeUnavailable",
+  ai_claude_failed: "claudeFailed",
+  ai_claude_empty: "claudeEmpty",
+  ai_claude_output_too_large: "claudeOutputTooLarge",
+  ai_opencode_unavailable: "opencodeUnavailable",
+  ai_opencode_failed: "opencodeFailed",
+  ai_opencode_empty: "opencodeEmpty",
+  ai_opencode_output_too_large: "opencodeOutputTooLarge",
   ai_local_llm_unavailable: "localLlmUnavailable",
   ai_local_llm_timeout: "localLlmTimeout",
   ai_local_llm_failed: "localLlmFailed",
@@ -376,12 +387,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   }, [restoreTriggerFocus]);
 
   const canAsk = configurationState === "configured"
-    && ((serviceSettings?.mode === "cloud"
-      && Boolean(serviceSettings.cloud?.hasApiKey && serviceSettings.cloud.model))
-      || (serviceSettings?.mode === "local" && Boolean(serviceSettings.local))
-      || (serviceSettings?.mode === "agentCli"
-        && (serviceSettings.agentCli?.cli === "hermes" || serviceSettings.agentCli?.cli === "codex")
-        && serviceSettings.agentCli.permission === "readOnly"));
+    && Boolean(serviceSettings && canAskConfiguredAiService(serviceSettings));
   const activeServiceLabel = serviceSettings?.mode === "cloud"
     ? serviceSettings.cloud?.model
     : serviceSettings?.mode === "local"

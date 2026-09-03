@@ -15,8 +15,10 @@ use std::{
 use tauri::State;
 
 const AGENT_CLI_SETTINGS_KEY: &str = "ai.agent_cli";
+const CLAUDE_CONNECTION_MARKER: &str = "LUMETRACE_CLAUDE_OK";
 const HERMES_CONNECTION_MARKER: &str = "LUMETRACE_HERMES_OK";
 const CODEX_CONNECTION_MARKER: &str = "LUMETRACE_CODEX_OK";
+const OPENCODE_CONNECTION_MARKER: &str = "LUMETRACE_OPENCODE_OK";
 const CODEX_HOST_ENVIRONMENT_KEYS: [&str; 7] = [
     "CODEX_CI",
     "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
@@ -182,8 +184,26 @@ fn executable_candidates(executable: &str) -> Vec<PathBuf> {
         candidates.push(home.join(".cargo").join("bin").join(executable));
         candidates.push(home.join(".bun").join("bin").join(executable));
         candidates.push(home.join(".volta").join("bin").join(executable));
+        if executable == "claude" {
+            candidates.push(
+                home.join("Applications")
+                    .join("Claude Code URL Handler.app")
+                    .join("Contents")
+                    .join("MacOS")
+                    .join("claude"),
+            );
+        }
     }
 
+    if executable == "claude" {
+        candidates.push(
+            PathBuf::from("/Applications")
+                .join("Claude Code URL Handler.app")
+                .join("Contents")
+                .join("MacOS")
+                .join("claude"),
+        );
+    }
     candidates.push(PathBuf::from("/usr/local/bin").join(executable));
     candidates.push(PathBuf::from("/opt/homebrew/bin").join(executable));
     candidates.push(PathBuf::from(executable));
@@ -405,6 +425,67 @@ pub(crate) fn codex_answer_command(executable: &Path, working_dir: &Path) -> Com
     configured_codex_exec_command(executable, working_dir, true)
 }
 
+fn configured_claude_command(
+    executable: &Path,
+    working_dir: &Path,
+    include_partial_messages: bool,
+) -> Command {
+    let mut command = Command::new(executable);
+    command
+        .arg("--print")
+        .arg("--safe-mode")
+        .arg("--tools")
+        .arg("")
+        .arg("--output-format")
+        .arg("stream-json")
+        .arg("--verbose")
+        .current_dir(working_dir);
+    if include_partial_messages {
+        command.arg("--include-partial-messages");
+    }
+    command
+}
+
+pub(crate) fn claude_connection_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_claude_command(executable, working_dir, false)
+}
+
+pub(crate) fn claude_answer_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_claude_command(executable, working_dir, true)
+}
+
+fn configured_opencode_command(
+    executable: &Path,
+    working_dir: &Path,
+    include_thinking: bool,
+) -> Command {
+    let mut command = Command::new(executable);
+    command.arg("run").arg("--format").arg("json");
+    if include_thinking {
+        command.arg("--thinking");
+    }
+    command
+        .current_dir(working_dir)
+        .env(
+            "OPENCODE_CONFIG_CONTENT",
+            r#"{"permission":{"*":"deny"},"share":"disabled"}"#,
+        )
+        .env("OPENCODE_DISABLE_AUTOUPDATE", "true")
+        .env("OPENCODE_DISABLE_CLAUDE_CODE", "true")
+        .env("OPENCODE_DISABLE_DEFAULT_PLUGINS", "true")
+        .env("OPENCODE_DISABLE_EXTERNAL_SKILLS", "true")
+        .env("OPENCODE_DISABLE_PROJECT_CONFIG", "true");
+    command
+}
+
+pub(crate) fn opencode_connection_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_opencode_command(executable, working_dir, false)
+}
+
+pub(crate) fn opencode_answer_command(executable: &Path, working_dir: &Path) -> Command {
+    configured_opencode_command(executable, working_dir, true)
+}
+
 fn claude_is_authenticated(output: &str) -> bool {
     output.contains("\"loggedIn\": true")
 }
@@ -496,6 +577,34 @@ fn codex_connection_succeeded(output: &str) -> bool {
         .lines()
         .filter_map(codex_agent_message)
         .any(|message| message.trim() == CODEX_CONNECTION_MARKER)
+}
+
+fn claude_connection_succeeded(output: &str) -> bool {
+    output.lines().any(|line| {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        event.get("type").and_then(serde_json::Value::as_str) == Some("result")
+            && event.get("is_error").and_then(serde_json::Value::as_bool) != Some(true)
+            && event
+                .get("result")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|result| result.trim() == CLAUDE_CONNECTION_MARKER)
+    })
+}
+
+fn opencode_connection_succeeded(output: &str) -> bool {
+    output.lines().any(|line| {
+        let Ok(event) = serde_json::from_str::<serde_json::Value>(line) else {
+            return false;
+        };
+        event.get("type").and_then(serde_json::Value::as_str) == Some("text")
+            && event
+                .get("part")
+                .and_then(|part| part.get("text"))
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|text| text.trim() == OPENCODE_CONNECTION_MARKER)
+    })
 }
 
 fn definitions() -> [AgentCliDefinition; 4] {
@@ -594,10 +703,7 @@ fn failed_check_status(definition: AgentCliDefinition) -> AgentCliStatus {
 
 fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
     let status = inspect(definition);
-    if !matches!(definition.key, "hermes" | "codex")
-        || !status.installed
-        || status.check_state == AgentCliCheckState::NotConfigured
-    {
+    if !status.installed {
         return status;
     }
     let Some(executable) = resolve_agent_cli_executable(definition.key) else {
@@ -608,47 +714,59 @@ fn inspect_connection(definition: AgentCliDefinition) -> AgentCliStatus {
         };
     };
     let neutral_directory = std::env::temp_dir();
-    let result = if definition.key == "hermes" {
-        let Some(neutral_directory) = neutral_directory.to_str() else {
-            return AgentCliStatus {
-                check_state: AgentCliCheckState::CheckFailed,
-                reachable: false,
-                ..status
+    let result = match definition.key {
+        "claude" => run_prepared_command(
+            claude_connection_command(&executable, &neutral_directory),
+            Some("Reply with exactly LUMETRACE_CLAUDE_OK."),
+        ),
+        "hermes" => {
+            let Some(neutral_directory) = neutral_directory.to_str() else {
+                return AgentCliStatus {
+                    check_state: AgentCliCheckState::CheckFailed,
+                    reachable: false,
+                    ..status
+                };
             };
-        };
-        run_command(
-            &executable,
-            &[
-                "chat",
-                "-q",
-                "Reply with exactly LUMETRACE_HERMES_OK.",
-                "-Q",
-                "--safe-mode",
-                "--reasoning",
-                "none",
-                "--max-turns",
-                "1",
-                "--source",
-                "tool",
-                "--toolsets",
-                "context_engine",
-                "--in",
-                neutral_directory,
-            ],
-        )
-    } else {
-        run_prepared_command(
+            run_command(
+                &executable,
+                &[
+                    "chat",
+                    "-q",
+                    "Reply with exactly LUMETRACE_HERMES_OK.",
+                    "-Q",
+                    "--safe-mode",
+                    "--reasoning",
+                    "none",
+                    "--max-turns",
+                    "1",
+                    "--source",
+                    "tool",
+                    "--toolsets",
+                    "context_engine",
+                    "--in",
+                    neutral_directory,
+                ],
+            )
+        }
+        "codex" => run_prepared_command(
             codex_exec_command(&executable, &neutral_directory),
             Some("Reply with exactly LUMETRACE_CODEX_OK. Do not call any tools."),
-        )
+        ),
+        "opencode" => run_prepared_command(
+            opencode_connection_command(&executable, &neutral_directory),
+            Some("Reply with exactly LUMETRACE_OPENCODE_OK."),
+        ),
+        _ => CommandResult::Failed,
     };
     let passed = matches!(
         result,
         CommandResult::Completed(ref output)
-            if output.success && if definition.key == "hermes" {
-                hermes_connection_succeeded(&output.combined())
-            } else {
-                codex_connection_succeeded(&output.stdout)
+            if output.success && match definition.key {
+                "claude" => claude_connection_succeeded(&output.stdout),
+                "hermes" => hermes_connection_succeeded(&output.combined()),
+                "codex" => codex_connection_succeeded(&output.stdout),
+                "opencode" => opencode_connection_succeeded(&output.stdout),
+                _ => false,
             }
     );
     AgentCliStatus {
@@ -772,6 +890,28 @@ mod tests {
     }
 
     #[test]
+    fn claude_connection_requires_an_exact_success_result() {
+        assert!(claude_connection_succeeded(
+            r#"{"type":"result","is_error":false,"result":"LUMETRACE_CLAUDE_OK"}"#
+        ));
+        assert!(!claude_connection_succeeded(
+            r#"{"type":"result","is_error":true,"result":"LUMETRACE_CLAUDE_OK"}"#
+        ));
+        assert!(!claude_connection_succeeded("LUMETRACE_CLAUDE_OK"));
+    }
+
+    #[test]
+    fn opencode_connection_requires_an_exact_json_text_event() {
+        assert!(opencode_connection_succeeded(
+            r#"{"type":"text","part":{"type":"text","text":"LUMETRACE_OPENCODE_OK"}}"#
+        ));
+        assert!(!opencode_connection_succeeded(
+            r#"{"type":"reasoning","part":{"type":"reasoning","text":"LUMETRACE_OPENCODE_OK"}}"#
+        ));
+        assert!(!opencode_connection_succeeded("LUMETRACE_OPENCODE_OK"));
+    }
+
+    #[test]
     fn codex_prompt_is_received_from_stdin_instead_of_process_arguments() {
         let command = codex_exec_command(Path::new("codex"), Path::new("/tmp"));
         let arguments = command
@@ -782,6 +922,50 @@ mod tests {
         assert!(!arguments
             .iter()
             .any(|argument| argument.contains("LUMETRACE")));
+    }
+
+    #[test]
+    fn claude_uses_stream_json_with_tools_disabled() {
+        let command = claude_answer_command(Path::new("claude"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(arguments.windows(2).any(|pair| pair == ["--tools", ""]));
+        assert!(arguments
+            .windows(2)
+            .any(|pair| pair == ["--output-format", "stream-json"]));
+        assert!(arguments
+            .iter()
+            .any(|argument| argument == "--include-partial-messages"));
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument.contains("LUMETRACE")));
+    }
+
+    #[test]
+    fn opencode_uses_json_stdin_and_denies_tools() {
+        let command = opencode_answer_command(Path::new("opencode"), Path::new("/tmp"));
+        let arguments = command
+            .get_args()
+            .map(|argument| argument.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(arguments
+            .windows(3)
+            .any(|pair| pair == ["run", "--format", "json"]));
+        assert!(arguments.iter().any(|argument| argument == "--thinking"));
+        assert!(!arguments
+            .iter()
+            .any(|argument| argument.contains("LUMETRACE")));
+        let config = command
+            .get_envs()
+            .find_map(|(key, value)| {
+                (key == "OPENCODE_CONFIG_CONTENT")
+                    .then(|| value.map(|value| value.to_string_lossy().into_owned()))
+                    .flatten()
+            })
+            .expect("OpenCode isolation config");
+        assert!(config.contains(r#""*":"deny""#));
     }
 
     #[test]

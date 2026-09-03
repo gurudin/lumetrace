@@ -1,5 +1,8 @@
 use crate::{
-    agent_cli::{codex_answer_command, resolve_agent_cli_executable},
+    agent_cli::{
+        claude_answer_command, codex_answer_command, opencode_answer_command,
+        resolve_agent_cli_executable,
+    },
     ai_service::{
         load_active_ai_service_record, run_cloud_ai, run_local_llm, ActiveAiService,
         CloudAiRuntimeSettings, LocalLlmSettings,
@@ -41,6 +44,10 @@ const HERMES_ANSWER_MAX_CHARACTERS: usize = 64_000;
 const HERMES_TIMEOUT: Duration = Duration::from_secs(120);
 const CODEX_OUTPUT_MAX_BYTES: usize = 512 * 1024;
 const CODEX_ANSWER_MAX_CHARACTERS: usize = 64_000;
+const CLAUDE_OUTPUT_MAX_BYTES: usize = 512 * 1024;
+const CLAUDE_ANSWER_MAX_CHARACTERS: usize = 64_000;
+const OPENCODE_OUTPUT_MAX_BYTES: usize = 512 * 1024;
+const OPENCODE_ANSWER_MAX_CHARACTERS: usize = 64_000;
 const ANSWER_START_MARKER: &str = "<LUMETRACE_ANSWER>";
 const ANSWER_END_MARKER: &str = "</LUMETRACE_ANSWER>";
 const EVIDENCE_START_MARKER: &str = "<LUMETRACE_EVIDENCE>";
@@ -62,6 +69,14 @@ const ERROR_CODEX_UNAVAILABLE: &str = "ai_codex_unavailable";
 const ERROR_CODEX_FAILED: &str = "ai_codex_failed";
 const ERROR_CODEX_EMPTY: &str = "ai_codex_empty";
 const ERROR_CODEX_OUTPUT_TOO_LARGE: &str = "ai_codex_output_too_large";
+const ERROR_CLAUDE_UNAVAILABLE: &str = "ai_claude_unavailable";
+const ERROR_CLAUDE_FAILED: &str = "ai_claude_failed";
+const ERROR_CLAUDE_EMPTY: &str = "ai_claude_empty";
+const ERROR_CLAUDE_OUTPUT_TOO_LARGE: &str = "ai_claude_output_too_large";
+const ERROR_OPENCODE_UNAVAILABLE: &str = "ai_opencode_unavailable";
+const ERROR_OPENCODE_FAILED: &str = "ai_opencode_failed";
+const ERROR_OPENCODE_EMPTY: &str = "ai_opencode_empty";
+const ERROR_OPENCODE_OUTPUT_TOO_LARGE: &str = "ai_opencode_output_too_large";
 const ERROR_HISTORY_FAILED: &str = "ai_history_failed";
 const ERROR_REQUEST_INVALID: &str = "ai_request_invalid";
 const FILE_SPACE_AI_PROGRESS_EVENT: &str = "file-space-ai-progress";
@@ -141,6 +156,20 @@ struct CodexJsonStream {
     final_message: Option<String>,
 }
 
+#[derive(Default)]
+struct ClaudeJsonStream {
+    thinking: String,
+    final_message: Option<String>,
+    failed: bool,
+}
+
+#[derive(Default)]
+struct OpenCodeJsonStream {
+    thinking: String,
+    final_message: Option<String>,
+    failed: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct RetrievalPlan {
     query: String,
@@ -162,10 +191,32 @@ struct GeneratedEvidenceSource {
 }
 
 enum AiExecutor {
+    Claude(PathBuf),
     Hermes(PathBuf),
     Codex(PathBuf),
+    OpenCode(PathBuf),
     Cloud(CloudAiRuntimeSettings),
     Local(LocalLlmSettings),
+}
+
+fn agent_cli_unavailable_error(cli: &str) -> &'static str {
+    match cli {
+        "claude" => ERROR_CLAUDE_UNAVAILABLE,
+        "hermes" => ERROR_HERMES_UNAVAILABLE,
+        "codex" => ERROR_CODEX_UNAVAILABLE,
+        "opencode" => ERROR_OPENCODE_UNAVAILABLE,
+        _ => ERROR_SERVICE_UNSUPPORTED,
+    }
+}
+
+fn agent_cli_executor(cli: &str, executable: PathBuf) -> Result<AiExecutor, String> {
+    match cli {
+        "claude" => Ok(AiExecutor::Claude(executable)),
+        "hermes" => Ok(AiExecutor::Hermes(executable)),
+        "codex" => Ok(AiExecutor::Codex(executable)),
+        "opencode" => Ok(AiExecutor::OpenCode(executable)),
+        _ => Err(ERROR_SERVICE_UNSUPPORTED.to_owned()),
+    }
 }
 
 fn now_millis() -> i64 {
@@ -774,7 +825,10 @@ fn validate_agent_cli_settings(
     settings: Option<&crate::agent_cli::AgentCliSettings>,
 ) -> Result<(), String> {
     let settings = settings.ok_or_else(|| ERROR_SERVICE_NOT_CONFIGURED.to_owned())?;
-    if !matches!(settings.cli.as_str(), "hermes" | "codex") {
+    if !matches!(
+        settings.cli.as_str(),
+        "claude" | "hermes" | "codex" | "opencode"
+    ) {
         return Err(ERROR_SERVICE_UNSUPPORTED.to_owned());
     }
     if settings.permission != "readOnly" {
@@ -944,6 +998,112 @@ impl CodexJsonStream {
 fn drain_codex_events(
     receiver: &Receiver<String>,
     stream: &mut CodexJsonStream,
+    on_thinking: &mut dyn FnMut(&str),
+) {
+    while let Ok(line) = receiver.try_recv() {
+        if let Some(thinking) = stream.push_line(&line) {
+            on_thinking(thinking);
+        }
+    }
+}
+
+impl ClaudeJsonStream {
+    fn push_line(&mut self, line: &str) -> Option<&str> {
+        let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        match event.get("type").and_then(serde_json::Value::as_str) {
+            Some("result") => {
+                self.failed =
+                    event.get("is_error").and_then(serde_json::Value::as_bool) == Some(true);
+                if !self.failed {
+                    self.final_message = event
+                        .get("result")
+                        .and_then(serde_json::Value::as_str)
+                        .map(str::to_owned);
+                }
+                None
+            }
+            Some("stream_event") => {
+                let stream_event = event.get("event")?;
+                let delta = stream_event.get("delta")?;
+                if delta.get("type").and_then(serde_json::Value::as_str) != Some("thinking_delta") {
+                    return None;
+                }
+                let thinking = delta.get("thinking").and_then(serde_json::Value::as_str)?;
+                self.thinking.push_str(thinking);
+                Some(&self.thinking)
+            }
+            Some("assistant") if self.thinking.is_empty() => {
+                let content = event.get("message")?.get("content")?.as_array()?;
+                for block in content {
+                    if block.get("type").and_then(serde_json::Value::as_str) != Some("thinking") {
+                        continue;
+                    }
+                    if let Some(thinking) =
+                        block.get("thinking").and_then(serde_json::Value::as_str)
+                    {
+                        self.thinking.push_str(thinking);
+                    }
+                }
+                (!self.thinking.is_empty()).then_some(self.thinking.as_str())
+            }
+            _ => None,
+        }
+    }
+}
+
+fn drain_claude_events(
+    receiver: &Receiver<String>,
+    stream: &mut ClaudeJsonStream,
+    on_thinking: &mut dyn FnMut(&str),
+) {
+    while let Ok(line) = receiver.try_recv() {
+        if let Some(thinking) = stream.push_line(&line) {
+            on_thinking(thinking);
+        }
+    }
+}
+
+impl OpenCodeJsonStream {
+    fn push_line(&mut self, line: &str) -> Option<&str> {
+        let event = serde_json::from_str::<serde_json::Value>(line).ok()?;
+        let event_type = event.get("type").and_then(serde_json::Value::as_str)?;
+        if event_type == "error" {
+            self.failed = true;
+            return None;
+        }
+        let part = event.get("part")?;
+        let text = part
+            .get("text")
+            .and_then(serde_json::Value::as_str)
+            .map(str::trim)
+            .filter(|text| !text.is_empty())?;
+        match event_type {
+            "reasoning" => {
+                if !self.thinking.is_empty() {
+                    self.thinking.push('\n');
+                }
+                self.thinking.push_str(text);
+                Some(&self.thinking)
+            }
+            "text" => {
+                if let Some(final_message) = &mut self.final_message {
+                    if !final_message.is_empty() {
+                        final_message.push('\n');
+                    }
+                    final_message.push_str(text);
+                } else {
+                    self.final_message = Some(text.to_owned());
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+}
+
+fn drain_opencode_events(
+    receiver: &Receiver<String>,
+    stream: &mut OpenCodeJsonStream,
     on_thinking: &mut dyn FnMut(&str),
 ) {
     while let Ok(line) = receiver.try_recv() {
@@ -1137,6 +1297,160 @@ fn run_codex(
     }
 }
 
+fn run_claude(
+    executable: &Path,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let neutral_directory = std::env::temp_dir();
+    let mut child = claude_answer_command(executable, &neutral_directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| ERROR_CLAUDE_UNAVAILABLE.to_owned())?;
+    let wrote_prompt = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(prompt.as_bytes()).is_ok());
+    if !wrote_prompt {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ERROR_CLAUDE_FAILED.to_owned());
+    }
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ERROR_CLAUDE_FAILED.to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ERROR_CLAUDE_FAILED.to_owned())?;
+    let (stdout_sender, stdout_receiver) = mpsc::channel();
+    let stdout_thread =
+        thread::spawn(move || read_limited_lines(stdout, CLAUDE_OUTPUT_MAX_BYTES, stdout_sender));
+    let stderr_thread = thread::spawn(move || read_limited(stderr, CLAUDE_OUTPUT_MAX_BYTES));
+    let mut json_stream = ClaudeJsonStream::default();
+    loop {
+        drain_claude_events(&stdout_receiver, &mut json_stream, on_thinking);
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let stderr = stderr_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let _ = child.wait();
+                drain_claude_events(&stdout_receiver, &mut json_stream, on_thinking);
+                if stdout.exceeded_limit || stderr.exceeded_limit {
+                    return Err(ERROR_CLAUDE_OUTPUT_TOO_LARGE.to_owned());
+                }
+                if !status.success() || json_stream.failed {
+                    return Err(ERROR_CLAUDE_FAILED.to_owned());
+                }
+                let generated = json_stream
+                    .final_message
+                    .filter(|answer| !answer.trim().is_empty())
+                    .ok_or_else(|| ERROR_CLAUDE_EMPTY.to_owned())?;
+                let answer = extract_final_answer(&generated)
+                    .ok_or_else(|| ERROR_CLAUDE_EMPTY.to_owned())?;
+                if answer.chars().count() > CLAUDE_ANSWER_MAX_CHARACTERS {
+                    return Err(ERROR_CLAUDE_OUTPUT_TOO_LARGE.to_owned());
+                }
+                return Ok(answer);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(ERROR_CLAUDE_FAILED.to_owned());
+            }
+        }
+    }
+}
+
+fn run_opencode(
+    executable: &Path,
+    prompt: &str,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    let neutral_directory = std::env::temp_dir();
+    let mut child = opencode_answer_command(executable, &neutral_directory)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|_| ERROR_OPENCODE_UNAVAILABLE.to_owned())?;
+    let wrote_prompt = child
+        .stdin
+        .take()
+        .is_some_and(|mut stdin| stdin.write_all(prompt.as_bytes()).is_ok());
+    if !wrote_prompt {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(ERROR_OPENCODE_FAILED.to_owned());
+    }
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| ERROR_OPENCODE_FAILED.to_owned())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| ERROR_OPENCODE_FAILED.to_owned())?;
+    let (stdout_sender, stdout_receiver) = mpsc::channel();
+    let stdout_thread =
+        thread::spawn(move || read_limited_lines(stdout, OPENCODE_OUTPUT_MAX_BYTES, stdout_sender));
+    let stderr_thread = thread::spawn(move || read_limited(stderr, OPENCODE_OUTPUT_MAX_BYTES));
+    let mut json_stream = OpenCodeJsonStream::default();
+    loop {
+        drain_opencode_events(&stdout_receiver, &mut json_stream, on_thinking);
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let stdout = stdout_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let stderr = stderr_thread.join().unwrap_or_else(|_| CapturedOutput {
+                    text: String::new(),
+                    exceeded_limit: false,
+                });
+                let _ = child.wait();
+                drain_opencode_events(&stdout_receiver, &mut json_stream, on_thinking);
+                if stdout.exceeded_limit || stderr.exceeded_limit {
+                    return Err(ERROR_OPENCODE_OUTPUT_TOO_LARGE.to_owned());
+                }
+                if !status.success() || json_stream.failed {
+                    return Err(ERROR_OPENCODE_FAILED.to_owned());
+                }
+                let generated = json_stream
+                    .final_message
+                    .filter(|answer| !answer.trim().is_empty())
+                    .ok_or_else(|| ERROR_OPENCODE_EMPTY.to_owned())?;
+                let answer = extract_final_answer(&generated)
+                    .ok_or_else(|| ERROR_OPENCODE_EMPTY.to_owned())?;
+                if answer.chars().count() > OPENCODE_ANSWER_MAX_CHARACTERS {
+                    return Err(ERROR_OPENCODE_OUTPUT_TOO_LARGE.to_owned());
+                }
+                return Ok(answer);
+            }
+            Ok(None) => thread::sleep(Duration::from_millis(25)),
+            Err(_) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                let _ = stdout_thread.join();
+                let _ = stderr_thread.join();
+                return Err(ERROR_OPENCODE_FAILED.to_owned());
+            }
+        }
+    }
+}
+
 fn ask_file_space_ai_blocking(
     app: tauri::AppHandle,
     question: String,
@@ -1158,18 +1472,9 @@ fn ask_file_space_ai_blocking(
     let executor = match load_active_ai_service_record(&database)? {
         Some(ActiveAiService::AgentCli(settings)) => {
             validate_agent_cli_settings(Some(&settings))?;
-            let executable = resolve_agent_cli_executable(&settings.cli).ok_or_else(|| {
-                if settings.cli == "codex" {
-                    ERROR_CODEX_UNAVAILABLE.to_owned()
-                } else {
-                    ERROR_HERMES_UNAVAILABLE.to_owned()
-                }
-            })?;
-            if settings.cli == "codex" {
-                AiExecutor::Codex(executable)
-            } else {
-                AiExecutor::Hermes(executable)
-            }
+            let executable = resolve_agent_cli_executable(&settings.cli)
+                .ok_or_else(|| agent_cli_unavailable_error(&settings.cli).to_owned())?;
+            agent_cli_executor(&settings.cli, executable)?
         }
         Some(ActiveAiService::Cloud(settings)) => AiExecutor::Cloud(settings),
         Some(ActiveAiService::Local(settings)) => AiExecutor::Local(settings),
@@ -1200,6 +1505,19 @@ fn ask_file_space_ai_blocking(
         };
         emit_file_space_ai_progress(&app, &request_id, "generating", "");
         let generated_answer = match &executor {
+            AiExecutor::Claude(executable) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
+                    );
+                };
+                run_claude(executable, &prompt, &mut emit_thinking)?
+            }
             AiExecutor::Hermes(executable) => {
                 let progress_app = app.clone();
                 let progress_request_id = request_id.clone();
@@ -1225,6 +1543,19 @@ fn ask_file_space_ai_blocking(
                     );
                 };
                 run_codex(executable, &prompt, &mut emit_thinking)?
+            }
+            AiExecutor::OpenCode(executable) => {
+                let progress_app = app.clone();
+                let progress_request_id = request_id.clone();
+                let mut emit_thinking = move |thinking: &str| {
+                    emit_file_space_ai_progress(
+                        &progress_app,
+                        &progress_request_id,
+                        "thinking",
+                        thinking,
+                    );
+                };
+                run_opencode(executable, &prompt, &mut emit_thinking)?
             }
             AiExecutor::Cloud(settings) => {
                 let progress_app = app.clone();
@@ -1257,8 +1588,10 @@ fn ask_file_space_ai_blocking(
         let answer = sanitize_citations(&generated_answer, sources.len());
         if answer.trim().is_empty() {
             return Err(match executor {
+                AiExecutor::Claude(_) => ERROR_CLAUDE_EMPTY.to_owned(),
                 AiExecutor::Hermes(_) => ERROR_HERMES_EMPTY.to_owned(),
                 AiExecutor::Codex(_) => ERROR_CODEX_EMPTY.to_owned(),
+                AiExecutor::OpenCode(_) => ERROR_OPENCODE_EMPTY.to_owned(),
                 AiExecutor::Cloud(_) => crate::ai_service::ERROR_CLOUD_AI_EMPTY.to_owned(),
                 AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
             });
@@ -1569,7 +1902,7 @@ mod tests {
             Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned())
         );
         let unsupported = crate::agent_cli::AgentCliSettings {
-            cli: "claude".to_owned(),
+            cli: "unknown".to_owned(),
             permission: "readOnly".to_owned(),
             version: None,
         };
@@ -1599,6 +1932,39 @@ mod tests {
             version: None,
         };
         assert_eq!(validate_agent_cli_settings(Some(&codex)), Ok(()));
+
+        for cli in ["claude", "opencode"] {
+            let settings = crate::agent_cli::AgentCliSettings {
+                cli: cli.to_owned(),
+                permission: "readOnly".to_owned(),
+                version: None,
+            };
+            assert_eq!(validate_agent_cli_settings(Some(&settings)), Ok(()));
+        }
+    }
+
+    #[test]
+    fn every_supported_agent_cli_has_its_own_executor_route() {
+        assert!(matches!(
+            agent_cli_executor("claude", PathBuf::from("claude")),
+            Ok(AiExecutor::Claude(_))
+        ));
+        assert!(matches!(
+            agent_cli_executor("hermes", PathBuf::from("hermes")),
+            Ok(AiExecutor::Hermes(_))
+        ));
+        assert!(matches!(
+            agent_cli_executor("codex", PathBuf::from("codex")),
+            Ok(AiExecutor::Codex(_))
+        ));
+        assert!(matches!(
+            agent_cli_executor("opencode", PathBuf::from("opencode")),
+            Ok(AiExecutor::OpenCode(_))
+        ));
+        assert!(matches!(
+            agent_cli_executor("unknown", PathBuf::from("unknown")),
+            Err(error) if error == ERROR_SERVICE_UNSUPPORTED
+        ));
     }
 
     #[test]
@@ -1639,6 +2005,80 @@ mod tests {
                 .and_then(extract_final_answer),
             Some("Answer [S1]".to_owned())
         );
+    }
+
+    #[test]
+    fn claude_jsonl_stream_collects_thinking_and_the_success_result() {
+        let mut stream = ClaudeJsonStream::default();
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"Check "}}}"#
+            ),
+            Some("Check ")
+        );
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"stream_event","event":{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"sources."}}}"#
+            ),
+            Some("Check sources.")
+        );
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"result","subtype":"success","is_error":false,"result":"<LUMETRACE_ANSWER>Answer [S1]</LUMETRACE_ANSWER>"}"#
+            ),
+            None
+        );
+        assert_eq!(stream.thinking, "Check sources.");
+        assert_eq!(
+            stream
+                .final_message
+                .as_deref()
+                .and_then(extract_final_answer),
+            Some("Answer [S1]".to_owned())
+        );
+        assert!(!stream.failed);
+    }
+
+    #[test]
+    fn claude_jsonl_stream_marks_error_results_as_failed() {
+        let mut stream = ClaudeJsonStream::default();
+        stream.push_line(
+            r#"{"type":"result","subtype":"error","is_error":true,"result":"login required"}"#,
+        );
+        assert!(stream.failed);
+        assert_eq!(stream.final_message, None);
+    }
+
+    #[test]
+    fn opencode_jsonl_stream_collects_reasoning_and_text_parts() {
+        let mut stream = OpenCodeJsonStream::default();
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"reasoning","part":{"id":"part-1","type":"reasoning","text":"Compare sources."}}"#
+            ),
+            Some("Compare sources.")
+        );
+        assert_eq!(
+            stream.push_line(
+                r#"{"type":"text","part":{"id":"part-2","type":"text","text":"<LUMETRACE_ANSWER>Answer [S2]</LUMETRACE_ANSWER>"}}"#
+            ),
+            None
+        );
+        assert_eq!(
+            stream
+                .final_message
+                .as_deref()
+                .and_then(extract_final_answer),
+            Some("Answer [S2]".to_owned())
+        );
+        assert!(!stream.failed);
+    }
+
+    #[test]
+    fn opencode_jsonl_stream_marks_error_events_as_failed() {
+        let mut stream = OpenCodeJsonStream::default();
+        stream.push_line(r#"{"type":"error","error":{"name":"ProviderAuthError"}}"#);
+        assert!(stream.failed);
     }
 
     #[test]
