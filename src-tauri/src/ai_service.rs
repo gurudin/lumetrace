@@ -170,6 +170,16 @@ fn normalize_base_url(provider: &str, value: &str) -> Result<String, String> {
     Ok(normalized)
 }
 
+fn normalize_cloud_base_url(value: &str) -> Result<String, String> {
+    let normalized = normalize_base_url("lmStudio", value)?;
+    let mut url = Url::parse(&normalized).map_err(|_| ERROR_LOCAL_LLM_INVALID_URL.to_owned())?;
+    let path = url.path().trim_end_matches('/').to_owned();
+    if path != "/v1" && !path.ends_with("/v1") {
+        url.set_path(&format!("{path}/v1"));
+    }
+    Ok(url.as_str().trim_end_matches('/').to_owned())
+}
+
 fn validate_model(model: String) -> Result<String, String> {
     let model = model.trim();
     (!model.is_empty() && model.len() <= 512 && !model.chars().any(char::is_control))
@@ -189,7 +199,7 @@ fn validate_stored_cloud_ai_settings(
 ) -> Result<StoredCloudAiSettings, String> {
     let provider = validate_cloud_provider(settings.provider)?;
     Ok(StoredCloudAiSettings {
-        base_url: normalize_base_url("lmStudio", &settings.base_url)?,
+        base_url: normalize_cloud_base_url(&settings.base_url)?,
         provider,
         model: validate_model(settings.model)?,
     })
@@ -510,7 +520,7 @@ fn request_cloud_models(
     api_key: String,
 ) -> Result<LocalLlmConnectionResult, String> {
     validate_cloud_provider(provider)?;
-    let base_url = normalize_base_url("lmStudio", &base_url)?;
+    let base_url = normalize_cloud_base_url(&base_url)?;
     let api_key = validate_api_key(api_key)?;
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(8))
@@ -521,7 +531,15 @@ fn request_cloud_models(
         .get(models_endpoint(&base_url))
         .bearer_auth(api_key)
         .send()
-        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+    if matches!(
+        response.status(),
+        reqwest::StatusCode::UNAUTHORIZED | reqwest::StatusCode::FORBIDDEN
+    ) {
+        return Err(ERROR_CLOUD_AI_INVALID_KEY.to_owned());
+    }
+    let response = response
+        .error_for_status()
         .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
     let body = read_bounded_response(response, 1024 * 1024, ERROR_CLOUD_AI_CONNECTION_FAILED)?;
     Ok(LocalLlmConnectionResult {
@@ -945,6 +963,18 @@ mod tests {
         assert_eq!(
             normalize_base_url("lmStudio", "http://127.0.0.1:1234/v1/").unwrap(),
             "http://127.0.0.1:1234/v1"
+        );
+        assert_eq!(
+            normalize_cloud_base_url("https://api.openai.com").unwrap(),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            normalize_cloud_base_url("https://api.kimi.com/coding/").unwrap(),
+            "https://api.kimi.com/coding/v1"
+        );
+        assert_eq!(
+            normalize_cloud_base_url("https://example.com/openai/v1/").unwrap(),
+            "https://example.com/openai/v1"
         );
         assert!(normalize_base_url("ollama", "file:///tmp/model").is_err());
         assert!(normalize_base_url("ollama", "http://user:secret@127.0.0.1:11434/v1").is_err());

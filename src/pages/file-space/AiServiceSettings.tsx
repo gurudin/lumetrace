@@ -180,6 +180,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const [cloudModels, setCloudModels] = useState<string[]>([]);
   const [selectedCloudModel, setSelectedCloudModel] = useState("");
   const [cloudConnectionState, setCloudConnectionState] = useState<LocalConnectionState>("idle");
+  const [cloudConnectionError, setCloudConnectionError] = useState<string | null>(null);
   const [localProvider, setLocalProvider] = useState<LocalProvider>("ollama");
   const [localBaseUrl, setLocalBaseUrl] = useState(defaultLocalBaseUrl);
   const [localModels, setLocalModels] = useState<string[]>([]);
@@ -291,6 +292,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     setCloudModels([]);
     setSelectedCloudModel("");
     setCloudConnectionState("idle");
+    setCloudConnectionError(null);
     setSaveError(false);
   };
 
@@ -406,6 +408,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     const requestId = cloudConnectionRequest.current + 1;
     cloudConnectionRequest.current = requestId;
     setCloudConnectionState("checking");
+    setCloudConnectionError(null);
     setSaveError(false);
     try {
       const result = await invoke<LocalLlmConnectionResult>("check_cloud_ai_connection", {
@@ -416,10 +419,11 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       setCloudModels(result.models);
       setSelectedCloudModel((current) => result.models.includes(current) ? current : (result.models[0] ?? ""));
       setCloudConnectionState(result.models.length > 0 ? "passed" : "error");
-    } catch {
+    } catch (error) {
       if (cloudConnectionRequest.current !== requestId) return;
       setCloudModels([]);
       setSelectedCloudModel("");
+      setCloudConnectionError(error instanceof Error ? error.message : String(error ?? ""));
       setCloudConnectionState("error");
     }
   };
@@ -539,6 +543,10 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       : cloudConnectionState === "error"
         ? CircleAlert
         : Cloud;
+  const cloudConnectionCopyState = cloudConnectionState === "error"
+    && cloudConnectionError?.includes("cloud_ai_invalid_key")
+    ? "invalidKey"
+    : cloudConnectionState;
 
   return (
     <>
@@ -744,8 +752,8 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
             <div className={`file-space-ai-agent-connection is-${cloudConnectionState}`} role="status" aria-live="polite">
               <CloudStatusIcon className={cloudConnectionState === "checking" ? "is-spinning" : ""} size={18} />
               <div>
-                <strong>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionState}.title`)}</strong>
-                <p>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionState}.description`)}</p>
+                <strong>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionCopyState}.title`)}</strong>
+                <p>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionCopyState}.description`)}</p>
               </div>
             </div>
             {saveError ? (
