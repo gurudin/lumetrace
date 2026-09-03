@@ -165,7 +165,7 @@ export const zh = {
         agentCliSectionDescription: "自动检测命令、版本以及登录或模型配置状态。",
         recheck: "重新检测",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",

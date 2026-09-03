@@ -126,7 +126,7 @@ export const ko = {
         agentCliSectionDescription: "명령, 버전 및 로그인 또는 모델 설정을 자동으로 확인합니다.",
         recheck: "다시 확인",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",

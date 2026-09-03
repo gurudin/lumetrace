@@ -126,7 +126,7 @@ export const fr = {
         agentCliSectionDescription: "Vérifie automatiquement la commande, la version et la configuration du compte ou du modèle.",
         recheck: "Revérifier",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",

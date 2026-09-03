@@ -126,7 +126,7 @@ export const zhTW = {
         agentCliSectionDescription: "自動偵測命令、版本以及登入或模型設定狀態。",
         recheck: "重新偵測",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",

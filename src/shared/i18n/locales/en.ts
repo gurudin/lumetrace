@@ -165,7 +165,7 @@ export const en = {
         agentCliSectionDescription: "Automatically checks the command, version, and account or model configuration.",
         recheck: "Check Again",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",

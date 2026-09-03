@@ -126,7 +126,7 @@ export const ja = {
         agentCliSectionDescription: "コマンド、バージョン、ログインまたはモデル設定を自動確認します。",
         recheck: "再確認",
         providers: {
-          openai: "OpenAI Compatible",
+          openai: "OpenAI Chat Completions",
           openaiCompatible: "OpenAI Compatible",
           ollama: "Ollama",
           lmStudio: "LM Studio",
