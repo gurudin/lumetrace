@@ -177,6 +177,23 @@ function AiSourcesDisclosure({ turnId, sources, onOpenSource }: AiSourcesDisclos
   );
 }
 
+function AiSafeMarkdown({ markdown }: { markdown: string }) {
+  return (
+    <ReactMarkdown
+      remarkPlugins={[remarkGfm]}
+      skipHtml
+      disallowedElements={["img"]}
+      components={{
+        a: ({ children, ...props }) => (
+          <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>
+        ),
+      }}
+    >
+      {markdown}
+    </ReactMarkdown>
+  );
+}
+
 function AiPendingAnswer({
   phase,
   thinking,
@@ -212,8 +229,12 @@ function AiPendingAnswer({
       <div className="file-space-ai-pending-copy">
         <p>{t(`fileSpace.ai.${aiPendingStatusKey(phase)}`)}</p>
         {thinking ? (
-          <div className="file-space-ai-thinking" ref={thinkingRef} aria-live="polite">
-            {thinking}
+          <div
+            className="file-space-ai-thinking file-space-ai-answer-content"
+            ref={thinkingRef}
+            aria-live="polite"
+          >
+            <AiSafeMarkdown markdown={thinking} />
           </div>
         ) : null}
       </div>
@@ -254,18 +275,7 @@ function AiNoSourcesAnswer({ onOpenBackgroundStatus }: AiNoSourcesAnswerProps) {
 function AiMarkdownAnswer({ answer }: { answer: string }) {
   return (
     <div className="file-space-ai-answer-content">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
-        skipHtml
-        disallowedElements={["img"]}
-        components={{
-          a: ({ children, ...props }) => (
-            <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>
-          ),
-        }}
-      >
-        {visibleAiAnswer(answer)}
-      </ReactMarkdown>
+      <AiSafeMarkdown markdown={visibleAiAnswer(answer)} />
     </div>
   );
 }
