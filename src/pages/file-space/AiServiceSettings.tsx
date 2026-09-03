@@ -290,6 +290,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const resetCloudConnection = () => {
     cloudConnectionRequest.current += 1;
     setCloudModels([]);
+    setSelectedCloudModel("");
     setCloudConnectionState("idle");
     setCloudConnectionError(null);
     setSaveError(false);
@@ -302,11 +303,6 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
 
   const changeCloudApiKey = (apiKey: string) => {
     setCloudApiKey(apiKey);
-    resetCloudConnection();
-  };
-
-  const changeCloudModel = (model: string) => {
-    setSelectedCloudModel(model);
     resetCloudConnection();
   };
 
@@ -416,12 +412,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     setSaveError(false);
     try {
       const result = await invoke<LocalLlmConnectionResult>("check_cloud_ai_connection", {
-        request: {
-          provider: cloudProvider,
-          baseUrl,
-          apiKey: apiKey || null,
-          model: selectedCloudModel.trim() || null,
-        },
+        request: { provider: cloudProvider, baseUrl, apiKey: apiKey || null },
       });
       if (cloudConnectionRequest.current !== requestId) return;
       setCloudBaseUrl(result.baseUrl);
@@ -431,6 +422,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     } catch (error) {
       if (cloudConnectionRequest.current !== requestId) return;
       setCloudModels([]);
+      setSelectedCloudModel("");
       setCloudConnectionError(error instanceof Error ? error.message : String(error ?? ""));
       setCloudConnectionState("error");
     }
@@ -552,11 +544,8 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
         ? CircleAlert
         : Cloud;
   const cloudConnectionCopyState = cloudConnectionState === "error"
-    ? cloudConnectionError?.includes("cloud_ai_model_required")
-      ? "modelRequired"
-      : cloudConnectionError?.includes("cloud_ai_invalid_key")
-        ? "invalidKey"
-        : "error"
+    && cloudConnectionError?.includes("cloud_ai_invalid_key")
+    ? "invalidKey"
     : cloudConnectionState;
 
   return (
@@ -752,21 +741,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
               </div>
 
               <span>{t("fileSpace.settings.aiService.model")}</span>
-              {cloudConnectionState === "passed" && cloudModels.length > 1 ? (
-                <MacSelect className="file-space-ai-service-select" value={selectedCloudModel} options={cloudModelOptions} onChange={setSelectedCloudModel} ariaLabel={t("fileSpace.settings.aiService.model")} disabled={savingSettings} menuMinWidth={250} />
-              ) : (
-                <input
-                  id="file-space-ai-service-cloud-model"
-                  type="text"
-                  value={selectedCloudModel}
-                  disabled={cloudConnectionState === "checking" || savingSettings}
-                  placeholder={t("fileSpace.settings.aiService.cloudModelPlaceholder")}
-                  spellCheck={false}
-                  autoCapitalize="none"
-                  autoCorrect="off"
-                  onChange={(event) => changeCloudModel(event.target.value)}
-                />
-              )}
+              <MacSelect className="file-space-ai-service-select" value={selectedCloudModel} options={cloudModelOptions} onChange={setSelectedCloudModel} ariaLabel={t("fileSpace.settings.aiService.model")} disabled={cloudConnectionState !== "passed" || savingSettings} menuMinWidth={250} />
             </div>
 
             <div className="file-space-ai-service-notice">
