@@ -544,7 +544,7 @@ fn ollama_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Val
         "model": settings.model,
         "messages": [{ "role": "user", "content": prompt }],
         "stream": true,
-        "think": "low",
+        "think": false,
         "options": {
             "temperature": 0.2,
         },
@@ -850,7 +850,7 @@ mod tests {
     }
 
     #[test]
-    fn local_chat_requests_use_low_reasoning_without_output_limits() {
+    fn local_chat_requests_use_provider_appropriate_reasoning_without_output_limits() {
         let settings = LocalLlmSettings {
             provider: "lmStudio".to_owned(),
             base_url: "http://192.168.1.10:11434/v1".to_owned(),
@@ -861,7 +861,7 @@ mod tests {
         assert!(openai.get("max_tokens").is_none());
 
         let ollama = ollama_chat_request_payload(&settings, "question");
-        assert_eq!(ollama["think"], "low");
+        assert_eq!(ollama["think"], false);
         assert!(ollama["options"].get("num_predict").is_none());
     }
 
