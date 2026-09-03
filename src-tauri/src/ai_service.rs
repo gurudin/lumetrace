@@ -97,7 +97,7 @@ fn validate_provider(provider: String) -> Result<String, String> {
         .ok_or_else(|| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())
 }
 
-fn normalize_base_url(value: &str) -> Result<String, String> {
+fn normalize_base_url(provider: &str, value: &str) -> Result<String, String> {
     let mut url = Url::parse(value.trim()).map_err(|_| ERROR_LOCAL_LLM_INVALID_URL.to_owned())?;
     if !matches!(url.scheme(), "http" | "https")
         || url.host_str().is_none()
@@ -108,7 +108,11 @@ fn normalize_base_url(value: &str) -> Result<String, String> {
     {
         return Err(ERROR_LOCAL_LLM_INVALID_URL.to_owned());
     }
-    if matches!(url.path(), "" | "/") {
+    let path = url.path().trim_end_matches('/').to_owned();
+    if provider == "ollama" {
+        let native_path = path.strip_suffix("/v1").unwrap_or(&path);
+        url.set_path(native_path);
+    } else if path.is_empty() {
         url.set_path("/v1");
     }
     let normalized = url.as_str().trim_end_matches('/').to_owned();
@@ -126,9 +130,10 @@ fn validate_model(model: String) -> Result<String, String> {
 }
 
 fn validate_local_llm_settings(settings: LocalLlmSettings) -> Result<LocalLlmSettings, String> {
+    let provider = validate_provider(settings.provider)?;
     Ok(LocalLlmSettings {
-        provider: validate_provider(settings.provider)?,
-        base_url: normalize_base_url(&settings.base_url)?,
+        base_url: normalize_base_url(&provider, &settings.base_url)?,
+        provider,
         model: validate_model(settings.model)?,
     })
 }
@@ -240,15 +245,19 @@ fn chat_endpoint(base_url: &str) -> String {
     format!("{}/chat/completions", base_url.trim_end_matches('/'))
 }
 
-fn ollama_chat_endpoint(base_url: &str) -> Result<String, String> {
+fn ollama_endpoint(base_url: &str, endpoint: &str) -> Result<String, String> {
     let mut url = Url::parse(base_url).map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
     let path = url.path().trim_end_matches('/');
-    let prefix = path
-        .strip_suffix("/v1")
-        .unwrap_or(path)
-        .trim_end_matches('/');
-    url.set_path(&format!("{prefix}/api/chat"));
+    url.set_path(&format!("{path}/api/{endpoint}"));
     Ok(url.as_str().to_owned())
+}
+
+fn ollama_chat_endpoint(base_url: &str) -> Result<String, String> {
+    ollama_endpoint(base_url, "chat")
+}
+
+fn ollama_models_endpoint(base_url: &str) -> Result<String, String> {
+    ollama_endpoint(base_url, "tags")
 }
 
 fn parse_model_list(body: &[u8]) -> Result<Vec<String>, String> {
@@ -260,6 +269,32 @@ fn parse_model_list(body: &[u8]) -> Result<Vec<String>, String> {
         .into_iter()
         .flatten()
         .filter_map(|entry| entry.get("id").and_then(Value::as_str))
+        .filter_map(|model| validate_model(model.to_owned()).ok())
+        .collect::<Vec<_>>();
+    models.sort_by_key(|model| model.to_lowercase());
+    models.dedup();
+    if models.is_empty() {
+        Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+    } else {
+        models.truncate(1_000);
+        Ok(models)
+    }
+}
+
+fn parse_ollama_model_list(body: &[u8]) -> Result<Vec<String>, String> {
+    let document = serde_json::from_slice::<Value>(body)
+        .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
+    let mut models = document
+        .get("models")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            entry
+                .get("name")
+                .or_else(|| entry.get("model"))
+                .and_then(Value::as_str)
+        })
         .filter_map(|model| validate_model(model.to_owned()).ok())
         .collect::<Vec<_>>();
     models.sort_by_key(|model| model.to_lowercase());
@@ -294,23 +329,30 @@ fn request_local_models(
     provider: String,
     base_url: String,
 ) -> Result<LocalLlmConnectionResult, String> {
-    let _provider = validate_provider(provider)?;
-    let base_url = normalize_base_url(&base_url)?;
+    let provider = validate_provider(provider)?;
+    let base_url = normalize_base_url(&provider, &base_url)?;
     let client = Client::builder()
         .connect_timeout(Duration::from_secs(5))
         .timeout(LOCAL_LLM_CONNECTION_TIMEOUT)
         .build()
         .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
+    let endpoint = if provider == "ollama" {
+        ollama_models_endpoint(&base_url)?
+    } else {
+        models_endpoint(&base_url)
+    };
     let response = client
-        .get(models_endpoint(&base_url))
+        .get(endpoint)
         .send()
         .and_then(reqwest::blocking::Response::error_for_status)
         .map_err(|_| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())?;
     let body = read_bounded_response(response, 1024 * 1024, ERROR_LOCAL_LLM_CONNECTION_FAILED)?;
-    Ok(LocalLlmConnectionResult {
-        base_url,
-        models: parse_model_list(&body)?,
-    })
+    let models = if provider == "ollama" {
+        parse_ollama_model_list(&body)?
+    } else {
+        parse_model_list(&body)?
+    };
+    Ok(LocalLlmConnectionResult { base_url, models })
 }
 
 fn message_content(message: &Value) -> String {
@@ -686,16 +728,20 @@ mod tests {
     #[test]
     fn base_urls_are_normalized_and_unsafe_shapes_are_rejected() {
         assert_eq!(
-            normalize_base_url(" http://192.168.1.10:11434 ").unwrap(),
-            "http://192.168.1.10:11434/v1"
+            normalize_base_url("ollama", " http://192.168.1.10:11434 ").unwrap(),
+            "http://192.168.1.10:11434"
         );
         assert_eq!(
-            normalize_base_url("http://127.0.0.1:1234/v1/").unwrap(),
+            normalize_base_url("ollama", "http://192.168.1.10:11434/v1").unwrap(),
+            "http://192.168.1.10:11434"
+        );
+        assert_eq!(
+            normalize_base_url("lmStudio", "http://127.0.0.1:1234/v1/").unwrap(),
             "http://127.0.0.1:1234/v1"
         );
-        assert!(normalize_base_url("file:///tmp/model").is_err());
-        assert!(normalize_base_url("http://user:secret@127.0.0.1:11434/v1").is_err());
-        assert!(normalize_base_url("http://127.0.0.1:11434/v1?token=secret").is_err());
+        assert!(normalize_base_url("ollama", "file:///tmp/model").is_err());
+        assert!(normalize_base_url("ollama", "http://user:secret@127.0.0.1:11434/v1").is_err());
+        assert!(normalize_base_url("ollama", "http://127.0.0.1:11434/v1?token=secret").is_err());
     }
 
     #[test]
@@ -708,6 +754,31 @@ mod tests {
         assert_eq!(
             parse_model_list(br#"{"data":[]}"#),
             Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+        );
+    }
+
+    #[test]
+    fn ollama_model_lists_are_read_from_the_native_tags_response() {
+        let models = parse_ollama_model_list(
+            br#"{"models":[{"name":"qwen3.5:27b"},{"model":"Qwen3:4b"},{"name":"qwen3.5:27b"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(models, vec!["qwen3.5:27b", "Qwen3:4b"]);
+        assert_eq!(
+            parse_ollama_model_list(br#"{"models":[]}"#),
+            Err(ERROR_LOCAL_LLM_NO_MODELS.to_owned())
+        );
+    }
+
+    #[test]
+    fn ollama_uses_native_model_and_chat_endpoints() {
+        assert_eq!(
+            ollama_models_endpoint("http://192.168.1.10:11434").unwrap(),
+            "http://192.168.1.10:11434/api/tags"
+        );
+        assert_eq!(
+            ollama_chat_endpoint("http://192.168.1.10:11434").unwrap(),
+            "http://192.168.1.10:11434/api/chat"
         );
     }
 
@@ -839,7 +910,7 @@ mod tests {
             },
         )
         .unwrap();
-        assert_eq!(saved.base_url, "http://192.168.1.10:11434/v1");
+        assert_eq!(saved.base_url, "http://192.168.1.10:11434");
         assert_eq!(saved.model, "qwen3.5:27b");
         assert_eq!(
             load_active_ai_service_record(&database).unwrap(),

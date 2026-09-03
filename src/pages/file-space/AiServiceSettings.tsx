@@ -74,7 +74,7 @@ interface AiServiceSettingsProps {
 const cloudProviders: readonly CloudProvider[] = ["openaiCompatible"];
 const localProviders: readonly LocalProvider[] = ["ollama", "lmStudio"];
 const localProviderExampleUrls: Record<LocalProvider, string> = {
-  ollama: "http://127.0.0.1:11434/v1",
+  ollama: "http://127.0.0.1:11434",
   lmStudio: "http://127.0.0.1:1234/v1",
 };
 const agentCliSettingsStorageKey = "lumetrace.aiService.agentCli";
