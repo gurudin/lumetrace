@@ -487,19 +487,36 @@ fn apply_stream_chunk(
     Ok(chunk.done)
 }
 
+fn openai_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Value {
+    json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "temperature": 0.2,
+        "reasoning_effort": "low",
+        "stream": true,
+    })
+}
+
+fn ollama_chat_request_payload(settings: &LocalLlmSettings, prompt: &str) -> Value {
+    json!({
+        "model": settings.model,
+        "messages": [{ "role": "user", "content": prompt }],
+        "stream": true,
+        "think": "low",
+        "options": {
+            "temperature": 0.2,
+        },
+    })
+}
+
 fn run_openai_stream(
     client: &Client,
     settings: &LocalLlmSettings,
     prompt: &str,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
-    let request_body = serde_json::to_vec(&json!({
-        "model": settings.model,
-        "messages": [{ "role": "user", "content": prompt }],
-        "temperature": 0.2,
-        "stream": true,
-    }))
-    .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let request_body = serde_json::to_vec(&openai_chat_request_payload(settings, prompt))
+        .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let response = client
         .post(chat_endpoint(&settings.base_url))
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -561,16 +578,8 @@ fn run_ollama_stream(
     prompt: &str,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
-    let request_body = serde_json::to_vec(&json!({
-        "model": settings.model,
-        "messages": [{ "role": "user", "content": prompt }],
-        "stream": true,
-        "think": true,
-        "options": {
-            "temperature": 0.2,
-        },
-    }))
-    .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
+    let request_body = serde_json::to_vec(&ollama_chat_request_payload(settings, prompt))
+        .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let response = client
         .post(ollama_chat_endpoint(&settings.base_url)?)
         .header(reqwest::header::CONTENT_TYPE, "application/json")
@@ -767,6 +776,22 @@ mod tests {
         .unwrap();
         assert_eq!(ollama_answer.content, "结论 [S2]");
         assert!(ollama_answer.done);
+    }
+
+    #[test]
+    fn local_chat_requests_use_low_reasoning_without_output_limits() {
+        let settings = LocalLlmSettings {
+            provider: "lmStudio".to_owned(),
+            base_url: "http://192.168.1.10:11434/v1".to_owned(),
+            model: "qwen3.5:27b".to_owned(),
+        };
+        let openai = openai_chat_request_payload(&settings, "question");
+        assert_eq!(openai["reasoning_effort"], "low");
+        assert!(openai.get("max_tokens").is_none());
+
+        let ollama = ollama_chat_request_payload(&settings, "question");
+        assert_eq!(ollama["think"], "low");
+        assert!(ollama["options"].get("num_predict").is_none());
     }
 
     #[test]
