@@ -79,6 +79,7 @@ export function ImagePreviewOverlay() {
   const wheelFrameRef = useRef<number | null>(null);
   const wheelIdleTimerRef = useRef<number | null>(null);
   const dragRef = useRef<DragState | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const historicalSourceRef = useRef<string | null>(null);
@@ -258,7 +259,31 @@ export function ImagePreviewOverlay() {
     if (!open) return undefined;
     window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closePreview();
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePreview();
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+          'button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+        ) ?? []).filter((element) => element.offsetParent !== null);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        const active = document.activeElement;
+        if (!dialogRef.current?.contains(active)) {
+          event.preventDefault();
+          (event.shiftKey ? last : first).focus();
+        } else if (event.shiftKey && active === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && active === last) {
+          event.preventDefault();
+          first.focus();
+        }
+        return;
+      }
       if (event.key === "+" || event.key === "=") updateZoomByStep(zoomStep);
       if (event.key === "-") updateZoomByStep(-zoomStep);
       if (event.key === "0") resetView();
@@ -312,6 +337,7 @@ export function ImagePreviewOverlay() {
 
   return (
     <div
+      ref={dialogRef}
       className="file-image-preview"
       data-state={presence.state}
       role="dialog"

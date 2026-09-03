@@ -19,6 +19,17 @@
   --file-preview-version-motion-ease: var(--motion-ease-disclose);
 }
 
+/* Preview content always belongs to the second column. The first column is
+   reserved for the optional timeline and can legitimately be 0px wide. */
+.file-markdown-preview-body,
+.file-text-preview-body,
+.file-pdf-preview-body,
+.file-image-preview-canvas {
+  grid-column: 2;
+  min-width: 0;
+  min-height: 0;
+}
+
 .file-preview-version-region {
   min-width: 0;
   min-height: 0;

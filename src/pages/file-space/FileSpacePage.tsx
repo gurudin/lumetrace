@@ -71,6 +71,10 @@ import {
   type JustifiedFileLayout,
 } from "./fileJustifiedLayout";
 import {
+  nextFileIdForKeyboard,
+  type FileKeyboardDirection,
+} from "./fileKeyboardNavigation";
+import {
   fileCardMetadataText,
   fileDocumentArtworkFormat,
   shouldShowFileVersionBadge,
@@ -1288,9 +1292,11 @@ export function FileSpacePage() {
   const dialogWasOpenRef = useRef(false);
   const dialogRestorePendingRef = useRef(false);
   const contextMenuRef = useRef<HTMLDivElement>(null);
+  const contextMenuReturnFocusRef = useRef<HTMLElement | null>(null);
   const filterMenuRef = useRef<HTMLDivElement>(null);
   const contentDropZoneRef = useRef<HTMLDivElement>(null);
   const fileGridRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLElement>(null);
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const folderTreeRef = useRef<HTMLDivElement>(null);
   const timelinePanelRef = useRef<HTMLElement>(null);
@@ -1788,6 +1794,16 @@ export function FileSpacePage() {
     narrowWindow.addEventListener("change", collapseSidebar);
     return () => narrowWindow.removeEventListener("change", collapseSidebar);
   }, []);
+
+  useEffect(() => {
+    if (!isSidebarVisible || !window.matchMedia("(max-width: 980px)").matches) return undefined;
+    const closeSidebarOutside = (event: PointerEvent) => {
+      if (event.target instanceof Element && event.target.closest("[data-file-space-sidebar-toggle]")) return;
+      if (!sidebarRef.current?.contains(event.target as Node)) setSidebarVisible(false);
+    };
+    window.addEventListener("pointerdown", closeSidebarOutside);
+    return () => window.removeEventListener("pointerdown", closeSidebarOutside);
+  }, [isSidebarVisible]);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -2291,6 +2307,11 @@ export function FileSpacePage() {
 
   useEffect(() => {
     if (!folderContextMenu && !fileContextMenu && !contentContextMenu) return undefined;
+    const focusFrame = window.requestAnimationFrame(() => {
+      contextMenuRef.current?.querySelector<HTMLButtonElement>(
+        'button[role="menuitem"]:not(:disabled), button[role="menuitemradio"]:not(:disabled)',
+      )?.focus();
+    });
     const closeContextMenu = (event: PointerEvent) => {
       if (!contextMenuRef.current?.contains(event.target as Node)) {
         setFolderContextMenu(null);
@@ -2307,6 +2328,7 @@ export function FileSpacePage() {
     window.addEventListener("resize", closeForLayoutChange);
     window.addEventListener("scroll", closeForLayoutChange, true);
     return () => {
+      window.cancelAnimationFrame(focusFrame);
       window.removeEventListener("pointerdown", closeContextMenu);
       window.removeEventListener("resize", closeForLayoutChange);
       window.removeEventListener("scroll", closeForLayoutChange, true);
@@ -3563,6 +3585,11 @@ export function FileSpacePage() {
     event.preventDefault();
     event.stopPropagation();
     if (operationRef.current) return;
+    contextMenuReturnFocusRef.current = event.currentTarget instanceof HTMLElement
+      ? event.currentTarget
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     nativeDropBlockedRef.current = true;
     setFileContextMenu(null);
     setContentContextMenu(null);
@@ -3580,6 +3607,11 @@ export function FileSpacePage() {
     event.preventDefault();
     event.stopPropagation();
     if (operationRef.current) return;
+    contextMenuReturnFocusRef.current = event.currentTarget instanceof HTMLElement
+      ? event.currentTarget
+      : document.activeElement instanceof HTMLElement
+        ? document.activeElement
+        : null;
     nativeDropBlockedRef.current = true;
     const menuWidth = 218;
     const file = snapshot.files.find((item) => item.id === fileId);
@@ -3603,6 +3635,7 @@ export function FileSpacePage() {
     ) return;
     event.preventDefault();
     event.stopPropagation();
+    contextMenuReturnFocusRef.current = event.currentTarget;
     nativeDropBlockedRef.current = true;
     setFolderContextMenu(null);
     setFileContextMenu(null);
@@ -3612,6 +3645,35 @@ export function FileSpacePage() {
       x: Math.max(8, Math.min(event.clientX, window.innerWidth - menuWidth - 8)),
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - menuHeight - 8)),
     });
+  };
+
+  const closeContextMenusAndRestoreFocus = () => {
+    setFolderContextMenu(null);
+    setFileContextMenu(null);
+    setContentContextMenu(null);
+    const target = contextMenuReturnFocusRef.current;
+    contextMenuReturnFocusRef.current = null;
+    if (target?.isConnected) window.requestAnimationFrame(() => target.focus({ preventScroll: true }));
+  };
+
+  const handleContextMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>(
+      'button[role="menuitem"]:not(:disabled), button[role="menuitemradio"]:not(:disabled)',
+    ));
+    if (event.key === "Escape" || event.key === "Tab") {
+      event.preventDefault();
+      event.stopPropagation();
+      closeContextMenusAndRestoreFocus();
+      return;
+    }
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key) || items.length === 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
+    if (event.key === "Home") items[0].focus();
+    else if (event.key === "End") items.at(-1)?.focus();
+    else if (event.key === "ArrowDown") items[(currentIndex + 1 + items.length) % items.length].focus();
+    else items[(currentIndex <= 0 ? items.length : currentIndex) - 1].focus();
   };
 
   const toggleSearchScope = (scope: SearchScope) => {
@@ -4424,12 +4486,65 @@ export function FileSpacePage() {
     if (gesture) finishMarqueeSelection(gesture.pointerId, true);
   };
 
+  const focusFileCard = (fileId: string) => {
+    const scroll = contentDropZoneRef.current;
+    const grid = fileGridRef.current;
+    const placement = fileJustifiedLayout?.placements[fileId];
+    if (!scroll || !grid || !placement || !fileJustifiedLayout) return;
+    const scrollRect = scroll.getBoundingClientRect();
+    const gridRect = grid.getBoundingClientRect();
+    const targetTop = gridRect.top - scrollRect.top + scroll.scrollTop + placement.y;
+    const targetBottom = targetTop + fileJustifiedLayout.cardHeight;
+    const viewportTop = scroll.scrollTop;
+    const viewportBottom = viewportTop + scroll.clientHeight;
+    if (targetTop < viewportTop + 12) scroll.scrollTop = Math.max(0, targetTop - 12);
+    else if (targetBottom > viewportBottom - 12) {
+      scroll.scrollTop = Math.max(0, targetBottom - scroll.clientHeight + 12);
+    }
+    updateFileVirtualViewport();
+    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
+      document.querySelector<HTMLButtonElement>(
+        `.file-space-file-card[data-file-id="${CSS.escape(fileId)}"] > button:first-child`,
+      )?.focus({ preventScroll: true });
+    }));
+  };
+
   const handleFileGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       const allIds = sortedVisibleFiles.map((file) => file.id);
       updateSelectedFiles(new Set(allIds), allIds[0] ?? null);
       setSelectionAnnouncement(t("fileSpace.inspector.selectionStatus", { count: allIds.length }));
+      return;
+    }
+    const directionByKey: Partial<Record<string, FileKeyboardDirection>> = {
+      ArrowLeft: "left",
+      ArrowRight: "right",
+      ArrowUp: "up",
+      ArrowDown: "down",
+    };
+    const direction = directionByKey[event.key];
+    if (direction && fileJustifiedLayout) {
+      const focusedFileId = document.activeElement instanceof Element
+        ? document.activeElement.closest<HTMLElement>(".file-space-file-card")?.dataset.fileId ?? null
+        : null;
+      const currentId = focusedFileId && visibleFileById.has(focusedFileId)
+        ? focusedFileId
+        : selectionAnchorRef.current && visibleFileById.has(selectionAnchorRef.current)
+          ? selectionAnchorRef.current
+          : visibleFileIds.find((id) => selectedFileIdsRef.current.has(id)) ?? null;
+      const nextId = nextFileIdForKeyboard({
+        orderedIds: visibleFileIds,
+        placements: fileJustifiedLayout.placements,
+        currentId,
+        direction,
+        layoutMode: fileLayoutMode,
+      });
+      if (nextId) {
+        event.preventDefault();
+        updateSelectedFiles(new Set([nextId]), nextId);
+        focusFileCard(nextId);
+      }
       return;
     }
     if (
@@ -4913,6 +5028,7 @@ export function FileSpacePage() {
     setCurrentFolderId(folderId);
     clearSelectedFiles();
     setQuery("");
+    if (window.matchMedia("(max-width: 980px)").matches) setSidebarVisible(false);
   };
 
   const chooseTrash = () => {
@@ -4923,6 +5039,7 @@ export function FileSpacePage() {
     setFolderContextMenu(null);
     setFileContextMenu(null);
     closeTimelinePanel();
+    if (window.matchMedia("(max-width: 980px)").matches) setSidebarVisible(false);
   };
 
   const toggleExpanded = (folderId: string) => {
@@ -4942,6 +5059,58 @@ export function FileSpacePage() {
       !isFolderSubtreeFullyExpanded(current, expandableIds),
     ));
     setFolderContextMenu(null);
+  };
+
+  const visibleFolderTreeIds = useMemo(() => {
+    const ids: string[] = [];
+    const collect = (parentId: string | null) => {
+      (foldersByParent.get(parentId) ?? []).forEach((folder) => {
+        ids.push(folder.id);
+        if (expandedFolders.has(folder.id)) collect(folder.id);
+      });
+    };
+    collect(null);
+    return ids;
+  }, [expandedFolders, foldersByParent]);
+  const folderTreeTabStopId = currentFolder?.id && visibleFolderTreeIds.includes(currentFolder.id)
+    ? currentFolder.id
+    : visibleFolderTreeIds[0] ?? null;
+
+  const focusFolderTreeItem = (folderId: string) => {
+    const item = folderTreeRef.current?.querySelector<HTMLElement>(
+      `.file-space-tree-name[data-folder-id="${CSS.escape(folderId)}"]`,
+    );
+    item?.focus({ preventScroll: true });
+    item?.scrollIntoView({ block: "nearest" });
+  };
+
+  const handleFolderTreeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (!(event.target instanceof Element)) return;
+    const item = event.target.closest<HTMLElement>(".file-space-tree-name[data-folder-id]");
+    const folderId = item?.dataset.folderId;
+    if (!folderId) return;
+    const index = visibleFolderTreeIds.indexOf(folderId);
+    if (index < 0) return;
+    if (["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      event.preventDefault();
+      event.stopPropagation();
+    } else return;
+
+    if (event.key === "ArrowUp") focusFolderTreeItem(visibleFolderTreeIds[Math.max(0, index - 1)]);
+    else if (event.key === "ArrowDown") focusFolderTreeItem(visibleFolderTreeIds[Math.min(visibleFolderTreeIds.length - 1, index + 1)]);
+    else if (event.key === "Home") focusFolderTreeItem(visibleFolderTreeIds[0]);
+    else if (event.key === "End") focusFolderTreeItem(visibleFolderTreeIds.at(-1)!);
+    else if (event.key === "ArrowRight") {
+      const firstChild = (foldersByParent.get(folderId) ?? [])[0];
+      if (!firstChild) return;
+      if (!expandedFolders.has(folderId)) toggleExpanded(folderId);
+      else focusFolderTreeItem(firstChild.id);
+    } else if (expandedFolders.has(folderId) && (foldersByParent.get(folderId) ?? []).length > 0) {
+      toggleExpanded(folderId);
+    } else {
+      const parentId = snapshot.folders.find((folder) => folder.id === folderId)?.parentId;
+      if (parentId) focusFolderTreeItem(parentId);
+    }
   };
 
   const renderTree = (parentId: string | null, depth = 0): React.ReactNode => (
@@ -4966,6 +5135,7 @@ export function FileSpacePage() {
             <button
               className="file-space-tree-toggle"
               type="button"
+              tabIndex={-1}
               disabled={!hasChildren}
               onClick={() => toggleExpanded(folder.id)}
               style={{ left: `${depth * 17 - 15}px` }}
@@ -4977,6 +5147,11 @@ export function FileSpacePage() {
             <button
               className="file-space-tree-name"
               type="button"
+              role="treeitem"
+              data-folder-id={folder.id}
+              tabIndex={folderTreeTabStopId === folder.id ? 0 : -1}
+              aria-level={depth + 1}
+              aria-selected={active}
               aria-expanded={hasChildren ? expanded : undefined}
               aria-grabbed={internalFolderDrag?.folderId === folder.id}
               onPointerDown={(event) => beginFolderDragGesture(event, folder.id)}
@@ -5100,7 +5275,7 @@ export function FileSpacePage() {
 
   return (
     <section className={`file-space-page${isSidebarVisible ? "" : " is-sidebar-hidden"}${isInspectorVisible && !isTrashView ? "" : " is-inspector-hidden"}`}>
-      <aside className="file-space-sidebar" aria-hidden={!isSidebarVisible} inert={!isSidebarVisible}>
+      <aside ref={sidebarRef} className="file-space-sidebar" aria-hidden={!isSidebarVisible} inert={!isSidebarVisible}>
         <header className="file-space-sidebar-header" data-tauri-drag-region>
           <button
             className="file-space-sidebar-close"
@@ -5156,6 +5331,7 @@ export function FileSpacePage() {
             ref={folderTreeRef}
             role="tree"
             data-folder-root-drop="true"
+            onKeyDown={handleFolderTreeKeyDown}
           >
             {renderTree(null)}
           </div>
@@ -5178,6 +5354,7 @@ export function FileSpacePage() {
             <button
               className="file-space-toolbar-icon-button"
               type="button"
+              data-file-space-sidebar-toggle="true"
               onClick={toggleSidebarVisibility}
               title={t("fileSpace.toolbar.toggleSidebar")}
               aria-label={t("fileSpace.toolbar.toggleSidebar")}
@@ -5897,6 +6074,7 @@ export function FileSpacePage() {
           ref={contextMenuRef}
           role="menu"
           aria-label={t("fileSpace.contentMenu.title")}
+          onKeyDown={handleContextMenuKeyDown}
           style={{ left: contentContextMenu.x, top: contentContextMenu.y }}
         >
           <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateTextFile(currentFolder?.id ?? null)}>
@@ -5977,6 +6155,7 @@ export function FileSpacePage() {
           className="file-space-context-menu"
           ref={contextMenuRef}
           role="menu"
+          onKeyDown={handleContextMenuKeyDown}
           style={{ left: folderContextMenu.x, top: folderContextMenu.y }}
         >
           <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(folderContextMenu.folderId)}>
@@ -6003,6 +6182,7 @@ export function FileSpacePage() {
           className="file-space-context-menu file-space-file-context-menu"
           ref={contextMenuRef}
           role="menu"
+          onKeyDown={handleContextMenuKeyDown}
           style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
         >
           {(snapshot.files.find((file) => file.id === fileContextMenu.fileId)?.versionCount ?? 0) > 0 ? (

@@ -66,6 +66,7 @@ export function TextPreviewOverlay() {
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const loadSequenceRef = useRef(0);
@@ -166,13 +167,33 @@ export function TextPreviewOverlay() {
   useEffect(() => {
     if (!open) return undefined;
     window.requestAnimationFrame(() => closeButtonRef.current?.focus());
-    const close = (event: KeyboardEvent) => {
-      if (event.key !== "Escape") return;
-      event.preventDefault();
-      closePreview();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        closePreview();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
+      ) ?? []).filter((element) => element.offsetParent !== null);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!dialogRef.current?.contains(active)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && active === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && active === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener("keydown", close);
-    return () => window.removeEventListener("keydown", close);
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
   }, [closePreview, open]);
 
   useEffect(() => {
@@ -187,7 +208,7 @@ export function TextPreviewOverlay() {
   if (!presence.mounted || !request) return null;
 
   return (
-    <div className="file-text-preview" data-state={presence.state} role="dialog" aria-modal="true" aria-label={copy.dialog(request.name)}>
+    <div ref={dialogRef} className="file-text-preview" data-state={presence.state} role="dialog" aria-modal="true" aria-label={copy.dialog(request.name)}>
       <header className="file-text-preview-toolbar">
         <div>
           <strong title={request.name}>{request.name}</strong>
