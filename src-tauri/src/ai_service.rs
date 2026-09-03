@@ -14,8 +14,12 @@ use tauri::State;
 
 pub(crate) const AI_SERVICE_MODE_KEY: &str = "ai.service_mode";
 pub(crate) const AI_SERVICE_MODE_AGENT_CLI: &str = "agentCli";
+const AI_SERVICE_MODE_CLOUD: &str = "cloud";
 const AI_SERVICE_MODE_LOCAL: &str = "local";
+const CLOUD_AI_API_KEY_KEY: &str = "ai.cloud_api_key";
+const CLOUD_AI_SETTINGS_KEY: &str = "ai.cloud";
 const LOCAL_LLM_SETTINGS_KEY: &str = "ai.local_llm";
+const CLOUD_AI_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_LLM_CONNECTION_TIMEOUT: Duration = Duration::from_secs(12);
 const LOCAL_LLM_MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const THINKING_EMIT_INTERVAL: Duration = Duration::from_millis(100);
@@ -31,6 +35,42 @@ pub(crate) const ERROR_LOCAL_LLM_OUTPUT_TOO_LARGE: &str = "ai_local_llm_output_t
 const ERROR_LOCAL_LLM_INVALID_URL: &str = "local_llm_invalid_url";
 const ERROR_LOCAL_LLM_CONNECTION_FAILED: &str = "local_llm_connection_failed";
 const ERROR_LOCAL_LLM_NO_MODELS: &str = "local_llm_no_models";
+const ERROR_CLOUD_AI_CONNECTION_FAILED: &str = "cloud_ai_connection_failed";
+const ERROR_CLOUD_AI_INVALID_KEY: &str = "cloud_ai_invalid_key";
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct StoredCloudAiSettings {
+    provider: String,
+    base_url: String,
+    model: String,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAiConnectionRequest {
+    provider: String,
+    base_url: String,
+    api_key: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAiSettingsRequest {
+    provider: String,
+    base_url: String,
+    api_key: Option<String>,
+    model: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CloudAiSettingsSnapshot {
+    provider: String,
+    base_url: String,
+    model: String,
+    has_api_key: bool,
+}
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +98,7 @@ pub struct LocalLlmConnectionResult {
 #[serde(rename_all = "camelCase")]
 pub struct AiServiceSettingsSnapshot {
     mode: Option<String>,
+    cloud: Option<CloudAiSettingsSnapshot>,
     local: Option<LocalLlmSettings>,
     agent_cli: Option<AgentCliSettings>,
 }
@@ -97,6 +138,13 @@ fn validate_provider(provider: String) -> Result<String, String> {
         .ok_or_else(|| ERROR_LOCAL_LLM_CONNECTION_FAILED.to_owned())
 }
 
+fn validate_cloud_provider(provider: String) -> Result<String, String> {
+    let provider = provider.trim();
+    (provider == "openai")
+        .then(|| provider.to_owned())
+        .ok_or_else(|| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())
+}
+
 fn normalize_base_url(provider: &str, value: &str) -> Result<String, String> {
     let mut url = Url::parse(value.trim()).map_err(|_| ERROR_LOCAL_LLM_INVALID_URL.to_owned())?;
     if !matches!(url.scheme(), "http" | "https")
@@ -129,6 +177,24 @@ fn validate_model(model: String) -> Result<String, String> {
         .ok_or_else(|| ERROR_LOCAL_LLM_NO_MODELS.to_owned())
 }
 
+fn validate_api_key(api_key: String) -> Result<String, String> {
+    let api_key = api_key.trim();
+    (api_key.len() >= 8 && api_key.len() <= 4_096 && !api_key.chars().any(char::is_control))
+        .then(|| api_key.to_owned())
+        .ok_or_else(|| ERROR_CLOUD_AI_INVALID_KEY.to_owned())
+}
+
+fn validate_stored_cloud_ai_settings(
+    settings: StoredCloudAiSettings,
+) -> Result<StoredCloudAiSettings, String> {
+    let provider = validate_cloud_provider(settings.provider)?;
+    Ok(StoredCloudAiSettings {
+        base_url: normalize_base_url("lmStudio", &settings.base_url)?,
+        provider,
+        model: validate_model(settings.model)?,
+    })
+}
+
 fn validate_local_llm_settings(settings: LocalLlmSettings) -> Result<LocalLlmSettings, String> {
     let provider = validate_provider(settings.provider)?;
     Ok(LocalLlmSettings {
@@ -156,9 +222,30 @@ fn read_setting(database: &Database, key: &str) -> Result<Option<String>, String
 fn load_service_mode_record(database: &Database) -> Result<Option<String>, String> {
     let mode = read_setting(database, AI_SERVICE_MODE_KEY)?;
     match mode.as_deref() {
-        Some(AI_SERVICE_MODE_LOCAL | AI_SERVICE_MODE_AGENT_CLI) | None => Ok(mode),
+        Some(AI_SERVICE_MODE_CLOUD | AI_SERVICE_MODE_LOCAL | AI_SERVICE_MODE_AGENT_CLI) | None => {
+            Ok(mode)
+        }
         Some(_) => Err("Unsupported AI service mode".to_owned()),
     }
+}
+
+fn load_stored_cloud_ai_settings_record(
+    database: &Database,
+) -> Result<Option<StoredCloudAiSettings>, String> {
+    read_setting(database, CLOUD_AI_SETTINGS_KEY)?
+        .map(|value| {
+            serde_json::from_str::<StoredCloudAiSettings>(&value)
+                .map_err(|error| format!("Unable to read the cloud AI setting: {error}"))
+                .and_then(validate_stored_cloud_ai_settings)
+        })
+        .transpose()
+}
+
+fn cloud_ai_is_configured(database: &Database) -> Result<bool, String> {
+    let has_settings = load_stored_cloud_ai_settings_record(database)?.is_some();
+    let has_api_key = read_setting(database, CLOUD_AI_API_KEY_KEY)?
+        .is_some_and(|api_key| validate_api_key(api_key).is_ok());
+    Ok(has_settings && has_api_key)
 }
 
 pub(crate) fn load_local_llm_settings_record(
@@ -175,11 +262,14 @@ pub(crate) fn load_local_llm_settings_record(
 
 fn resolved_mode(
     stored_mode: Option<String>,
+    cloud_configured: bool,
     local: &Option<LocalLlmSettings>,
     agent_cli: &Option<AgentCliSettings>,
 ) -> Option<String> {
     stored_mode.or_else(|| {
-        if local.is_some() {
+        if cloud_configured {
+            Some(AI_SERVICE_MODE_CLOUD.to_owned())
+        } else if local.is_some() {
             Some(AI_SERVICE_MODE_LOCAL.to_owned())
         } else if agent_cli.is_some() {
             Some(AI_SERVICE_MODE_AGENT_CLI.to_owned())
@@ -192,13 +282,72 @@ fn resolved_mode(
 pub(crate) fn load_active_ai_service_record(
     database: &Database,
 ) -> Result<Option<ActiveAiService>, String> {
+    let cloud_configured = cloud_ai_is_configured(database)?;
     let local = load_local_llm_settings_record(database)?;
     let agent_cli = load_agent_cli_settings_record(database)?;
-    let mode = resolved_mode(load_service_mode_record(database)?, &local, &agent_cli);
+    let mode = resolved_mode(
+        load_service_mode_record(database)?,
+        cloud_configured,
+        &local,
+        &agent_cli,
+    );
     Ok(match mode.as_deref() {
         Some(AI_SERVICE_MODE_LOCAL) => local.map(ActiveAiService::Local),
         Some(AI_SERVICE_MODE_AGENT_CLI) => agent_cli.map(ActiveAiService::AgentCli),
         _ => None,
+    })
+}
+
+fn resolve_cloud_api_key(database: &Database, api_key: Option<String>) -> Result<String, String> {
+    match api_key.filter(|value| !value.trim().is_empty()) {
+        Some(api_key) => validate_api_key(api_key),
+        None => read_setting(database, CLOUD_AI_API_KEY_KEY)?
+            .ok_or_else(|| ERROR_CLOUD_AI_INVALID_KEY.to_owned())
+            .and_then(validate_api_key),
+    }
+}
+
+fn save_cloud_ai_settings_record(
+    database: &Database,
+    request: CloudAiSettingsRequest,
+) -> Result<CloudAiSettingsSnapshot, String> {
+    let api_key = resolve_cloud_api_key(database, request.api_key)?;
+    let settings = validate_stored_cloud_ai_settings(StoredCloudAiSettings {
+        provider: request.provider,
+        base_url: request.base_url,
+        model: request.model,
+    })?;
+    let value = serde_json::to_string(&settings)
+        .map_err(|error| format!("Unable to encode the cloud AI setting: {error}"))?;
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin saving the cloud AI setting: {error}"))?;
+    let now = now_millis();
+    for (key, setting_value) in [
+        (CLOUD_AI_SETTINGS_KEY, value.as_str()),
+        (CLOUD_AI_API_KEY_KEY, api_key.as_str()),
+        (AI_SERVICE_MODE_KEY, AI_SERVICE_MODE_CLOUD),
+    ] {
+        transaction
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                params![key, setting_value, now],
+            )
+            .map_err(|error| format!("Unable to save the cloud AI setting: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to finish saving the cloud AI setting: {error}"))?;
+    Ok(CloudAiSettingsSnapshot {
+        provider: settings.provider,
+        base_url: settings.base_url,
+        model: settings.model,
+        has_api_key: true,
     })
 }
 
@@ -353,6 +502,32 @@ fn request_local_models(
         parse_model_list(&body)?
     };
     Ok(LocalLlmConnectionResult { base_url, models })
+}
+
+fn request_cloud_models(
+    provider: String,
+    base_url: String,
+    api_key: String,
+) -> Result<LocalLlmConnectionResult, String> {
+    validate_cloud_provider(provider)?;
+    let base_url = normalize_base_url("lmStudio", &base_url)?;
+    let api_key = validate_api_key(api_key)?;
+    let client = Client::builder()
+        .connect_timeout(Duration::from_secs(8))
+        .timeout(CLOUD_AI_CONNECTION_TIMEOUT)
+        .build()
+        .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+    let response = client
+        .get(models_endpoint(&base_url))
+        .bearer_auth(api_key)
+        .send()
+        .and_then(reqwest::blocking::Response::error_for_status)
+        .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?;
+    let body = read_bounded_response(response, 1024 * 1024, ERROR_CLOUD_AI_CONNECTION_FAILED)?;
+    Ok(LocalLlmConnectionResult {
+        base_url,
+        models: parse_model_list(&body).map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?,
+    })
 }
 
 fn message_content(message: &Value) -> String {
@@ -687,18 +862,50 @@ pub(crate) fn run_local_llm(
 pub fn get_ai_service_settings(
     database: State<'_, Database>,
 ) -> Result<AiServiceSettingsSnapshot, String> {
+    let cloud = load_stored_cloud_ai_settings_record(database.inner())?;
+    let cloud_api_key_exists = read_setting(database.inner(), CLOUD_AI_API_KEY_KEY)?
+        .is_some_and(|api_key| validate_api_key(api_key).is_ok());
+    let cloud_configured = cloud_ai_is_configured(database.inner())?;
     let local = load_local_llm_settings_record(database.inner())?;
     let agent_cli = load_agent_cli_settings_record(database.inner())?;
     let mode = resolved_mode(
         load_service_mode_record(database.inner())?,
+        cloud_configured,
         &local,
         &agent_cli,
     );
     Ok(AiServiceSettingsSnapshot {
         mode,
+        cloud: cloud.map(|settings| CloudAiSettingsSnapshot {
+            provider: settings.provider,
+            base_url: settings.base_url,
+            model: settings.model,
+            has_api_key: cloud_api_key_exists,
+        }),
         local,
         agent_cli,
     })
+}
+
+#[tauri::command]
+pub async fn check_cloud_ai_connection(
+    request: CloudAiConnectionRequest,
+    database: State<'_, Database>,
+) -> Result<LocalLlmConnectionResult, String> {
+    let api_key = resolve_cloud_api_key(database.inner(), request.api_key)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        request_cloud_models(request.provider, request.base_url, api_key)
+    })
+    .await
+    .map_err(|_| ERROR_CLOUD_AI_CONNECTION_FAILED.to_owned())?
+}
+
+#[tauri::command]
+pub fn save_cloud_ai_settings(
+    settings: CloudAiSettingsRequest,
+    database: State<'_, Database>,
+) -> Result<CloudAiSettingsSnapshot, String> {
+    save_cloud_ai_settings_record(database.inner(), settings)
 }
 
 #[tauri::command]
@@ -916,6 +1123,60 @@ mod tests {
             load_active_ai_service_record(&database).unwrap(),
             Some(ActiveAiService::Local(saved))
         );
+        drop(database);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cloud_settings_persist_locally_without_exposing_the_api_key() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-cloud-ai-settings-{}", Uuid::new_v4()));
+        let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
+        let saved = save_cloud_ai_settings_record(
+            &database,
+            CloudAiSettingsRequest {
+                provider: "openai".to_owned(),
+                base_url: "https://api.openai.com".to_owned(),
+                api_key: Some("sk-local-test-value".to_owned()),
+                model: "gpt-5-mini".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(saved.base_url, "https://api.openai.com/v1");
+        assert!(saved.has_api_key);
+        assert!(!serde_json::to_string(&saved)
+            .unwrap()
+            .contains("sk-local-test-value"));
+        assert!(cloud_ai_is_configured(&database).unwrap());
+        assert_eq!(
+            load_service_mode_record(&database).unwrap().as_deref(),
+            Some("cloud")
+        );
+        assert_eq!(
+            read_setting(&database, CLOUD_AI_API_KEY_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("sk-local-test-value")
+        );
+
+        let updated = save_cloud_ai_settings_record(
+            &database,
+            CloudAiSettingsRequest {
+                provider: "openai".to_owned(),
+                base_url: "https://api.openai.com/v1".to_owned(),
+                api_key: None,
+                model: "gpt-5.1".to_owned(),
+            },
+        )
+        .unwrap();
+        assert_eq!(updated.model, "gpt-5.1");
+        assert_eq!(
+            read_setting(&database, CLOUD_AI_API_KEY_KEY)
+                .unwrap()
+                .as_deref(),
+            Some("sk-local-test-value")
+        );
+
         drop(database);
         std::fs::remove_dir_all(root).unwrap();
     }

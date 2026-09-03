@@ -2158,6 +2158,7 @@ fn export_file_space_backup_record(
             staged_connection
                 .execute_batch(
                     "PRAGMA foreign_keys = ON;
+                     DELETE FROM app_settings WHERE key = 'ai.cloud_api_key';
                      DELETE FROM file_space_search_chunks;
                      DELETE FROM file_space_index_jobs;
                      VACUUM;",
@@ -11902,6 +11903,15 @@ mod tests {
     #[test]
     fn backup_export_contains_workspace_versions_database_and_manifest() {
         let (root, _storage, versions, database) = test_workspace("backup-export");
+        database
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES ('ai.cloud_api_key', 'sk-local-only', 1)",
+                [],
+            )
+            .unwrap();
         let source = root.join("brief.md");
         fs::write(&source, b"traceable backup").unwrap();
         import_files_record(&database, None, &[source.to_string_lossy().into_owned()]).unwrap();
@@ -11977,6 +11987,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(derived_counts, (0, 0, 1));
+        let exported_cloud_key_count = exported_connection
+            .query_row(
+                "SELECT COUNT(*) FROM app_settings WHERE key = 'ai.cloud_api_key'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap();
+        assert_eq!(exported_cloud_key_count, 0);
 
         drop(archive);
         fs::remove_dir_all(root).unwrap();

@@ -31,7 +31,7 @@ import {
   type AiServiceMode,
 } from "./aiServiceSettingsState";
 
-type CloudProvider = "openaiCompatible";
+type CloudProvider = "openai";
 type LocalProvider = "ollama" | "lmStudio";
 type AgentFilePermission = "readOnly" | "readWrite";
 type LocalConnectionState = "idle" | "checking" | "passed" | "error";
@@ -57,8 +57,16 @@ interface LocalLlmConnectionResult {
   models: string[];
 }
 
+interface CloudAiSettings {
+  provider: CloudProvider;
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+}
+
 interface AiServiceSettingsSnapshot {
-  mode: "local" | "agentCli" | null;
+  mode: "cloud" | "local" | "agentCli" | null;
+  cloud: CloudAiSettings | null;
   local: LocalLlmSettings | null;
   agentCli: SavedAgentCliSettings | null;
 }
@@ -71,7 +79,8 @@ interface AiServiceSettingsProps {
   onCancel: () => void;
 }
 
-const cloudProviders: readonly CloudProvider[] = ["openaiCompatible"];
+const cloudProvider: CloudProvider = "openai";
+const defaultCloudBaseUrl = "https://api.openai.com/v1";
 const localProviders: readonly LocalProvider[] = ["ollama", "lmStudio"];
 const localProviderExampleUrls: Record<LocalProvider, string> = {
   ollama: "http://127.0.0.1:11434",
@@ -165,7 +174,12 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const { t } = useTranslation();
   const legacySettings = useMemo(readLegacyAgentCliSettings, []);
   const [mode, setMode] = useState<AiServiceMode>(defaultAiServiceMode);
-  const [cloudProvider, setCloudProvider] = useState<CloudProvider>("openaiCompatible");
+  const [cloudBaseUrl, setCloudBaseUrl] = useState(defaultCloudBaseUrl);
+  const [cloudApiKey, setCloudApiKey] = useState("");
+  const [cloudHasSavedApiKey, setCloudHasSavedApiKey] = useState(false);
+  const [cloudModels, setCloudModels] = useState<string[]>([]);
+  const [selectedCloudModel, setSelectedCloudModel] = useState("");
+  const [cloudConnectionState, setCloudConnectionState] = useState<LocalConnectionState>("idle");
   const [localProvider, setLocalProvider] = useState<LocalProvider>("ollama");
   const [localBaseUrl, setLocalBaseUrl] = useState(defaultLocalBaseUrl);
   const [localModels, setLocalModels] = useState<string[]>([]);
@@ -182,6 +196,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const [saveError, setSaveError] = useState(false);
   const requestedStartupDetection = useRef(false);
   const localConnectionRequest = useRef(0);
+  const cloudConnectionRequest = useRef(0);
 
   useEffect(() => {
     if (!isTauri()) {
@@ -214,6 +229,13 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
           setSelectedLocalModel(snapshot.local.model);
           setLocalConnectionState("idle");
         }
+        if (snapshot.cloud && snapshot.cloud.provider === "openai" && !cancelled) {
+          setCloudBaseUrl(snapshot.cloud.baseUrl);
+          setCloudHasSavedApiKey(snapshot.cloud.hasApiKey);
+          setCloudModels([snapshot.cloud.model]);
+          setSelectedCloudModel(snapshot.cloud.model);
+          setCloudConnectionState("idle");
+        }
       } catch {
         // Keep a valid legacy value visible. A later explicit Save retries SQLite persistence.
       } finally {
@@ -225,13 +247,6 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     };
   }, [legacySettings]);
 
-  const cloudProviderOptions = useMemo<readonly MacSelectOption<CloudProvider>[]>(
-    () => cloudProviders.map((value) => ({
-      value,
-      label: t(`fileSpace.settings.aiService.providers.${value}`),
-    })),
-    [t],
-  );
   const localProviderOptions = useMemo<readonly MacSelectOption<LocalProvider>[]>(
     () => localProviders.map((value) => ({
       value,
@@ -244,6 +259,12 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       ? localModels.map((model) => ({ value: model, label: model }))
       : [{ value: "", label: t("fileSpace.settings.aiService.modelPlaceholder"), disabled: true }],
     [localModels, t],
+  );
+  const cloudModelOptions = useMemo<readonly MacSelectOption<string>[]>(
+    () => cloudModels.length > 0
+      ? cloudModels.map((model) => ({ value: model, label: model }))
+      : [{ value: "", label: t("fileSpace.settings.aiService.modelPlaceholder"), disabled: true }],
+    [cloudModels, t],
   );
   const permissionOptions = useMemo<readonly MacSelectOption<AgentFilePermission>[]>(
     () => [
@@ -263,6 +284,24 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     setSelectedLocalModel("");
     setLocalConnectionState("idle");
     setSaveError(false);
+  };
+
+  const resetCloudConnection = () => {
+    cloudConnectionRequest.current += 1;
+    setCloudModels([]);
+    setSelectedCloudModel("");
+    setCloudConnectionState("idle");
+    setSaveError(false);
+  };
+
+  const changeCloudBaseUrl = (baseUrl: string) => {
+    setCloudBaseUrl(baseUrl);
+    resetCloudConnection();
+  };
+
+  const changeCloudApiKey = (apiKey: string) => {
+    setCloudApiKey(apiKey);
+    resetCloudConnection();
   };
 
   const changeLocalProvider = (provider: LocalProvider) => {
@@ -360,6 +399,31 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     }
   };
 
+  const testCloudConnection = async () => {
+    const baseUrl = cloudBaseUrl.trim();
+    const apiKey = cloudApiKey.trim();
+    if (!baseUrl || (!apiKey && !cloudHasSavedApiKey) || !isTauri() || cloudConnectionState === "checking") return;
+    const requestId = cloudConnectionRequest.current + 1;
+    cloudConnectionRequest.current = requestId;
+    setCloudConnectionState("checking");
+    setSaveError(false);
+    try {
+      const result = await invoke<LocalLlmConnectionResult>("check_cloud_ai_connection", {
+        request: { provider: cloudProvider, baseUrl, apiKey: apiKey || null },
+      });
+      if (cloudConnectionRequest.current !== requestId) return;
+      setCloudBaseUrl(result.baseUrl);
+      setCloudModels(result.models);
+      setSelectedCloudModel((current) => result.models.includes(current) ? current : (result.models[0] ?? ""));
+      setCloudConnectionState(result.models.length > 0 ? "passed" : "error");
+    } catch {
+      if (cloudConnectionRequest.current !== requestId) return;
+      setCloudModels([]);
+      setSelectedCloudModel("");
+      setCloudConnectionState("error");
+    }
+  };
+
   const saveAgentCliSettings = async () => {
     const selectedCheck = agentChecks[selectedAgent];
     if (selectedCheck.state !== "passed" || !isTauri() || savingSettings) return;
@@ -407,6 +471,32 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     }
   };
 
+  const saveCloudSettings = async () => {
+    if (cloudConnectionState !== "passed" || !selectedCloudModel || !isTauri() || savingSettings) return;
+    setSaveError(false);
+    setSavingSettings(true);
+    try {
+      const saved = await invoke<CloudAiSettings>("save_cloud_ai_settings", {
+        settings: {
+          provider: cloudProvider,
+          baseUrl: cloudBaseUrl.trim(),
+          apiKey: cloudApiKey.trim() || null,
+          model: selectedCloudModel,
+        },
+      });
+      setCloudBaseUrl(saved.baseUrl);
+      setCloudApiKey("");
+      setCloudHasSavedApiKey(saved.hasApiKey);
+      setSelectedCloudModel(saved.model);
+      window.dispatchEvent(new CustomEvent("lumetrace:ai-service-settings-changed", { detail: { mode: "cloud", cloud: saved } }));
+      onCancel();
+    } catch {
+      setSaveError(true);
+    } finally {
+      setSavingSettings(false);
+    }
+  };
+
   const selectedCheck = agentChecks[selectedAgent];
   const canTestSelectedAgent = selectedCheck.state !== "idle"
     && selectedCheck.state !== "checking"
@@ -421,6 +511,15 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     && Boolean(selectedLocalModel)
     && !loadingSettings
     && !savingSettings;
+  const canTestCloud = Boolean(cloudBaseUrl.trim())
+    && (Boolean(cloudApiKey.trim()) || cloudHasSavedApiKey)
+    && cloudConnectionState !== "checking"
+    && !loadingSettings
+    && isTauri();
+  const canSaveCloud = cloudConnectionState === "passed"
+    && Boolean(selectedCloudModel)
+    && !loadingSettings
+    && !savingSettings;
   const SelectedStatusIcon = selectedCheck.state === "passed"
     ? CircleCheck
     : selectedCheck.state === "checking"
@@ -433,6 +532,13 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       : localConnectionState === "error"
         ? CircleAlert
         : HardDrive;
+  const CloudStatusIcon = cloudConnectionState === "passed"
+    ? CircleCheck
+    : cloudConnectionState === "checking"
+      ? LoaderCircle
+      : cloudConnectionState === "error"
+        ? CircleAlert
+        : Cloud;
 
   return (
     <>
@@ -591,19 +697,43 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
           <>
             <div className="file-space-ai-service-form">
               <span>{t("fileSpace.settings.aiService.provider")}</span>
-              <MacSelect className="file-space-ai-service-select" value={cloudProvider} options={cloudProviderOptions} onChange={setCloudProvider} ariaLabel={t("fileSpace.settings.aiService.provider")} menuMinWidth={250} />
+              <div className="file-space-ai-service-fixed-value">
+                {t(`fileSpace.settings.aiService.providers.${cloudProvider}`)}
+              </div>
 
               <label htmlFor="file-space-ai-service-base-url">{t("fileSpace.settings.aiService.baseUrl")}</label>
-              <input id="file-space-ai-service-base-url" type="url" disabled placeholder={baseUrlPlaceholder} />
+              <input
+                id="file-space-ai-service-base-url"
+                type="url"
+                value={cloudBaseUrl}
+                disabled={cloudConnectionState === "checking" || savingSettings}
+                placeholder={baseUrlPlaceholder}
+                spellCheck={false}
+                autoCapitalize="none"
+                autoCorrect="off"
+                onChange={(event) => changeCloudBaseUrl(event.target.value)}
+              />
 
               <label htmlFor="file-space-ai-service-api-key">{t("fileSpace.settings.aiService.apiKey")}</label>
               <div className="file-space-ai-service-secret-field">
                 <LockKeyhole size={14} aria-hidden="true" />
-                <input id="file-space-ai-service-api-key" type="password" disabled placeholder={t("fileSpace.settings.aiService.apiKeyPlaceholder")} />
+                <input
+                  id="file-space-ai-service-api-key"
+                  type="password"
+                  value={cloudApiKey}
+                  disabled={cloudConnectionState === "checking" || savingSettings}
+                  placeholder={t(cloudHasSavedApiKey
+                    ? "fileSpace.settings.aiService.apiKeySavedPlaceholder"
+                    : "fileSpace.settings.aiService.apiKeyPlaceholder")}
+                  autoCapitalize="none"
+                  autoCorrect="off"
+                  spellCheck={false}
+                  onChange={(event) => changeCloudApiKey(event.target.value)}
+                />
               </div>
 
               <span>{t("fileSpace.settings.aiService.model")}</span>
-              <MacSelect className="file-space-ai-service-select" value="" options={[{ value: "", label: t("fileSpace.settings.aiService.cloudModelPlaceholder"), disabled: true }]} onChange={() => undefined} ariaLabel={t("fileSpace.settings.aiService.model")} disabled menuMinWidth={250} />
+              <MacSelect className="file-space-ai-service-select" value={selectedCloudModel} options={cloudModelOptions} onChange={setSelectedCloudModel} ariaLabel={t("fileSpace.settings.aiService.model")} disabled={cloudConnectionState !== "passed" || savingSettings} menuMinWidth={250} />
             </div>
 
             <div className="file-space-ai-service-notice">
@@ -611,13 +741,19 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
               <span>{t("fileSpace.settings.aiService.cloudPrivacy")}</span>
             </div>
 
-            <div className="file-space-ai-service-status" role="status">
-              <span aria-hidden="true" />
+            <div className={`file-space-ai-agent-connection is-${cloudConnectionState}`} role="status" aria-live="polite">
+              <CloudStatusIcon className={cloudConnectionState === "checking" ? "is-spinning" : ""} size={18} />
               <div>
-                <strong>{t("fileSpace.settings.aiService.uiOnlyTitle")}</strong>
-                <p>{t("fileSpace.settings.aiService.uiOnlyDescription")}</p>
+                <strong>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionState}.title`)}</strong>
+                <p>{t(`fileSpace.settings.aiService.cloudConnection.${cloudConnectionState}.description`)}</p>
               </div>
             </div>
+            {saveError ? (
+              <div className="file-space-ai-agent-connection is-error" role="alert">
+                <CircleAlert size={18} />
+                <div><p>{t("fileSpace.settings.aiService.saveError")}</p></div>
+              </div>
+            ) : null}
           </>
         )}
       </div>
@@ -626,20 +762,22 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
         <button type="button" onClick={onCancel}>{t("fileSpace.settings.cancel")}</button>
         <button
           type="button"
-          disabled={mode === "local" ? !canTestLocal : mode === "agentCli" ? !canTestSelectedAgent : true}
-          onClick={() => void (mode === "local" ? testLocalModelConnection() : testSelectedAgent())}
+          disabled={mode === "local" ? !canTestLocal : mode === "agentCli" ? !canTestSelectedAgent : !canTestCloud}
+          onClick={() => void (mode === "local" ? testLocalModelConnection() : mode === "agentCli" ? testSelectedAgent() : testCloudConnection())}
         >
           {mode === "local" && localConnectionState === "checking"
             ? t("fileSpace.settings.aiService.testingConnection")
             : mode === "agentCli" && selectedCheck.state === "checking"
+            ? t("fileSpace.settings.aiService.testingConnection")
+            : mode === "cloud" && cloudConnectionState === "checking"
             ? t("fileSpace.settings.aiService.testingConnection")
             : t("fileSpace.settings.aiService.testConnection")}
         </button>
         <button
           className="is-primary"
           type="button"
-          disabled={mode === "local" ? !canSaveLocal : mode === "agentCli" ? !canSaveAgent : true}
-          onClick={() => void (mode === "local" ? saveLocalModelSettings() : saveAgentCliSettings())}
+          disabled={mode === "local" ? !canSaveLocal : mode === "agentCli" ? !canSaveAgent : !canSaveCloud}
+          onClick={() => void (mode === "local" ? saveLocalModelSettings() : mode === "agentCli" ? saveAgentCliSettings() : saveCloudSettings())}
         >
           {t("fileSpace.settings.aiService.save")}
         </button>

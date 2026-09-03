@@ -55,8 +55,16 @@ interface LocalLlmSettings {
   model: string;
 }
 
+interface CloudAiSettings {
+  provider: "openai";
+  baseUrl: string;
+  model: string;
+  hasApiKey: boolean;
+}
+
 interface AiServiceSettingsSnapshot {
-  mode: "local" | "agentCli" | null;
+  mode: "cloud" | "local" | "agentCli" | null;
+  cloud: CloudAiSettings | null;
   local: LocalLlmSettings | null;
   agentCli: AgentCliSettings | null;
 }
