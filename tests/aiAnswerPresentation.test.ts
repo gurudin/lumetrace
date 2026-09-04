@@ -4,6 +4,7 @@ import {
   aiAnswerDurationSeconds,
   aiPendingStatusKey,
   aiPendingElapsedSeconds,
+  isAiCancelledError,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
@@ -63,6 +64,12 @@ test("treats no relevant sources as a non-retryable empty answer state", () => {
   assert.equal(isAiNoSourcesError("ai_no_sources"), true);
   assert.equal(isAiNoSourcesError("ai_search_failed"), false);
   assert.equal(isAiNoSourcesError(null), false);
+});
+
+test("presents a user-cancelled request separately from an AI failure", () => {
+  assert.equal(isAiCancelledError("ai_cancelled"), true);
+  assert.equal(isAiCancelledError("ai_cloud_failed"), false);
+  assert.equal(isAiCancelledError(null), false);
 });
 
 test("uses one event contract to open background task status", () => {

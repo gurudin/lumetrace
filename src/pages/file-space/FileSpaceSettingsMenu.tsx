@@ -429,6 +429,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
     : activePanel
       ? t(`fileSpace.settings.${activePanel}`)
       : "";
+  const panelClassName = activePanel === "aiService" ? "ai-service" : activePanel;
 
   return (
     <div className="file-space-settings-menu">
@@ -512,7 +513,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
         >
           <section
             ref={dialogRef}
-            className={`file-space-dialog file-space-settings-dialog${activePanel === "workspace" ? " is-workspace" : ""}${activePanel === "background" ? " is-background" : ""}${activePanel === "semantic" ? " is-semantic" : ""}${activePanel === "aiService" ? " is-ai-service" : ""}${dialogPresence.state === "open" ? " is-open" : ""}`}
+            className={`file-space-dialog file-space-settings-dialog${panelClassName ? ` is-${panelClassName}` : ""}${dialogPresence.state === "open" ? " is-open" : ""}`}
             role="dialog"
             aria-modal="true"
             aria-labelledby="file-space-settings-dialog-title"
@@ -582,7 +583,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                     </div>
                   </div>
 
-                  <div className={`file-space-settings-semantic-state is-${semanticStatus.state}`}>
+                  <div className={`file-space-settings-semantic-state file-space-settings-state is-${semanticStatus.state}`}>
                     {semanticStatus.state === "downloading"
                       || semanticStatus.state === "validating"
                       || semanticStatus.state === "indexing" ? <LoaderCircle className="is-spinning" size={17} /> : null}
@@ -676,7 +677,11 @@ export function FileSpaceSettingsMenu<TSnapshot>({
             ) : null}
 
             {activePanel === "backup" ? (
-              <div className={`file-space-settings-backup is-${backupFeedback.status}`} aria-live="polite">
+              <div
+                className={`file-space-settings-backup file-space-settings-state is-${backupFeedback.status}`}
+                role={backupFeedback.status === "error" ? "alert" : "status"}
+                aria-live={backupFeedback.status === "error" ? "assertive" : "polite"}
+              >
                 {backupFeedback.status === "exporting" ? <LoaderCircle className="is-spinning" size={24} /> : null}
                 {backupFeedback.status === "success" ? <CircleCheck size={24} /> : null}
                 {backupFeedback.status === "error" ? <CircleAlert size={24} /> : null}
@@ -698,7 +703,11 @@ export function FileSpaceSettingsMenu<TSnapshot>({
             ) : null}
 
             {activePanel === "restore" ? (
-              <div className={`file-space-settings-restore is-${restoreFeedback.status}`} aria-live="polite">
+              <div
+                className={`file-space-settings-restore file-space-settings-state is-${restoreFeedback.status}`}
+                role={restoreFeedback.status === "error" ? "alert" : "status"}
+                aria-live={restoreFeedback.status === "error" ? "assertive" : "polite"}
+              >
                 {restoreFeedback.status === "ready" ? <ArchiveRestore size={24} /> : null}
                 {restoreFeedback.status === "restoring" ? <LoaderCircle className="is-spinning" size={24} /> : null}
                 {restoreFeedback.status === "success" ? <CircleCheck size={24} /> : null}

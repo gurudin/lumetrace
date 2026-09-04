@@ -11,6 +11,7 @@ import {
   LockKeyhole,
   Send,
   Sparkles,
+  Square,
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +26,7 @@ import {
   aiAnswerDurationSeconds,
   aiPendingStatusKey,
   aiPendingElapsedSeconds,
+  isAiCancelledError,
   isAiNoSourcesError,
   openBackgroundStatusEventName,
   referencedAiFiles,
@@ -74,7 +76,7 @@ interface AiServiceSettingsSnapshot {
 }
 
 type AiConfigurationState = "loading" | "configured" | "unconfigured" | "error";
-type AiRequestState = "idle" | "asking";
+type AiRequestState = "idle" | "asking" | "stopping";
 type AiTurnStatus = "pending" | "completed" | "failed";
 
 interface FileSpaceAiTurn {
@@ -126,6 +128,7 @@ const aiErrorKeys: Record<string, string> = {
   ai_cloud_output_too_large: "cloudOutputTooLarge",
   ai_history_failed: "historyFailed",
   ai_interrupted: "interrupted",
+  ai_cancelled: "cancelled",
 };
 
 function aiErrorCode(error: unknown) {
@@ -222,10 +225,12 @@ function AiPendingAnswer({
   phase,
   thinking,
   startedAt,
+  stopping = false,
 }: {
   phase: AiProgressPhase;
   thinking: string;
   startedAt: number | null;
+  stopping?: boolean;
 }) {
   const { t } = useTranslation();
   const [elapsedSeconds, setElapsedSeconds] = useState(() => (
@@ -251,8 +256,8 @@ function AiPendingAnswer({
     <section className="file-space-ai-answer is-loading" role="status">
       <span><LoaderCircle className="is-spinning" size={16} /></span>
       <div className="file-space-ai-pending-copy">
-        <p>{t(`fileSpace.ai.${aiPendingStatusKey(phase)}`)}</p>
-        {thinking ? (
+        <p>{t(stopping ? "fileSpace.ai.stopping" : `fileSpace.ai.${aiPendingStatusKey(phase)}`)}</p>
+        {thinking && !stopping ? (
           <div
             className="file-space-ai-thinking file-space-ai-answer-content"
             ref={thinkingRef}
@@ -265,6 +270,19 @@ function AiPendingAnswer({
       <small className="file-space-ai-processing-time">
         {t("fileSpace.ai.waiting", { seconds: elapsedSeconds })}
       </small>
+    </section>
+  );
+}
+
+function AiCancelledAnswer() {
+  const { t } = useTranslation();
+
+  return (
+    <section className="file-space-ai-answer is-cancelled" aria-label={t("fileSpace.ai.answerLabel")}>
+      <span className="file-space-ai-answer-mark" aria-hidden="true">
+        <img src={lumeTraceLogo} alt="" />
+      </span>
+      <p>{t("fileSpace.ai.cancelled")}</p>
     </section>
   );
 }
@@ -388,6 +406,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
 
   const canAsk = configurationState === "configured"
     && Boolean(serviceSettings && canAskConfiguredAiService(serviceSettings));
+  const requestActive = requestState !== "idle";
   const activeServiceLabel = serviceSettings?.mode === "cloud"
     ? serviceSettings.cloud?.model
     : serviceSettings?.mode === "local"
@@ -430,7 +449,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
         if (!settledScrollOwner || !shouldFollowConversationRef.current) return;
         settledScrollOwner.scrollTo({
           top: settledScrollOwner.scrollHeight,
-          behavior: requestState === "asking" && !pendingThinking ? "smooth" : "auto",
+          behavior: requestActive && !pendingThinking ? "smooth" : "auto",
         });
       });
     });
@@ -438,7 +457,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       window.cancelAnimationFrame(frame);
       window.cancelAnimationFrame(layoutFrame);
     };
-  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingPhase, pendingQuestion, pendingThinking, requestState, turns]);
+  }, [configurationState, panelOpen, panelPresence.state, pendingErrorCode, pendingPhase, pendingQuestion, pendingThinking, requestActive, turns]);
 
   const updateConversationFollowState = () => {
     const scrollOwner = conversationRef.current;
@@ -458,6 +477,17 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     closePanel(false);
     window.dispatchEvent(new CustomEvent(openBackgroundStatusEventName));
   };
+
+  const stopQuestion = useCallback(async () => {
+    const requestId = activeRequestIdRef.current;
+    if (!requestId || requestState !== "asking" || !isTauri()) return;
+    setRequestState("stopping");
+    try {
+      await invoke<boolean>("cancel_file_space_ai", { requestId });
+    } catch {
+      setRequestState("asking");
+    }
+  }, [requestState]);
 
   const submitQuestion = useCallback(async (
     requestedQuestion?: string,
@@ -533,19 +563,19 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       <div className="file-space-ai-menu">
         <button
           ref={triggerRef}
-          className={`file-space-toolbar-icon-button${panelOpen ? " is-active" : ""}${requestState === "asking" ? " is-ai-running" : ""}`}
+          className={`file-space-toolbar-icon-button${panelOpen ? " is-active" : ""}${requestActive ? " is-ai-running" : ""}`}
           type="button"
-          title={t("fileSpace.ai.openWorkspace")}
-          aria-label={t("fileSpace.ai.openWorkspace")}
+          title={t(requestActive ? "fileSpace.ai.openRunningWorkspace" : "fileSpace.ai.openWorkspace")}
+          aria-label={t(requestActive ? "fileSpace.ai.openRunningWorkspace" : "fileSpace.ai.openWorkspace")}
           aria-expanded={panelOpen}
           aria-pressed={panelOpen}
-          aria-busy={requestState === "asking"}
+          aria-busy={requestActive}
           onClick={() => setPanelOpen((open) => {
             if (!open) shouldFollowConversationRef.current = true;
             return !open;
           })}
         >
-          {requestState === "asking"
+          {requestActive
             ? <LoaderCircle className="is-spinning" size={18} />
             : <Sparkles size={18} />}
         </button>
@@ -561,7 +591,12 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
         >
           <header>
             <strong>{t("fileSpace.ai.workspaceTitle")}</strong>
-            {configurationState === "loading" ? (
+            {requestActive ? (
+              <span className="file-space-ai-header-service is-loading" role="status">
+                <LoaderCircle className="is-spinning" size={12} />
+                {t(requestState === "stopping" ? "fileSpace.ai.stoppingShort" : "fileSpace.ai.runningShort")}
+              </span>
+            ) : configurationState === "loading" ? (
               <span className="file-space-ai-header-service is-loading" role="status">
                 <LoaderCircle className="is-spinning" size={12} />
                 {t("fileSpace.ai.configurationLoadingShort")}
@@ -615,9 +650,12 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                         phase={pendingPhase}
                         thinking={pendingThinking}
                         startedAt={requestStartedAt ?? turn.updatedAt}
+                        stopping={requestState === "stopping"}
                       />
                     ) : turn.status === "failed" && isAiNoSourcesError(turn.errorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
+                    ) : turn.status === "failed" && isAiCancelledError(turn.errorCode) ? (
+                      <AiCancelledAnswer />
                     ) : turn.status === "failed" ? (
                       <section className="file-space-ai-answer-error" role="alert">
                         <CircleAlert size={18} />
@@ -626,7 +664,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                           <p>{t(aiErrorTranslationKey(turn.errorCode))}</p>
                           <button
                             type="button"
-                            disabled={requestState === "asking"}
+                            disabled={requestActive}
                             onClick={() => void submitQuestion(turn.question, turn.id)}
                           >
                             {t("fileSpace.ai.retryAnswer")}
@@ -669,14 +707,17 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                     <section className="file-space-ai-user-message" aria-label={t("fileSpace.ai.questionLabel")}>
                       <p>{pendingQuestion}</p>
                     </section>
-                    {requestState === "asking" ? (
+                    {requestActive ? (
                       <AiPendingAnswer
                         phase={pendingPhase}
                         thinking={pendingThinking}
                         startedAt={requestStartedAt}
+                        stopping={requestState === "stopping"}
                       />
                     ) : isAiNoSourcesError(pendingErrorCode) ? (
                       <AiNoSourcesAnswer onOpenBackgroundStatus={openBackgroundStatus} />
+                    ) : isAiCancelledError(pendingErrorCode) ? (
+                      <AiCancelledAnswer />
                     ) : (
                       <section className="file-space-ai-answer-error" role="alert">
                         <CircleAlert size={18} />
@@ -737,7 +778,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
             <textarea
               ref={composerRef}
               value={question}
-              disabled={!canAsk || requestState === "asking"}
+              disabled={!canAsk || requestActive}
               maxLength={2_000}
               aria-label={t("fileSpace.ai.composerLabel")}
               placeholder={t(canAsk
@@ -753,13 +794,17 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
               }}
             />
             <button
+              className={requestActive ? "is-stop" : undefined}
               type="button"
-              disabled={!canAsk || requestState === "asking" || !question.trim()}
-              aria-label={t("fileSpace.ai.send")}
-              onClick={() => void submitQuestion()}
+              disabled={!canAsk || (requestState === "idle" && !question.trim()) || requestState === "stopping"}
+              aria-label={t(requestActive ? "fileSpace.ai.stopGenerating" : "fileSpace.ai.send")}
+              title={t(requestActive ? "fileSpace.ai.stopGenerating" : "fileSpace.ai.send")}
+              onClick={() => requestActive ? void stopQuestion() : void submitQuestion()}
             >
-              {requestState === "asking"
-                ? <LoaderCircle className="is-spinning" size={15} />
+              {requestActive
+                ? requestState === "stopping"
+                  ? <LoaderCircle className="is-spinning" size={15} />
+                  : <Square size={11} fill="currentColor" />
                 : <Send size={15} />}
             </button>
           </div>

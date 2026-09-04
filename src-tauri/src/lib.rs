@@ -37,6 +37,7 @@ pub fn run() {
             app.manage(workspace_registry);
             app.manage(file_space::FileSpaceVersionNotificationQueue::default());
             app.manage(file_space::FileSpaceBackgroundRuntime::default());
+            app.manage(ai_qa::FileSpaceAiRuntime::default());
             let app_data_directory =
                 app.path()
                     .app_data_dir()
@@ -59,6 +60,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             ai_qa::ask_file_space_ai,
+            ai_qa::cancel_file_space_ai,
             ai_qa::get_file_space_ai_history,
             ai_service::get_ai_service_settings,
             ai_service::check_cloud_ai_connection,

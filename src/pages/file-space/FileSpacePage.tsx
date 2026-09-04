@@ -9,6 +9,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Check,
+  CircleAlert,
   Clock3,
   Copy,
   ChevronsDownUp,
@@ -45,6 +46,7 @@ import {
   FileSpaceAiSurface,
   type FileSpaceAiSourceReference,
 } from "./FileSpaceAiSurface";
+import { FileSpaceBackgroundStatusButton } from "./FileSpaceBackgroundStatusButton";
 import { FileSpaceInspector } from "./FileSpaceInspector";
 import {
   FileSpaceSearchPanel,
@@ -5587,6 +5589,7 @@ export function FileSpacePage() {
             <span>{t("fileSpace.globalSearch.trigger")}</span>
             <kbd className="file-space-search-shortcut">{globalSearchShortcut}</kbd>
           </button>
+          <FileSpaceBackgroundStatusButton />
           <FileSpaceAiSurface key={workspaceGeneration} onOpenSource={openFileFromAiSource} />
           <button
             className={`file-space-toolbar-icon-button${isInspectorVisible ? " is-active" : ""}`}
@@ -5600,8 +5603,6 @@ export function FileSpacePage() {
           </button>
           </>}
         </header>
-
-        {error ? <p className="file-space-error file-space-workspace-error" role="alert">{error}</p> : null}
 
         {!isTrashView && fileLayoutMode === "list" && (visibleFolders.length > 0 || visibleFiles.length > 0) ? (
           <div className="file-space-file-list-header" aria-hidden="true">
@@ -5901,6 +5902,15 @@ export function FileSpacePage() {
             <strong>{t("fileSpace.content.dropOverlayTitle")}</strong>
           </div>
         ) : null}
+        {error || importFeedback || fileMoveFeedback || trashFeedback || importConflictFeedback || versionNotification ? (
+          <div className="file-space-feedback-stack" role="region" aria-label={t("fileSpace.feedback.regionLabel")}>
+        {error ? (
+          <div className="file-space-import-feedback is-failed" role="alert" aria-live="assertive">
+            <span className="file-space-import-feedback-icon"><CircleAlert size={16} /></span>
+            <div className="file-space-import-feedback-copy"><strong>{error}</strong></div>
+            <button type="button" onClick={() => setError(null)} aria-label={t("fileSpace.feedback.dismiss")}><X size={15} /></button>
+          </div>
+        ) : null}
         {importFeedback ? (
           <div className={`file-space-import-feedback is-${importFeedback.phase}`} role={importFeedback.phase === "failed" ? "alert" : "status"} aria-live="polite">
             <span className="file-space-import-feedback-icon">
@@ -6008,6 +6018,8 @@ export function FileSpacePage() {
                 {t("fileSpace.versionNotification.view")}
               </button>
             </div>
+          </div>
+        ) : null}
           </div>
         ) : null}
       </main>

@@ -13,34 +13,10 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
-
-interface BackgroundPipelineStatus {
-  state: "running" | "ready" | "paused" | "failed" | "disabled" | "preparing";
-  completedFiles: number;
-  totalFiles: number;
-  pendingFiles: number;
-  failedFiles: number;
-  currentFile?: string | null;
-  error?: string | null;
-}
-
-interface WatcherStatus {
-  state: "starting" | "watching" | "unavailable" | "failed";
-  rootPath?: string | null;
-  lastCheckedAt?: number | null;
-  lastEventAt?: number | null;
-  error?: string | null;
-}
-
-interface BackgroundStatus {
-  state: "running" | "ready" | "paused" | "attention";
-  paused: boolean;
-  contentIndex: BackgroundPipelineStatus;
-  semanticIndex: BackgroundPipelineStatus;
-  semanticModelInstalled: boolean;
-  watcher: WatcherStatus;
-  updatedAt: number;
-}
+import type {
+  BackgroundPipelineStatus,
+  BackgroundStatus,
+} from "./backgroundStatusPresentation";
 
 interface FileSpaceBackgroundTasksProps {
   onOpenSemantic: () => void;
@@ -206,7 +182,7 @@ export function FileSpaceBackgroundTasks({ onOpenSemantic }: FileSpaceBackground
 
   return (
     <div className="file-space-settings-background" aria-live="polite">
-      <section className={`file-space-background-summary is-${status.state}`}>
+      <section className={`file-space-background-summary file-space-settings-state is-${status.state}`}>
         <span aria-hidden="true"><SummaryIcon size={20} /></span>
         <div>
           <strong>{t(`fileSpace.settings.background.summary.${status.state}.title`)}</strong>

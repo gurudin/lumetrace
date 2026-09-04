@@ -5,7 +5,7 @@ use crate::{
     },
     ai_service::{
         load_active_ai_service_record, run_cloud_ai, run_local_llm, ActiveAiService,
-        CloudAiRuntimeSettings, LocalLlmSettings,
+        CloudAiRuntimeSettings, LocalLlmSettings, ERROR_AI_CANCELLED,
     },
     database::{self, Database},
     file_space::lock_file_space_operations,
@@ -19,7 +19,11 @@ use std::{
     io::{BufRead, BufReader, Read, Write},
     path::{Path, PathBuf},
     process::{Child, Command, ExitStatus, Stdio},
-    sync::mpsc::{self, Receiver},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+        Arc, Mutex,
+    },
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -80,6 +84,52 @@ const ERROR_OPENCODE_OUTPUT_TOO_LARGE: &str = "ai_opencode_output_too_large";
 const ERROR_HISTORY_FAILED: &str = "ai_history_failed";
 const ERROR_REQUEST_INVALID: &str = "ai_request_invalid";
 const FILE_SPACE_AI_PROGRESS_EVENT: &str = "file-space-ai-progress";
+
+#[derive(Default)]
+pub struct FileSpaceAiRuntime {
+    requests: Mutex<HashMap<String, Arc<AtomicBool>>>,
+}
+
+impl FileSpaceAiRuntime {
+    fn register(&self, request_id: &str) -> Result<Arc<AtomicBool>, String> {
+        let mut requests = self
+            .requests
+            .lock()
+            .map_err(|_| ERROR_REQUEST_INVALID.to_owned())?;
+        if requests.contains_key(request_id) {
+            return Err(ERROR_REQUEST_INVALID.to_owned());
+        }
+        let cancellation = Arc::new(AtomicBool::new(false));
+        requests.insert(request_id.to_owned(), Arc::clone(&cancellation));
+        Ok(cancellation)
+    }
+
+    fn cancel(&self, request_id: &str) -> Result<bool, String> {
+        let requests = self
+            .requests
+            .lock()
+            .map_err(|_| ERROR_REQUEST_INVALID.to_owned())?;
+        let Some(cancellation) = requests.get(request_id) else {
+            return Ok(false);
+        };
+        cancellation.store(true, Ordering::Release);
+        Ok(true)
+    }
+
+    fn finish(&self, request_id: &str) {
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.remove(request_id);
+        }
+    }
+}
+
+fn ensure_ai_request_active(cancellation: &AtomicBool) -> Result<(), String> {
+    if cancellation.load(Ordering::Acquire) {
+        Err(ERROR_AI_CANCELLED.to_owned())
+    } else {
+        Ok(())
+    }
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -1151,6 +1201,7 @@ fn finish_child(
 fn run_hermes(
     executable: &Path,
     prompt: &str,
+    cancellation: &AtomicBool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
@@ -1194,6 +1245,13 @@ fn run_hermes(
     let mut reasoning_stream = HermesReasoningStream::default();
     let deadline = Instant::now() + HERMES_TIMEOUT;
     loop {
+        if cancellation.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(ERROR_AI_CANCELLED.to_owned());
+        }
         drain_hermes_reasoning(&stdout_receiver, &mut reasoning_stream, on_thinking);
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -1223,6 +1281,7 @@ fn run_hermes(
 fn run_codex(
     executable: &Path,
     prompt: &str,
+    cancellation: &AtomicBool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
@@ -1255,6 +1314,13 @@ fn run_codex(
     let stderr_thread = thread::spawn(move || read_limited(stderr, CODEX_OUTPUT_MAX_BYTES));
     let mut json_stream = CodexJsonStream::default();
     loop {
+        if cancellation.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(ERROR_AI_CANCELLED.to_owned());
+        }
         drain_codex_events(&stdout_receiver, &mut json_stream, on_thinking);
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -1300,6 +1366,7 @@ fn run_codex(
 fn run_claude(
     executable: &Path,
     prompt: &str,
+    cancellation: &AtomicBool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
@@ -1332,6 +1399,13 @@ fn run_claude(
     let stderr_thread = thread::spawn(move || read_limited(stderr, CLAUDE_OUTPUT_MAX_BYTES));
     let mut json_stream = ClaudeJsonStream::default();
     loop {
+        if cancellation.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(ERROR_AI_CANCELLED.to_owned());
+        }
         drain_claude_events(&stdout_receiver, &mut json_stream, on_thinking);
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -1377,6 +1451,7 @@ fn run_claude(
 fn run_opencode(
     executable: &Path,
     prompt: &str,
+    cancellation: &AtomicBool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let neutral_directory = std::env::temp_dir();
@@ -1409,6 +1484,13 @@ fn run_opencode(
     let stderr_thread = thread::spawn(move || read_limited(stderr, OPENCODE_OUTPUT_MAX_BYTES));
     let mut json_stream = OpenCodeJsonStream::default();
     loop {
+        if cancellation.load(Ordering::Acquire) {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = stdout_thread.join();
+            let _ = stderr_thread.join();
+            return Err(ERROR_AI_CANCELLED.to_owned());
+        }
         drain_opencode_events(&stdout_receiver, &mut json_stream, on_thinking);
         match child.try_wait() {
             Ok(Some(status)) => {
@@ -1456,6 +1538,7 @@ fn ask_file_space_ai_blocking(
     question: String,
     retry_turn_id: Option<String>,
     request_id: String,
+    cancellation: Arc<AtomicBool>,
 ) -> Result<FileSpaceAiTurn, String> {
     let question = validated_question(question)?;
     let request_id = validated_request_id(request_id)?;
@@ -1485,6 +1568,7 @@ fn ask_file_space_ai_blocking(
     let turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
     let answer_result = (|| {
+        ensure_ai_request_active(&cancellation)?;
         emit_file_space_ai_progress(&app, &request_id, "retrieving", "");
         let retrieval_plan = build_retrieval_plan(&question, &history);
         let semantic_runtime = app.state::<SemanticSearchRuntime>();
@@ -1497,6 +1581,7 @@ fn ask_file_space_ai_blocking(
                 &retrieval_plan.preferred_file_ids,
             )
             .map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
+            ensure_ai_request_active(&cancellation)?;
             let sources = prepare_sources(chunks);
             if sources.is_empty() {
                 return Err(ERROR_NO_SOURCES.to_owned());
@@ -1516,7 +1601,7 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_claude(executable, &prompt, &mut emit_thinking)?
+                run_claude(executable, &prompt, &cancellation, &mut emit_thinking)?
             }
             AiExecutor::Hermes(executable) => {
                 let progress_app = app.clone();
@@ -1529,7 +1614,7 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_hermes(executable, &prompt, &mut emit_thinking)?
+                run_hermes(executable, &prompt, &cancellation, &mut emit_thinking)?
             }
             AiExecutor::Codex(executable) => {
                 let progress_app = app.clone();
@@ -1542,7 +1627,7 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_codex(executable, &prompt, &mut emit_thinking)?
+                run_codex(executable, &prompt, &cancellation, &mut emit_thinking)?
             }
             AiExecutor::OpenCode(executable) => {
                 let progress_app = app.clone();
@@ -1555,7 +1640,7 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_opencode(executable, &prompt, &mut emit_thinking)?
+                run_opencode(executable, &prompt, &cancellation, &mut emit_thinking)?
             }
             AiExecutor::Cloud(settings) => {
                 let progress_app = app.clone();
@@ -1568,7 +1653,12 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_cloud_ai(settings, &prompt, &mut emit_thinking)?
+                run_cloud_ai(
+                    settings,
+                    &prompt,
+                    &|| cancellation.load(Ordering::Acquire),
+                    &mut emit_thinking,
+                )?
             }
             AiExecutor::Local(settings) => {
                 let progress_app = app.clone();
@@ -1581,9 +1671,15 @@ fn ask_file_space_ai_blocking(
                         thinking,
                     );
                 };
-                run_local_llm(settings, &prompt, &mut emit_thinking)?
+                run_local_llm(
+                    settings,
+                    &prompt,
+                    &|| cancellation.load(Ordering::Acquire),
+                    &mut emit_thinking,
+                )?
             }
         };
+        ensure_ai_request_active(&cancellation)?;
         let (generated_answer, evidence_roles) = parse_generated_answer(&generated_answer);
         let answer = sanitize_citations(&generated_answer, sources.len());
         if answer.trim().is_empty() {
@@ -1614,11 +1710,28 @@ pub async fn ask_file_space_ai(
     retry_turn_id: Option<String>,
     request_id: String,
 ) -> Result<FileSpaceAiTurn, String> {
+    let request_id = validated_request_id(request_id)?;
+    let cancellation = app.state::<FileSpaceAiRuntime>().register(&request_id)?;
+    let cleanup_app = app.clone();
+    let cleanup_request_id = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        ask_file_space_ai_blocking(app, question, retry_turn_id, request_id)
+        let result =
+            ask_file_space_ai_blocking(app, question, retry_turn_id, request_id, cancellation);
+        cleanup_app
+            .state::<FileSpaceAiRuntime>()
+            .finish(&cleanup_request_id);
+        result
     })
     .await
     .map_err(|_| ERROR_HERMES_FAILED.to_owned())?
+}
+
+#[tauri::command]
+pub fn cancel_file_space_ai(
+    request_id: String,
+    runtime: tauri::State<'_, FileSpaceAiRuntime>,
+) -> Result<bool, String> {
+    runtime.cancel(&validated_request_id(request_id)?)
 }
 
 #[tauri::command]
@@ -1686,6 +1799,24 @@ mod tests {
             validated_request_id("\n".to_owned()),
             Err(ERROR_REQUEST_INVALID.to_owned())
         );
+    }
+
+    #[test]
+    fn active_ai_requests_can_be_cancelled_without_affecting_other_requests() {
+        let runtime = FileSpaceAiRuntime::default();
+        let first = runtime.register("request-first").unwrap();
+        let second = runtime.register("request-second").unwrap();
+
+        assert!(runtime.cancel("request-first").unwrap());
+        assert_eq!(
+            ensure_ai_request_active(&first),
+            Err(ERROR_AI_CANCELLED.to_owned())
+        );
+        assert_eq!(ensure_ai_request_active(&second), Ok(()));
+        assert!(!runtime.cancel("request-missing").unwrap());
+
+        runtime.finish("request-first");
+        assert!(!runtime.cancel("request-first").unwrap());
     }
 
     #[test]

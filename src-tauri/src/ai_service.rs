@@ -35,6 +35,7 @@ pub(crate) const ERROR_CLOUD_AI_UNAVAILABLE: &str = "ai_cloud_unavailable";
 pub(crate) const ERROR_CLOUD_AI_FAILED: &str = "ai_cloud_failed";
 pub(crate) const ERROR_CLOUD_AI_EMPTY: &str = "ai_cloud_empty";
 pub(crate) const ERROR_CLOUD_AI_OUTPUT_TOO_LARGE: &str = "ai_cloud_output_too_large";
+pub(crate) const ERROR_AI_CANCELLED: &str = "ai_cancelled";
 
 const ERROR_LOCAL_LLM_INVALID_URL: &str = "local_llm_invalid_url";
 const ERROR_LOCAL_LLM_CONNECTION_FAILED: &str = "local_llm_connection_failed";
@@ -742,6 +743,25 @@ fn stream_read_error(error: std::io::Error) -> String {
     }
 }
 
+fn read_stream_line<R: BufRead>(
+    reader: &mut R,
+    line: &mut String,
+    is_cancelled: &dyn Fn() -> bool,
+) -> Result<usize, String> {
+    loop {
+        if is_cancelled() {
+            return Err(ERROR_AI_CANCELLED.to_owned());
+        }
+        match reader.read_line(line) {
+            Ok(read) => return Ok(read),
+            Err(error) if matches!(error.kind(), ErrorKind::TimedOut | ErrorKind::WouldBlock) => {
+                line.clear();
+            }
+            Err(error) => return Err(stream_read_error(error)),
+        }
+    }
+}
+
 fn apply_stream_chunk(
     result: &mut LocalLlmStreamResult,
     chunk: LocalLlmStreamChunk,
@@ -801,8 +821,12 @@ fn run_openai_stream(
     settings: &LocalLlmSettings,
     request_payload: Value,
     api_key: Option<&str>,
+    is_cancelled: &dyn Fn() -> bool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
+    if is_cancelled() {
+        return Err(ERROR_AI_CANCELLED.to_owned());
+    }
     let request_body =
         serde_json::to_vec(&request_payload).map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let mut request = client
@@ -848,7 +872,7 @@ fn run_openai_stream(
     let mut last_thinking_emit = None;
     loop {
         line.clear();
-        if reader.read_line(&mut line).map_err(stream_read_error)? == 0 {
+        if read_stream_line(&mut reader, &mut line, is_cancelled)? == 0 {
             break;
         }
         let Some(chunk) = parse_openai_stream_line(&line)? else {
@@ -868,8 +892,12 @@ fn run_ollama_stream(
     client: &Client,
     settings: &LocalLlmSettings,
     prompt: &str,
+    is_cancelled: &dyn Fn() -> bool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<LocalLlmStreamResult, String> {
+    if is_cancelled() {
+        return Err(ERROR_AI_CANCELLED.to_owned());
+    }
     let request_body = serde_json::to_vec(&ollama_chat_request_payload(settings, prompt))
         .map_err(|_| ERROR_LOCAL_LLM_FAILED.to_owned())?;
     let response = client
@@ -894,7 +922,7 @@ fn run_ollama_stream(
     let mut last_thinking_emit = None;
     loop {
         line.clear();
-        if reader.read_line(&mut line).map_err(stream_read_error)? == 0 {
+        if read_stream_line(&mut reader, &mut line, is_cancelled)? == 0 {
             break;
         }
         let Some(chunk) = parse_ollama_stream_line(&line)? else {
@@ -918,6 +946,7 @@ fn final_stream_answer(result: LocalLlmStreamResult) -> Result<String, String> {
 pub(crate) fn run_local_llm(
     settings: &LocalLlmSettings,
     prompt: &str,
+    is_cancelled: &dyn Fn() -> bool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let settings = validate_local_llm_settings(settings.clone())
@@ -927,13 +956,20 @@ pub(crate) fn run_local_llm(
         .build()
         .map_err(|_| ERROR_LOCAL_LLM_UNAVAILABLE.to_owned())?;
     if settings.provider == "ollama" {
-        final_stream_answer(run_ollama_stream(&client, &settings, prompt, on_thinking)?)
+        final_stream_answer(run_ollama_stream(
+            &client,
+            &settings,
+            prompt,
+            is_cancelled,
+            on_thinking,
+        )?)
     } else {
         final_stream_answer(run_openai_stream(
             &client,
             &settings,
             openai_chat_request_payload(&settings, prompt),
             None,
+            is_cancelled,
             on_thinking,
         )?)
     }
@@ -941,6 +977,7 @@ pub(crate) fn run_local_llm(
 
 fn cloud_runtime_error(error: String) -> String {
     match error.as_str() {
+        ERROR_AI_CANCELLED => ERROR_AI_CANCELLED.to_owned(),
         ERROR_LOCAL_LLM_UNAVAILABLE | ERROR_LOCAL_LLM_TIMEOUT => {
             ERROR_CLOUD_AI_UNAVAILABLE.to_owned()
         }
@@ -953,6 +990,7 @@ fn cloud_runtime_error(error: String) -> String {
 pub(crate) fn run_cloud_ai(
     settings: &CloudAiRuntimeSettings,
     prompt: &str,
+    is_cancelled: &dyn Fn() -> bool,
     on_thinking: &mut dyn FnMut(&str),
 ) -> Result<String, String> {
     let settings = CloudAiRuntimeSettings {
@@ -985,6 +1023,7 @@ pub(crate) fn run_cloud_ai(
         &compatible_settings,
         cloud_chat_request_payload(&compatible_settings, prompt),
         Some(&api_key),
+        is_cancelled,
         on_thinking,
     )
     .map_err(cloud_runtime_error)?;
@@ -1404,6 +1443,7 @@ mod tests {
                 api_key: "sk-cloud-test-secret".to_owned(),
             },
             "只使用检索片段回答",
+            &|| false,
             &mut |_| {},
         )
         .unwrap();

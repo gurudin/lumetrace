@@ -7764,3 +7764,233 @@ button.file-space-ai-header-service:hover {
     grid-column: 1;
   }
 }
+
+/* Unified file-space status and settings presentation */
+.file-space-feedback-stack {
+  position: absolute;
+  z-index: 46;
+  right: 18px;
+  bottom: 18px;
+  display: flex;
+  width: min(390px, calc(100% - 36px));
+  max-height: calc(100% - 88px);
+  align-items: stretch;
+  flex-direction: column;
+  gap: 8px;
+  overflow-y: auto;
+  pointer-events: none;
+  scrollbar-width: thin;
+}
+
+.file-space-feedback-stack > * {
+  flex: 0 0 auto;
+  pointer-events: auto;
+}
+
+.file-space-feedback-stack .file-space-import-feedback,
+.file-space-feedback-stack .file-space-version-notification {
+  position: relative;
+  inset: auto;
+  width: 100%;
+  min-height: 64px;
+  border: 1px solid var(--separator);
+  border-radius: 12px;
+  color: var(--text);
+  background: color-mix(in srgb, var(--panel-surface) 96%, transparent);
+  box-shadow: var(--panel-shadow);
+  backdrop-filter: saturate(150%) blur(24px);
+  animation: file-space-feedback-in 160ms var(--motion-ease-disclose) both;
+}
+
+.file-space-feedback-stack .file-space-version-notification {
+  padding: 12px;
+  grid-template-columns: 30px minmax(0, 1fr);
+  gap: 8px 10px;
+}
+
+.file-space-feedback-stack .file-space-version-notification-icon {
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+}
+
+.file-space-feedback-stack .file-space-version-notification-copy p {
+  line-height: 1.45;
+  white-space: normal;
+}
+
+.file-space-feedback-stack .file-space-version-notification-actions {
+  gap: 6px;
+}
+
+@keyframes file-space-feedback-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.99); }
+  to { opacity: 1; transform: none; }
+}
+
+.file-space-background-status-button {
+  display: inline-flex;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 8px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid color-mix(in srgb, var(--highlight) 18%, var(--separator));
+  border-radius: 7px;
+  color: var(--highlight);
+  background: color-mix(in srgb, var(--highlight) 7%, var(--toolbar-surface));
+  cursor: pointer;
+  font: inherit;
+}
+
+.file-space-background-status-button > span,
+.file-space-background-status-button > small {
+  font-size: 10.5px;
+  white-space: nowrap;
+}
+
+.file-space-background-status-button > small {
+  min-width: 17px;
+  padding: 1px 4px;
+  border-radius: 999px;
+  color: var(--highlight-foreground);
+  background: var(--highlight);
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.file-space-background-status-button.is-paused {
+  border-color: var(--separator);
+  color: var(--text-muted);
+  background: var(--control-fill);
+}
+
+.file-space-background-status-button.is-attention {
+  border-color: color-mix(in srgb, var(--warning) 32%, var(--separator));
+  color: var(--warning);
+  background: color-mix(in srgb, var(--warning) 8%, var(--toolbar-surface));
+}
+
+.file-space-background-status-button.is-attention > small {
+  background: var(--warning);
+}
+
+.file-space-background-status-button:hover {
+  background: var(--control-hover);
+}
+
+.file-space-background-status-button:focus-visible {
+  outline: 0;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--highlight) 30%, transparent);
+}
+
+.file-space-background-status-button .is-spinning {
+  animation: file-space-spin 800ms linear infinite;
+}
+
+.file-space-settings-dialog,
+.file-space-settings-dialog.is-workspace,
+.file-space-settings-dialog.is-background,
+.file-space-settings-dialog.is-semantic,
+.file-space-settings-dialog.is-ai-service {
+  display: grid;
+  max-height: min(720px, calc(100vh - 48px));
+  grid-template-rows: auto minmax(0, 1fr) auto;
+}
+
+.file-space-settings-dialog {
+  width: min(460px, 100%);
+}
+
+.file-space-settings-dialog.is-workspace,
+.file-space-settings-dialog.is-background {
+  width: min(600px, 100%);
+}
+
+.file-space-settings-dialog.is-semantic,
+.file-space-settings-dialog.is-ai-service {
+  width: min(520px, 100%);
+}
+
+.file-space-settings-dialog > header {
+  min-height: 60px;
+  padding: 18px 20px 13px;
+  align-items: center;
+}
+
+.file-space-settings-dialog > header > button {
+  flex: 0 0 auto;
+}
+
+.file-space-settings-dialog > :not(header):not(footer) {
+  min-height: 0;
+}
+
+.file-space-settings-dialog > footer,
+.file-space-workspace-settings-footer {
+  min-height: 54px;
+  padding: 10px 20px 14px;
+  align-items: center;
+  background: var(--panel-surface);
+}
+
+.file-space-settings-about,
+.file-space-settings-privacy,
+.file-space-settings-preferences,
+.file-space-settings-background,
+.file-space-settings-semantic,
+.file-space-settings-ai-service,
+.file-space-settings-backup,
+.file-space-settings-restore {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.file-space-ai-composer button.is-stop {
+  color: var(--text);
+  background: var(--control-fill);
+  opacity: 1;
+  box-shadow: inset 0 0 0 1px var(--separator);
+}
+
+.file-space-ai-composer button.is-stop:hover:not(:disabled) {
+  background: var(--control-hover);
+}
+
+.file-space-ai-answer.is-cancelled > p {
+  color: var(--text-muted);
+}
+
+@media (max-width: 980px) {
+  .file-space-background-status-button > span {
+    display: none;
+  }
+}
+
+@media (max-width: 560px) {
+  .file-space-feedback-stack {
+    right: 10px;
+    bottom: 10px;
+    width: calc(100% - 20px);
+  }
+
+  .file-space-settings-dialog,
+  .file-space-settings-dialog.is-workspace,
+  .file-space-settings-dialog.is-background,
+  .file-space-settings-dialog.is-semantic,
+  .file-space-settings-dialog.is-ai-service {
+    max-height: calc(100vh - 24px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-space-feedback-stack .file-space-import-feedback,
+  .file-space-feedback-stack .file-space-version-notification {
+    animation: none;
+  }
+
+  .file-space-background-status-button .is-spinning {
+    animation: none;
+  }
+}

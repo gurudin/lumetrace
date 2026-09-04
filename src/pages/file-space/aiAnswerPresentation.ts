@@ -44,6 +44,10 @@ export function isAiNoSourcesError(errorCode: string | null | undefined) {
   return errorCode === "ai_no_sources";
 }
 
+export function isAiCancelledError(errorCode: string | null | undefined) {
+  return errorCode === "ai_cancelled";
+}
+
 export function shouldSelectAiSourceFromClickDetail(detail: number) {
   return detail < 2;
 }
