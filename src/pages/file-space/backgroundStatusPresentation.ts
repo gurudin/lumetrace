@@ -26,6 +26,8 @@ export interface BackgroundStatus {
   updatedAt: number;
 }
 
+export type BackgroundStatusIndicatorState = BackgroundStatus["state"] | "unavailable";
+
 export function backgroundStatusCount(status: BackgroundStatus) {
   if (status.state === "attention") {
     return status.contentIndex.failedFiles
@@ -38,6 +40,18 @@ export function backgroundStatusCount(status: BackgroundStatus) {
   return 0;
 }
 
-export function shouldShowBackgroundStatus(status: BackgroundStatus | null | undefined) {
-  return Boolean(status && status.state !== "ready");
+export function backgroundStatusIndicatorState(
+  status: BackgroundStatus | null | undefined,
+  statusUnavailable = false,
+): BackgroundStatusIndicatorState | null {
+  if (statusUnavailable) return "unavailable";
+  if (!status || status.state === "ready") return null;
+  return status.state;
+}
+
+export function shouldShowBackgroundStatus(
+  status: BackgroundStatus | null | undefined,
+  statusUnavailable = false,
+) {
+  return backgroundStatusIndicatorState(status, statusUnavailable) !== null;
 }

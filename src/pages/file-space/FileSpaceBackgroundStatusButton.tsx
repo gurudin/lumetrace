@@ -5,20 +5,23 @@ import { useTranslation } from "react-i18next";
 import { openBackgroundStatusEventName } from "./aiAnswerPresentation";
 import {
   backgroundStatusCount,
-  shouldShowBackgroundStatus,
+  backgroundStatusIndicatorState,
   type BackgroundStatus,
 } from "./backgroundStatusPresentation";
 
 export function FileSpaceBackgroundStatusButton() {
   const { t } = useTranslation();
   const [status, setStatus] = useState<BackgroundStatus | null>(null);
+  const [statusUnavailable, setStatusUnavailable] = useState(false);
 
   const refresh = useCallback(async () => {
     if (!isTauri() || document.visibilityState === "hidden") return;
     try {
-      setStatus(await invoke<BackgroundStatus>("get_file_space_background_status"));
+      const nextStatus = await invoke<BackgroundStatus>("get_file_space_background_status");
+      setStatus(nextStatus);
+      setStatusUnavailable(false);
     } catch {
-      setStatus(null);
+      setStatusUnavailable(true);
     }
   }, []);
 
@@ -33,25 +36,27 @@ export function FileSpaceBackgroundStatusButton() {
     };
   }, [refresh]);
 
-  if (!shouldShowBackgroundStatus(status) || !status) return null;
+  const indicatorState = backgroundStatusIndicatorState(status, statusUnavailable);
+  if (!indicatorState) return null;
 
-  const count = backgroundStatusCount(status);
-  const label = t(`fileSpace.settings.background.indicator.${status.state}`);
-  const StatusIcon = status.state === "attention"
+  const count = status && indicatorState !== "unavailable" ? backgroundStatusCount(status) : 0;
+  const label = t(`fileSpace.settings.background.indicator.${indicatorState}`);
+  const StatusIcon = indicatorState === "attention" || indicatorState === "unavailable"
     ? CircleAlert
-    : status.state === "paused"
+    : indicatorState === "paused"
       ? Pause
       : LoaderCircle;
+  const visualState = indicatorState === "unavailable" ? "attention" : indicatorState;
 
   return (
     <button
-      className={`file-space-background-status-button is-${status.state}`}
+      className={`file-space-background-status-button is-${visualState}`}
       type="button"
       title={t("fileSpace.settings.background.indicator.open", { status: label })}
       aria-label={t("fileSpace.settings.background.indicator.open", { status: label })}
       onClick={() => window.dispatchEvent(new CustomEvent(openBackgroundStatusEventName))}
     >
-      <StatusIcon className={status.state === "running" ? "is-spinning" : ""} size={14} aria-hidden="true" />
+      <StatusIcon className={indicatorState === "running" ? "is-spinning" : ""} size={14} aria-hidden="true" />
       <span>{label}</span>
       {count > 0 ? <small>{count}</small> : null}
     </button>

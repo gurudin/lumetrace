@@ -4832,6 +4832,10 @@ body.is-file-space-reordering * {
   color: var(--danger);
 }
 
+.file-space-settings-semantic-state.is-read-error > svg {
+  color: var(--danger);
+}
+
 .file-space-settings-semantic-state strong {
   color: var(--text);
   font-size: var(--font-size-caption);

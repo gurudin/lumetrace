@@ -40,6 +40,11 @@ import {
   type FileSpaceWorkspaceMutation,
 } from "./FileSpaceWorkspaceMenu";
 import { SetupPreferences } from "./SetupPreferences";
+import {
+  semanticStatusView,
+  shouldPollSemanticStatus,
+  type SemanticStatusReadState,
+} from "./semanticStatusPresentation";
 
 type SettingsPanel = "workspace" | "about" | "preferences" | "background" | "semantic" | "aiService" | "backup" | "restore" | "privacy";
 type BackupStatus = "idle" | "exporting" | "success" | "error";
@@ -152,11 +157,16 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   const menuRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
   const dialogCloseRef = useRef<HTMLButtonElement>(null);
+  const semanticStatusRequestIdRef = useRef(0);
+  const semanticStatusPendingRequestRef = useRef<number | null>(null);
+  const semanticActionBusyRef = useRef(false);
   const [isMenuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<SettingsPanel | null>(null);
   const [backupFeedback, setBackupFeedback] = useState<BackupFeedback>({ status: "idle" });
   const [restoreFeedback, setRestoreFeedback] = useState<RestoreFeedback>({ status: "idle" });
   const [semanticStatus, setSemanticStatus] = useState<SemanticSearchStatus>(semanticPreviewStatus);
+  const [semanticStatusReadState, setSemanticStatusReadState] = useState<SemanticStatusReadState>("idle");
+  const [semanticStatusReadError, setSemanticStatusReadError] = useState<string | null>(null);
   const [semanticBusy, setSemanticBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [confirmingModelRemoval, setConfirmingModelRemoval] = useState(false);
@@ -176,35 +186,65 @@ export function FileSpaceSettingsMenu<TSnapshot>({
 
   const openPanel = useCallback((panel: SettingsPanel) => {
     setMenuOpen(false);
-    if (panel === "semantic") setConfirmingModelRemoval(false);
+    if (panel === "semantic") {
+      setConfirmingModelRemoval(false);
+      setSemanticStatusReadState("loading");
+      setSemanticStatusReadError(null);
+    }
     setActivePanel(panel);
   }, []);
 
-  const refreshSemanticStatus = useCallback(async () => {
-    if (!isTauri()) {
-      const previewState = new URLSearchParams(window.location.search).get("semanticState");
-      const state = previewState === "downloading"
-        || previewState === "validating"
-        || previewState === "indexing"
-        || previewState === "ready"
-        || previewState === "failed"
-        ? previewState
-        : "notInstalled";
-      setSemanticStatus({
-        ...semanticPreviewStatus,
-        state,
-        installed: state === "indexing" || state === "ready" || (state === "failed" && previewState === "failed"),
-        downloadedBytes: state === "downloading" ? 62_400_000 : state === "notInstalled" ? 0 : semanticPreviewStatus.totalDownloadBytes,
-        indexedFiles: state === "indexing" ? 328 : state === "ready" ? 1_200 : 0,
-        totalFiles: state === "indexing" || state === "ready" ? 1_200 : 0,
-        pendingFiles: state === "indexing" ? 872 : 0,
-        failedFiles: state === "failed" ? 1 : 0,
-        error: state === "failed" ? t("fileSpace.settings.semantic.previewFailure") : null,
-      });
-      return;
+  const refreshSemanticStatus = useCallback(async (showLoading = false) => {
+    if (semanticActionBusyRef.current) return;
+    if (!showLoading && semanticStatusPendingRequestRef.current !== null) return;
+    const requestId = semanticStatusRequestIdRef.current + 1;
+    semanticStatusRequestIdRef.current = requestId;
+    semanticStatusPendingRequestRef.current = requestId;
+    if (showLoading) {
+      setSemanticStatusReadState("loading");
+      setSemanticStatusReadError(null);
     }
-    const status = await invoke<SemanticSearchStatus>("get_semantic_search_status");
-    setSemanticStatus(status);
+    try {
+      if (!isTauri()) {
+        const previewState = new URLSearchParams(window.location.search).get("semanticState");
+        if (previewState === "unavailable") {
+          throw new Error(t("fileSpace.settings.semantic.previewUnavailable"));
+        }
+        const state = previewState === "downloading"
+          || previewState === "validating"
+          || previewState === "indexing"
+          || previewState === "ready"
+          || previewState === "failed"
+          ? previewState
+          : "notInstalled";
+        setSemanticStatus({
+          ...semanticPreviewStatus,
+          state,
+          installed: state === "indexing" || state === "ready" || (state === "failed" && previewState === "failed"),
+          downloadedBytes: state === "downloading" ? 62_400_000 : state === "notInstalled" ? 0 : semanticPreviewStatus.totalDownloadBytes,
+          indexedFiles: state === "indexing" ? 328 : state === "ready" ? 1_200 : 0,
+          totalFiles: state === "indexing" || state === "ready" ? 1_200 : 0,
+          pendingFiles: state === "indexing" ? 872 : 0,
+          failedFiles: state === "failed" ? 1 : 0,
+          error: state === "failed" ? t("fileSpace.settings.semantic.previewFailure") : null,
+        });
+      } else {
+        const status = await invoke<SemanticSearchStatus>("get_semantic_search_status");
+        if (semanticStatusRequestIdRef.current !== requestId) return;
+        setSemanticStatus(status);
+      }
+      if (semanticStatusRequestIdRef.current !== requestId) return;
+      setSemanticStatusReadState("ready");
+      setSemanticStatusReadError(null);
+    } catch (error) {
+      if (semanticStatusRequestIdRef.current !== requestId) return;
+      setSemanticStatusReadState("error");
+      setSemanticStatusReadError(error instanceof Error ? error.message : String(error));
+    } finally {
+      if (semanticStatusPendingRequestRef.current === requestId) {
+        semanticStatusPendingRequestRef.current = null;
+      }
+    }
   }, [t]);
 
   const runSemanticAction = async (
@@ -213,13 +253,18 @@ export function FileSpaceSettingsMenu<TSnapshot>({
       | "retry_semantic_search_index"
       | "remove_semantic_search_model",
   ) => {
-    if (semanticBusy) return;
+    if (semanticActionBusyRef.current) return;
+    semanticActionBusyRef.current = true;
+    semanticStatusRequestIdRef.current += 1;
+    semanticStatusPendingRequestRef.current = null;
     setSemanticBusy(true);
     try {
       if (isTauri()) {
         const status = await invoke<SemanticSearchStatus>(command);
         setSemanticStatus(status);
       }
+      setSemanticStatusReadState("ready");
+      setSemanticStatusReadError(null);
       if (command === "remove_semantic_search_model") setConfirmingModelRemoval(false);
     } catch (error) {
       setSemanticStatus((current) => ({
@@ -228,6 +273,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
         error: error instanceof Error ? error.message : String(error),
       }));
     } finally {
+      semanticActionBusyRef.current = false;
       setSemanticBusy(false);
     }
   };
@@ -378,13 +424,26 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   }, [activePanel, closeDialog]);
 
   useEffect(() => {
-    if (activePanel !== "semantic") return undefined;
-    void refreshSemanticStatus();
+    if (activePanel !== "semantic") {
+      semanticStatusRequestIdRef.current += 1;
+      semanticStatusPendingRequestRef.current = null;
+      return undefined;
+    }
+    if (semanticBusy) return undefined;
+    void refreshSemanticStatus(true);
+    return undefined;
+  }, [activePanel, refreshSemanticStatus, semanticBusy]);
+
+  useEffect(() => {
+    if (
+      activePanel !== "semantic"
+      || !shouldPollSemanticStatus(semanticStatusReadState, semanticStatus.state, semanticBusy)
+    ) return undefined;
     const interval = window.setInterval(() => {
       void refreshSemanticStatus();
     }, 900);
     return () => window.clearInterval(interval);
-  }, [activePanel, refreshSemanticStatus]);
+  }, [activePanel, refreshSemanticStatus, semanticBusy, semanticStatus.state, semanticStatusReadState]);
 
   useEffect(() => {
     const openAiServiceSettings = () => openPanel("aiService");
@@ -430,6 +489,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
       ? t(`fileSpace.settings.${activePanel}`)
       : "";
   const panelClassName = activePanel === "aiService" ? "ai-service" : activePanel;
+  const semanticView = semanticStatusView(semanticStatusReadState);
 
   return (
     <div className="file-space-settings-menu">
@@ -583,71 +643,102 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                     </div>
                   </div>
 
-                  <div className={`file-space-settings-semantic-state file-space-settings-state is-${semanticStatus.state}`}>
-                    {semanticStatus.state === "downloading"
-                      || semanticStatus.state === "validating"
-                      || semanticStatus.state === "indexing" ? <LoaderCircle className="is-spinning" size={17} /> : null}
-                    {semanticStatus.state === "ready" ? <CircleCheck size={17} /> : null}
-                    {semanticStatus.state === "failed" ? <CircleAlert size={17} /> : null}
-                    {semanticStatus.state === "notInstalled" ? <HardDriveDownload size={17} /> : null}
-                    <div>
-                      <strong>{t(`fileSpace.settings.semantic.states.${semanticStatus.state}.title`)}</strong>
-                      <span>
-                        {semanticStatus.state === "indexing"
-                          ? t("fileSpace.settings.semantic.indexProgress", {
-                              indexed: semanticStatus.indexedFiles,
-                              total: semanticStatus.totalFiles,
-                            })
-                          : t(`fileSpace.settings.semantic.states.${semanticStatus.state}.description`)}
-                      </span>
-                    </div>
-                  </div>
-
-                  {semanticStatus.state === "downloading" || semanticStatus.state === "validating" ? (
-                    <div className="file-space-settings-semantic-progress">
-                      <div
-                        role="progressbar"
-                        aria-label={t("fileSpace.settings.semantic.downloadProgressLabel")}
-                        aria-valuemin={0}
-                        aria-valuemax={semanticStatus.totalDownloadBytes}
-                        aria-valuenow={semanticStatus.downloadedBytes}
-                      >
-                        <span style={{ width: `${Math.min(100, Math.max(0, semanticStatus.downloadedBytes / semanticStatus.totalDownloadBytes * 100))}%` }} />
+                  {semanticView === "loading" ? (
+                    <div className="file-space-settings-semantic-state file-space-settings-state is-loading">
+                      <LoaderCircle className="is-spinning" size={17} />
+                      <div>
+                        <strong>{t("fileSpace.settings.semantic.statusLoadingTitle")}</strong>
+                        <span>{t("fileSpace.settings.semantic.statusLoadingDescription")}</span>
                       </div>
-                      <small>{t("fileSpace.settings.semantic.downloadProgress", {
-                        downloaded: formatBackupSize(semanticStatus.downloadedBytes),
-                        total: formatBackupSize(semanticStatus.totalDownloadBytes),
-                      })}</small>
                     </div>
-                  ) : null}
-
-                  {semanticStatus.error ? (
-                    <small className="file-space-settings-semantic-error">{semanticStatus.error}</small>
-                  ) : null}
-
-                  {semanticStatus.installed && !confirmingModelRemoval ? (
-                    <div className="file-space-settings-semantic-model-actions">
-                      {semanticStatus.state === "failed" ? (
-                        <button
-                          type="button"
-                          disabled={semanticBusy}
-                          onClick={() => void runSemanticAction("retry_semantic_search_index")}
-                        >
-                          <RotateCcw size={14} />
-                          {t("fileSpace.settings.semantic.retryIndex")}
-                        </button>
+                  ) : semanticView === "error" ? (
+                    <>
+                      <div className="file-space-settings-semantic-state file-space-settings-state is-read-error" role="alert">
+                        <CircleAlert size={17} />
+                        <div>
+                          <strong>{t("fileSpace.settings.semantic.statusReadFailedTitle")}</strong>
+                          <span>{t("fileSpace.settings.semantic.statusReadFailedDescription")}</span>
+                        </div>
+                      </div>
+                      {semanticStatusReadError ? (
+                        <small className="file-space-settings-semantic-error">{semanticStatusReadError}</small>
                       ) : null}
-                      <button
-                        className="is-danger"
-                        type="button"
-                        disabled={semanticBusy}
-                        onClick={() => setConfirmingModelRemoval(true)}
-                      >
-                        <Trash2 size={14} />
-                        {t("fileSpace.settings.semantic.removeAction")}
-                      </button>
-                    </div>
-                  ) : null}
+                      <div className="file-space-settings-semantic-model-actions">
+                        <button type="button" onClick={() => void refreshSemanticStatus(true)}>
+                          <RotateCcw size={14} />
+                          {t("fileSpace.settings.semantic.retryStatus")}
+                        </button>
+                      </div>
+                    </>
+                  ) : (
+                    <>
+                      <div className={`file-space-settings-semantic-state file-space-settings-state is-${semanticStatus.state}`}>
+                        {semanticStatus.state === "downloading"
+                          || semanticStatus.state === "validating"
+                          || semanticStatus.state === "indexing" ? <LoaderCircle className="is-spinning" size={17} /> : null}
+                        {semanticStatus.state === "ready" ? <CircleCheck size={17} /> : null}
+                        {semanticStatus.state === "failed" ? <CircleAlert size={17} /> : null}
+                        {semanticStatus.state === "notInstalled" ? <HardDriveDownload size={17} /> : null}
+                        <div>
+                          <strong>{t(`fileSpace.settings.semantic.states.${semanticStatus.state}.title`)}</strong>
+                          <span>
+                            {semanticStatus.state === "indexing"
+                              ? t("fileSpace.settings.semantic.indexProgress", {
+                                  indexed: semanticStatus.indexedFiles,
+                                  total: semanticStatus.totalFiles,
+                                })
+                              : t(`fileSpace.settings.semantic.states.${semanticStatus.state}.description`)}
+                          </span>
+                        </div>
+                      </div>
+
+                      {semanticStatus.state === "downloading" || semanticStatus.state === "validating" ? (
+                        <div className="file-space-settings-semantic-progress">
+                          <div
+                            role="progressbar"
+                            aria-label={t("fileSpace.settings.semantic.downloadProgressLabel")}
+                            aria-valuemin={0}
+                            aria-valuemax={semanticStatus.totalDownloadBytes}
+                            aria-valuenow={semanticStatus.downloadedBytes}
+                          >
+                            <span style={{ width: `${Math.min(100, Math.max(0, semanticStatus.downloadedBytes / semanticStatus.totalDownloadBytes * 100))}%` }} />
+                          </div>
+                          <small>{t("fileSpace.settings.semantic.downloadProgress", {
+                            downloaded: formatBackupSize(semanticStatus.downloadedBytes),
+                            total: formatBackupSize(semanticStatus.totalDownloadBytes),
+                          })}</small>
+                        </div>
+                      ) : null}
+
+                      {semanticStatus.error ? (
+                        <small className="file-space-settings-semantic-error">{semanticStatus.error}</small>
+                      ) : null}
+
+                      {semanticStatus.installed && !confirmingModelRemoval ? (
+                        <div className="file-space-settings-semantic-model-actions">
+                          {semanticStatus.state === "failed" ? (
+                            <button
+                              type="button"
+                              disabled={semanticBusy}
+                              onClick={() => void runSemanticAction("retry_semantic_search_index")}
+                            >
+                              <RotateCcw size={14} />
+                              {t("fileSpace.settings.semantic.retryIndex")}
+                            </button>
+                          ) : null}
+                          <button
+                            className="is-danger"
+                            type="button"
+                            disabled={semanticBusy}
+                            onClick={() => setConfirmingModelRemoval(true)}
+                          >
+                            <Trash2 size={14} />
+                            {t("fileSpace.settings.semantic.removeAction")}
+                          </button>
+                        </div>
+                      ) : null}
+                    </>
+                  )}
                 </section>
 
                 {confirmingModelRemoval ? (
@@ -770,6 +861,8 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                     {t("fileSpace.settings.semantic.confirmRemove")}
                   </button>
                 </>
+              ) : activePanel === "semantic" && semanticView !== "status" ? (
+                <button className="is-primary" type="button" onClick={closeDialog}>{t("fileSpace.settings.done")}</button>
               ) : activePanel === "semantic" && (semanticStatus.state === "downloading" || semanticStatus.state === "validating") ? (
                 <button
                   type="button"

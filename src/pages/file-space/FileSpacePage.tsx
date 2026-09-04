@@ -119,6 +119,7 @@ import {
   inspectorVisibilityStorageKey,
   storedInspectorVisibility,
 } from "./fileSpaceViewPreferences";
+import { fileSpaceRootView } from "./fileSpaceRootPresentation";
 
 interface FileSpaceFolderRecord {
   id: string;
@@ -1188,6 +1189,7 @@ export function FileSpacePage() {
   const [workspaceDirectory, setWorkspaceDirectory] = useState<FileSpaceWorkspaceDirectory | null>(null);
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [initialLoadError, setInitialLoadError] = useState<string | null>(null);
   const [busyAction, setBusyAction] = useState<FileSpaceBusyAction | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [setupCancelled, setSetupCancelled] = useState(false);
@@ -1708,6 +1710,7 @@ export function FileSpacePage() {
   const loadSnapshot = async () => {
     const generation = lifecycleRef.current.generation;
     setLoading(true);
+    setInitialLoadError(null);
     setError(null);
     try {
       const [loaded, loadedWorkspaceDirectory] = await Promise.all([
@@ -1731,7 +1734,7 @@ export function FileSpacePage() {
         lifecycleRef.current.mounted &&
         lifecycleRef.current.generation === generation
       ) {
-        setError(`${t("fileSpace.errors.load")} ${errorText(loadError)}`);
+        setInitialLoadError(errorText(loadError));
       }
     } finally {
       if (
@@ -5248,7 +5251,9 @@ export function FileSpacePage() {
     })
   );
 
-  if (loading) {
+  const rootView = fileSpaceRootView(loading, initialLoadError, snapshot.rootStatus);
+
+  if (rootView === "loading") {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
@@ -5261,7 +5266,28 @@ export function FileSpacePage() {
     );
   }
 
-  if (snapshot.rootStatus !== "ready") {
+  if (rootView === "loadError" && initialLoadError) {
+    return (
+      <section className="file-space-page file-space-page--loading">
+        <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
+        <div className="file-space-empty" role="alert" aria-live="assertive">
+          <span className="file-space-empty-symbol" aria-hidden="true">
+            <CircleAlert size={24} strokeWidth={1.7} />
+          </span>
+          <strong>{t("fileSpace.root.loadFailedTitle")}</strong>
+          <span>{t("fileSpace.root.loadFailedDescription")}</span>
+          <p className="file-space-error">{initialLoadError}</p>
+          <div className="file-space-empty-actions">
+            <button className="is-primary" type="button" onClick={() => void loadSnapshot()}>
+              {t("fileSpace.root.retryLoad")}
+            </button>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (rootView === "setup" && snapshot.rootStatus !== "ready") {
     const rootStatusMessage = snapshot.rootStatus === "unconfigured"
       ? null
       : t(`fileSpace.root.status.${snapshot.rootStatus}`);

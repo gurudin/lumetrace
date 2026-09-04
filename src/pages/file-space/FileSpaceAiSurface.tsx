@@ -42,6 +42,15 @@ import {
   canAskConfiguredAiService,
   isAiServiceConfigured,
 } from "./aiServiceSettingsState";
+import {
+  aiConfigurationLoadFailed,
+  aiConfigurationLoadResolved,
+  aiConfigurationLoadStarted,
+  aiHistoryLoadFailed,
+  aiHistoryLoadStarted,
+  aiHistoryLoadSucceeded,
+  initialAiSurfaceLoadState,
+} from "./aiHistoryLoadState";
 
 export type { FileSpaceAiSourceReference } from "./aiAnswerPresentation";
 
@@ -75,7 +84,6 @@ interface AiServiceSettingsSnapshot {
   agentCli: AgentCliSettings | null;
 }
 
-type AiConfigurationState = "loading" | "configured" | "unconfigured" | "error";
 type AiRequestState = "idle" | "asking" | "stopping";
 type AiTurnStatus = "pending" | "completed" | "failed";
 
@@ -322,11 +330,47 @@ function AiMarkdownAnswer({ answer }: { answer: string }) {
   );
 }
 
+function AiHistoryLoadNotice({
+  loading,
+  onRetry,
+}: {
+  loading: boolean;
+  onRetry: () => void;
+}) {
+  const { t } = useTranslation();
+
+  if (loading) {
+    return (
+      <section className="file-space-ai-answer is-loading" role="status">
+        <span><LoaderCircle className="is-spinning" size={16} /></span>
+        <div className="file-space-ai-pending-copy">
+          <p>{t("fileSpace.ai.historyLoading")}</p>
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <section className="file-space-ai-answer-error" role="alert">
+      <CircleAlert size={18} />
+      <div>
+        <strong>{t("fileSpace.ai.historyErrorTitle")}</strong>
+        <p>{t("fileSpace.ai.historyErrorDescription")}</p>
+        <button type="button" onClick={onRetry}>
+          {t("fileSpace.ai.retryHistory")}
+        </button>
+      </div>
+    </section>
+  );
+}
+
 export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const { t } = useTranslation();
   const [panelOpen, setPanelOpen] = useState(false);
-  const [configurationState, setConfigurationState] = useState<AiConfigurationState>("loading");
-  const [serviceSettings, setServiceSettings] = useState<AiServiceSettingsSnapshot | null>(null);
+  const [loadState, setLoadState] = useState(() => (
+    initialAiSurfaceLoadState<AiServiceSettingsSnapshot>()
+  ));
+  const { configurationState, serviceSettings, historyState } = loadState;
   const [question, setQuestion] = useState("");
   const [requestState, setRequestState] = useState<AiRequestState>("idle");
   const [turns, setTurns] = useState<FileSpaceAiTurn[]>([]);
@@ -341,30 +385,52 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const conversationRef = useRef<HTMLDivElement>(null);
   const requestInFlightRef = useRef(false);
   const activeRequestIdRef = useRef<string | null>(null);
+  const configurationLoadIdRef = useRef(0);
+  const historyLoadIdRef = useRef(0);
   const shouldFollowConversationRef = useRef(true);
   const panelPresence = usePresence(panelOpen);
 
-  const loadAiServiceSettings = useCallback(async () => {
-    if (!isTauri()) {
-      setServiceSettings(null);
-      setConfigurationState("unconfigured");
-      return;
-    }
-    setConfigurationState("loading");
+  const loadAiHistory = useCallback(async () => {
+    if (!isTauri()) return;
+    const loadId = ++historyLoadIdRef.current;
+    setLoadState(aiHistoryLoadStarted);
     try {
-      const settings = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
-      const configured = isAiServiceConfigured(settings);
-      setServiceSettings(settings);
-      if (configured) {
-        const history = await invoke<FileSpaceAiTurn[]>("get_file_space_ai_history");
-        setTurns(history);
-      }
-      setConfigurationState(configured ? "configured" : "unconfigured");
+      const history = await invoke<FileSpaceAiTurn[]>("get_file_space_ai_history");
+      if (loadId !== historyLoadIdRef.current) return;
+      setTurns(history);
+      setLoadState(aiHistoryLoadSucceeded);
     } catch {
-      setServiceSettings(null);
-      setConfigurationState("error");
+      if (loadId !== historyLoadIdRef.current) return;
+      setLoadState(aiHistoryLoadFailed);
     }
   }, []);
+
+  const loadAiServiceSettings = useCallback(async () => {
+    const loadId = ++configurationLoadIdRef.current;
+    if (!isTauri()) {
+      historyLoadIdRef.current += 1;
+      setLoadState(aiConfigurationLoadResolved<AiServiceSettingsSnapshot>({
+        mode: null,
+        cloud: null,
+        local: null,
+        agentCli: null,
+      }, false));
+      return;
+    }
+    setLoadState(aiConfigurationLoadStarted);
+    try {
+      const settings = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
+      if (loadId !== configurationLoadIdRef.current) return;
+      const configured = isAiServiceConfigured(settings);
+      historyLoadIdRef.current += 1;
+      setLoadState(aiConfigurationLoadResolved(settings, configured));
+      if (configured) void loadAiHistory();
+    } catch {
+      if (loadId !== configurationLoadIdRef.current) return;
+      historyLoadIdRef.current += 1;
+      setLoadState(aiConfigurationLoadFailed);
+    }
+  }, [loadAiHistory]);
 
   useEffect(() => {
     void loadAiServiceSettings();
@@ -633,13 +699,19 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                   {t("fileSpace.ai.changeService")}
                 </button>
               </div>
-            ) : turns.length > 0 || pendingQuestion ? (
+            ) : turns.length > 0 || pendingQuestion || historyState === "loading" || historyState === "error" ? (
               <div
                 className="file-space-ai-conversation"
                 ref={conversationRef}
                 aria-live="polite"
                 onScroll={updateConversationFollowState}
               >
+                {historyState === "loading" || historyState === "error" ? (
+                  <AiHistoryLoadNotice
+                    loading={historyState === "loading"}
+                    onRetry={() => void loadAiHistory()}
+                  />
+                ) : null}
                 {turns.map((turn) => (
                   <article className="file-space-ai-turn" key={turn.id}>
                     <section className="file-space-ai-user-message" aria-label={t("fileSpace.ai.questionLabel")}>
