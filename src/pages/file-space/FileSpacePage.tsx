@@ -115,6 +115,10 @@ import {
   mergeVersionNotifications,
   type FileSpaceVersionNotification,
 } from "./versionNotification";
+import {
+  inspectorVisibilityStorageKey,
+  storedInspectorVisibility,
+} from "./fileSpaceViewPreferences";
 
 interface FileSpaceFolderRecord {
   id: string;
@@ -422,7 +426,6 @@ const currentFolderStorageKey = "lumetrace.file-space.current-folder";
 const previewSizeStorageKey = "lumetrace.file-space.preview-size";
 const sortOptionStorageKey = "lumetrace.file-space.sort-option";
 const fileLayoutModeStorageKey = "lumetrace.file-space.layout-mode";
-const inspectorVisibilityStorageKey = "lumetrace.file-space.inspector-visible";
 const trashRetentionMs = 30 * 24 * 60 * 60 * 1000;
 const maxTrashCleanupTimerMs = 2_147_000_000;
 const folderDragThreshold = 5;
@@ -1263,7 +1266,7 @@ export function FileSpacePage() {
   const [inspectorTimelineLoading, setInspectorTimelineLoading] = useState(false);
   const [isSidebarVisible, setSidebarVisible] = useState(() => window.matchMedia("(min-width: 981px)").matches);
   const [isInspectorVisible, setInspectorVisible] = useState(() => (
-    window.localStorage.getItem(inspectorVisibilityStorageKey) !== "false"
+    storedInspectorVisibility(window.localStorage)
   ));
   const [pendingImportPath, setPendingImportPath] = useState<string | null>(null);
   const [pendingFileImportConflict, setPendingFileImportConflict] = useState<PendingFileImportConflict | null>(null);
