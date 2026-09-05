@@ -4,6 +4,8 @@
 
 <h1 align="center">Every file has a timeline.</h1>
 
+<p align="center">Automatically record every save. Visually compare every change.</p>
+
 <p align="center">
   <a href="docs/media/timeline-demo.png">
     <img src="docs/media/timeline-demo.gif" width="960" alt="Lume Trace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
