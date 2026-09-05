@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 
 // Migration numbers are append-only once released. Never change or reuse an
 // existing number; add a new migration and advance CURRENT_SCHEMA_VERSION.
-const CURRENT_SCHEMA_VERSION: i64 = 2;
+const CURRENT_SCHEMA_VERSION: i64 = 3;
 
 const MIGRATION_1_SCHEMA: &str = r#"
 
@@ -495,6 +495,26 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
             1 => migrate_to_v1(&transaction),
             2 => transaction.execute_batch(
                 "ALTER TABLE file_space_ai_turns ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';",
+            ),
+            3 => transaction.execute_batch(
+                // Empty at migration time: populate old rows in small background
+                // batches, not by scanning a large workspace during startup.
+                "CREATE TABLE file_space_file_lookup (
+                   file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+                   file_name TEXT NOT NULL COLLATE NOCASE,
+                   relative_path TEXT NOT NULL COLLATE NOCASE
+                 );
+                 CREATE INDEX idx_file_lookup_name ON file_space_file_lookup(file_name, file_id);
+                 CREATE INDEX idx_file_lookup_path ON file_space_file_lookup(relative_path, file_id);
+                 CREATE TRIGGER file_lookup_insert AFTER INSERT ON files
+                 WHEN new.trashed_at IS NULL AND new.storage_path IS NOT NULL BEGIN
+                   INSERT INTO file_space_file_lookup VALUES(new.id, new.original_name, new.storage_path);
+                 END;
+                 CREATE TRIGGER file_lookup_update AFTER UPDATE OF original_name, storage_path, trashed_at ON files BEGIN
+                   DELETE FROM file_space_file_lookup WHERE file_id = old.id;
+                   INSERT INTO file_space_file_lookup SELECT new.id, new.original_name, new.storage_path
+                   WHERE new.trashed_at IS NULL AND new.storage_path IS NOT NULL;
+                 END;",
             ),
             // CURRENT_SCHEMA_VERSION and this match must advance together.
             _ => unreachable!("missing migration for schema version {next_version}"),
@@ -1053,5 +1073,46 @@ mod tests {
 
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn schema_three_upgrades_v2_without_scanning_files_or_touching_history() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let transaction = connection.transaction().unwrap();
+        migrate_to_v1(&transaction).unwrap();
+        transaction.execute_batch("ALTER TABLE file_space_ai_turns ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';
+            INSERT INTO files(id,original_name,storage_path,created_at) VALUES('existing','existing.md','existing.md',0);
+            INSERT INTO file_space_ai_turns(id,question,status,created_at,updated_at,context_json)
+            VALUES('turn','synthetic','completed',0,0,'[\"preserved\"]');").unwrap();
+        transaction.pragma_update(None, "user_version", 2).unwrap();
+        transaction.commit().unwrap();
+        migrate_connection(&mut connection).unwrap();
+        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM file_space_file_lookup", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            0
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT context_json FROM file_space_ai_turns WHERE id='turn'",
+                    [],
+                    |r| r.get::<_, String>(0)
+                )
+                .unwrap(),
+            "[\"preserved\"]"
+        );
+        connection.execute("INSERT INTO files(id,original_name,storage_path,created_at) VALUES('new','new.md','new.md',0)",[]).unwrap();
+        migrate_connection(&mut connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT COUNT(*) FROM file_space_file_lookup", [], |r| r
+                    .get::<_, i64>(0))
+                .unwrap(),
+            1
+        );
     }
 }

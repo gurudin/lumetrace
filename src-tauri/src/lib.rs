@@ -3,6 +3,7 @@ mod ai_qa;
 mod ai_service;
 mod content_extractor;
 mod database;
+mod file_query;
 mod file_space;
 mod pdf_preview;
 mod semantic_search;
@@ -83,6 +84,8 @@ pub fn run() {
             ai_qa::ask_file_space_ai,
             ai_qa::cancel_file_space_ai,
             ai_qa::get_file_space_ai_history,
+            file_query::lookup_file_space_file_names,
+            file_query::get_file_space_file_version_summary,
             ai_service::get_ai_service_settings,
             ai_service::check_cloud_ai_connection,
             ai_service::check_local_llm_connection,

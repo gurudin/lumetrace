@@ -3415,9 +3415,10 @@ pub fn start_file_content_extractor(app: tauri::AppHandle) -> Result<(), String>
             let result = lock_file_space_operations().and_then(|_operation| {
                 // Repair old omissions in bounded metadata-only batches. Never
                 // put a workspace-wide body scan on startup or search paths.
+                let cataloged = crate::file_query::backfill_file_lookup_batch(database.inner())?;
                 let repaired = repair_missed_edit_indexes_batch(database.inner())?;
                 let extracted = process_next_content_extraction(database.inner())?;
-                Ok(repaired || extracted)
+                Ok(cataloged || repaired || extracted)
             });
             match result {
                 Ok(true) => std::thread::sleep(CONTENT_EXTRACTION_DOCUMENT_PAUSE),

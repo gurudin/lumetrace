@@ -28,14 +28,17 @@ The selected AI service settings and installed semantic-model setting are copied
 | Agent CLI configuration | `src-tauri/src/agent_cli.rs` | CLI discovery, health checks, status classification, and persisted service settings. |
 | AI service adapters | `src-tauri/src/ai_service.rs` | Native Ollama, OpenAI-compatible LM Studio/cloud requests, model discovery, streaming responses, and persisted settings. |
 | AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, AI-service execution, history, follow-up context, cancellation, and citations. |
+| Local file metadata queries | `src-tauri/src/file_query.rs` | Indexed name/path lookup, bounded background catalog backfill, and recorded-version counts without reading document bodies. |
 | File-space interface | `src/pages/file-space/` | Browser, previews, selection, drag/drop, search, settings, background status, version Diff, Trash, workspaces, and AI panel. |
 | Localization | `src/shared/i18n/locales/` | Eight synchronized language dictionaries. |
 
 ## Database schema migrations
 
-Workspace databases use SQLite `PRAGMA user_version`. The current schema baseline is version `1`.
+Workspace databases use SQLite `PRAGMA user_version`. The current schema version is `3`.
 
 - A database with `user_version = 0`, including a database created before explicit schema versioning, is upgraded through migration 1 when it is opened.
+- Migration 2 adds the reserved `context_json` column to AI turns; it does not by itself implement structured AI context or historical comparison in chat.
+- Migration 3 creates an initially empty file-name/path lookup table and its indexes, with transactional triggers for file creation, renaming, Trash, restore, and deletion. Existing metadata is backfilled in resumable batches of 64 by the background worker, not scanned at startup. Document bodies and vectors are not involved.
 - Each migration runs sequentially inside an `IMMEDIATE` transaction. Its schema changes and the new `user_version` are committed together, so a failed migration does not leave the database marked as upgraded.
 - A database newer than `CURRENT_SCHEMA_VERSION` is rejected rather than opened by older code.
 - Released migration numbers are append-only. Never edit or reuse an existing migration number; add a new migration and advance `CURRENT_SCHEMA_VERSION`.
@@ -81,6 +84,8 @@ External changes are captured in the background and queued for a user notificati
 When changing file-card click, double-click, selection, or drag behavior, preserve the shared DOM and event contracts used by preview routing, manual ordering, folder moves, and native drag-out.
 
 ## AI File Assistant
+
+The local `lookup_file_space_file_names` and `get_file_space_file_version_summary` commands expose file identity and recorded-version metadata independently of full-text or semantic extraction. Lookup reports an updating catalog until the initial background backfill is complete, preserves same-name candidates, and bounds returned results. Version counts come from actual records, not the highest version number or text inside the file. These local commands and the local historical-Diff backend are not yet connected to the AI query router; chat still uses the retrieval path below.
 
 The current supported execution path is:
 
