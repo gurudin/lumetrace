@@ -6,7 +6,7 @@
 
 Lume Trace keeps the physical files in a folder you choose. It adds local workspace metadata, version snapshots, full-text and semantic indexes, Trash, and source-grounded AI conversations without turning the folder into a cloud drive.
 
-The current `0.1.x` release scope is a free, single-user macOS application. Windows and Linux packages have not yet gone through release acceptance.
+The `1.0.0` scope is a free, single-user macOS application. The user confirmed the feature freeze; see the [v1.0.0 freeze record](docs/releases/v1.0.0.md). This does not indicate that a signed installer or public release has been published. Windows and Linux packages have not yet gone through release acceptance.
 
 ## What is available now
 
