@@ -1,10 +1,10 @@
-# Lume Trace Development Guide
+# LumeTrace Development Guide
 
 This document describes the code paths that exist today. It is an implementation guide, not a roadmap.
 
 ## Product and storage boundary
 
-Lume Trace is a local-first desktop file workspace. A workspace points to a user-owned physical file root. Lume Trace stores its own SQLite database and immutable version snapshots in the application data directory; these managed files must not replace the user's physical root.
+LumeTrace is a local-first desktop file workspace. A workspace points to a user-owned physical file root. LumeTrace stores its own SQLite database and immutable version snapshots in the application data directory; these managed files must not replace the user's physical root.
 
 Each workspace has an independent:
 
@@ -44,6 +44,16 @@ Workspace databases use SQLite `PRAGMA user_version`. The current schema version
 - Released migration numbers are append-only. Never edit or reuse an existing migration number; add a new migration and advance `CURRENT_SCHEMA_VERSION`.
 - Every schema change needs tests for a fresh database, an upgrade from the previously shipped version, rollback on failure where applicable, and reopen at the resulting version.
 
+## File browsing and import behavior
+
+- Create Markdown and plain-text files, import files and folders, rename or move items, assign Tags, multi-select, and drag files between folders or out to another application.
+- Adaptive-grid and list layouts support manual ordering, time ordering, file preview, Quick Look-style `Space` preview, and system-app opening. Large workspaces use bounded database queries and viewport rendering rather than loading the entire file catalog into the interface.
+- A same-folder, same-name import requires an explicit choice: merge it as the latest version or keep it under a new name. Identical content is skipped, and the existing file can be located directly.
+- Global search uses `Command + K` on macOS. `Alt + K` keyboard behavior exists for Windows and Linux, but installers for those platforms are not release-supported.
+- Full-text extraction supports PDF, DOCX, XLSX, PPTX, Markdown, TXT, source code, and common structured-text formats, subject to the extractor's resource limits. OCR for image-only content is not implemented.
+- The optional semantic model is Multilingual E5 Small, downloaded from Hugging Face. Extracted text, chunks, embeddings, and the ANN index remain local during indexing. Background status exposes progress, pause/resume, failure details, and retry controls.
+- Backup export and restoration, including replacement of the current workspace's managed records and version store, are documented in [MIGRATION.md](MIGRATION.md). Backup archives are not encrypted. Cloud API keys are stored locally as unencrypted configuration and excluded from completed exports.
+
 ## Import and indexing pipeline
 
 File registration and knowledge indexing are intentionally separate:
@@ -75,7 +85,7 @@ Never reintroduce whole-workspace loading, unbounded result returns, or one-DOM-
 Version creation currently comes from:
 
 - initial registration during existing-folder import;
-- edits saved inside Lume Trace;
+- edits saved inside LumeTrace;
 - same-name imports explicitly merged as the latest version;
 - physical-file changes detected by the native watcher or reconciliation scan.
 
@@ -120,14 +130,14 @@ Query-route regression tests use synthetic snapshots and isolated databases. Loo
 
 Removing a workspace has two explicit scopes:
 
-1. Remove only the registry entry and leave all Lume Trace-managed data in place.
+1. Remove only the registry entry and leave all LumeTrace-managed data in place.
 2. Remove the registry entry plus that workspace's managed SQLite files and version-snapshot directory.
 
 The physical file root is never a managed-data deletion target. Deletion code validates canonical paths, rejects symbolic links and overlapping workspace storage, removes SQLite sidecars, and cleans the empty managed UUID directory when safe.
 
 ## Trash and recovery
 
-Normal deletion moves a file or folder into Lume Trace Trash. Restore targets the recorded original location and requires confirmation. Manual emptying is a separate permanent operation with its own confirmation. Entries are eligible for automatic permanent purge 30 days after deletion.
+Normal deletion moves a file or folder into LumeTrace Trash. Restore targets the recorded original location and requires confirmation. Manual emptying is a separate permanent operation with its own confirmation. Entries are eligible for automatic permanent purge 30 days after deletion.
 
 Changes to this area must keep database state and physical files transactionally consistent and preserve recovery behavior after interruption.
 

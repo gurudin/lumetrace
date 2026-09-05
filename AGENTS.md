@@ -1,8 +1,8 @@
-# Lume Trace Agent Instructions
+# LumeTrace Agent Instructions
 
 ## Product boundary
 
-Lume Trace is a local-first, traceable file workspace. Preserve physical-file ownership, file-version history, task/source traceability, search, preview, and recovery when changing the product. Do not present planned AI, sharing, NAS collaboration, permissions, or cloud features as working capabilities before their real data and execution paths exist.
+LumeTrace is a local-first, traceable file workspace. Preserve physical-file ownership, file-version history, task/source traceability, search, preview, and recovery when changing the product. Do not present planned AI, sharing, NAS collaboration, permissions, or cloud features as working capabilities before their real data and execution paths exist.
 
 ## Apple UI and interaction gate
 
@@ -31,7 +31,7 @@ For every material UI or interaction change:
 
 - During development, run the desktop application with `npm run tauri:dev`.
 - Do not install development builds into `/Applications`.
-- Keep the user-facing product name `Lume Trace`; keep internal package, database, bundle, protocol, and storage identifiers as `lumetrace` unless a migration is explicitly planned.
+- Use the user-facing product name `LumeTrace` without a space; keep internal package, database, bundle, protocol, and storage identifiers as `lumetrace` unless a migration is explicitly planned.
 - Preserve the existing file-card DOM contracts used by previews, system opening, and drag behavior unless every dependent path is updated and verified together.
 
 ## Git repository and delivery rules

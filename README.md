@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="https://i.ibb.co/KxH6pYFd/logo.png" width="80" height="80" alt="Lume Trace logo">
+  <img src="https://i.ibb.co/KxH6pYFd/logo.png" width="80" height="80" alt="LumeTrace logo">
 </p>
 
 <h1 align="center">Every file has a timeline.</h1>
@@ -8,7 +8,7 @@
 
 <p align="center">
   <a href="https://i.ibb.co/67XxPbbT/1.gif">
-    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="Lume Trace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
+    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
   </a>
 </p>
 
@@ -18,126 +18,145 @@
   <a href="docs/DEVELOPMENT.md">Development guide</a>
 </p>
 
-## A timeline for your files
+## How it works
 
-Lume Trace gives your local files a history you can see and use. Follow a file's timeline, compare text changes with Diff, and bring back an earlier version — without changing where your files live.
+1. **Edit your file.** Work and save as usual — in LumeTrace or your favorite editor.
+2. **Watch its timeline grow.** Changes are automatically recorded as new versions of the same file.
+3. **Compare any two versions.** Pick two points in the timeline and see exactly what changed with Diff.
 
-Lume Trace keeps the physical files in a folder you choose. It adds local workspace metadata, version snapshots, full-text and semantic indexes, Trash, and source-grounded AI conversations without turning the folder into a cloud drive.
+<p align="center">
+  <img src="https://i.ibb.co/prMRVcND/download.png" width="960" alt="Workflow illustration: a single Launch Plan.md file grows from V1 through V4. Select non-adjacent versions V1 and V4 to compare their changes. No more final_final_v2_really_final.md.">
+</p>
 
-The `1.0.0` scope is a free, single-user macOS application. The user confirmed the feature freeze; see the [v1.0.0 freeze record](docs/releases/v1.0.0.md). This does not indicate that a signed installer or public release has been published. Windows and Linux packages have not yet gone through release acceptance.
+One file. A complete history. No more `final_final_v2_really_final.md`.
 
-## What is available now
+## Built for your files
 
-### File workspaces
+Keep projects separate, recover earlier work, and find what matters — with optional AI when you need a second pair of eyes.
 
-- Create an empty workspace or initialize one from an existing physical folder.
-- Create, rename, remove, and switch between multiple workspaces. File records, search indexes, versions, Trash, and AI history are isolated by workspace.
-- Keep the physical folder under the user's ownership. Removing a workspace never silently deletes that folder.
-- Browse large workspaces through bounded database queries and viewport rendering instead of loading every file into the interface.
-- Exclude dot-prefixed hidden directories when initializing recursively from an existing folder.
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/p6b4MzW0/image.png" width="420" alt="Workspace illustration: Writing, Research, and Personal are separate spaces, with Writing active.">
+      <h3>File workspaces</h3>
+      <p>Start fresh or bring an existing folder. Name and switch between workspaces, each with its own file records, versions, search indexes, Trash, and AI history.</p>
+      <p>Your physical files stay in the folder you choose.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/zVLBjFJb/image.png" width="420" alt="Restore illustration: make V2 current while keeping V1 and V3 in the timeline.">
+      <h3>Restore earlier work</h3>
+      <p>Preview an older version and make it current without discarding the rest of its history. Recover deleted files from Trash, or export and restore a LumeTrace backup.</p>
+      <p>A way back when you need it.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/cKvqzfNY/image.png" width="420" alt="Search illustration: a launch query finds files using their names, indexed content, and tags.">
+      <h3>Find more than a file name</h3>
+      <p>Press <kbd>⌘ K</kbd> to search file names, extracted text, and Tags. Find a note by something written inside it, even when you have forgotten what you called it.</p>
+      <p>Full-text search works without an AI service.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/WWBdXy8t/AI.png" width="420" alt="AI illustration: Lumie explains a change from Draft to Ready and references Launch Plan.md, V1 to V2.">
+      <h3>Lumie, your AI file assistant</h3>
+      <p>Ask in natural language, follow up, or summarize the changes between versions — with references you can open and inspect.</p>
+      <p>Connect Ollama, LM Studio, an OpenAI-compatible cloud API, or a supported Agent CLI. AI is optional.</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/Dg1MXJf0/E5.png" width="420" alt="Semantic-index illustration: Multilingual E5 Small turns extracted text into embeddings and a local index.">
+      <h3>Search by meaning, locally</h3>
+      <p>Download the optional Multilingual E5 Small model from Hugging Face to add meaning-based relevance to search and AI retrieval. Text and vectors stay on your Mac during indexing.</p>
+      <p>Follow indexing progress, pause work, or retry failed tasks.</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/HfG8kKbH/image.png" width="420" alt="Language and appearance illustration: eight interface languages and light, dark, or system-following appearance.">
+      <h3>Your language. Your look.</h3>
+      <p>Choose from eight interface languages: English, Simplified Chinese, Traditional Chinese, Japanese, Korean, German, French, and Spanish.</p>
+      <p>Use light, dark, or system appearance, with an accent color that feels like yours.</p>
+    </td>
+  </tr>
+</table>
 
-### Files, versions, and recovery
+*Feature illustrations use example content; they are not application screenshots.*
 
-- Create Markdown and plain-text files, import files and folders, rename or move items, assign Tags, multi-select, and drag files between folders or out to another application.
-- Use adaptive-grid or list layout, manual ordering, time ordering, file preview, Quick Look-style `Space` preview, and system-app opening.
-- Create an initial snapshot for imported files and detect later changes made by another application in the background.
-- Inspect a file's version timeline, preview historical versions, make an older version current, and compare supported text versions with line- and word-level Diff.
-- Handle a same-folder, same-name import explicitly: merge it as the latest version or keep it under a new name. Identical content is skipped and the existing file can be located directly.
-- Move deleted items to Trash, restore them to their recorded location, empty Trash after confirmation, and automatically purge entries after 30 days.
-- Export and restore Lume Trace backups. Backup and application-specific migration boundaries are documented in [docs/MIGRATION.md](docs/MIGRATION.md).
+<details>
+<summary>AI service compatibility</summary>
 
-### Search and local knowledge index
+Choose a service in Preferences. You do not need an AI service for file browsing, version tracking, Diff, full-text search, or local semantic indexing.
 
-- Open global search with `Command + K` on macOS (`Alt + K` is implemented for Windows and Linux keyboard behavior).
-- Search indexed file names, extracted body text, and Tags with SQLite FTS5.
-- Extract readable text asynchronously after import; file registration does not wait for content extraction or semantic indexing.
-- Extract text from PDF, DOCX, XLSX, PPTX, Markdown, TXT, source code, and common structured-text formats. Image-only documents require OCR and are not currently supported.
-- Optionally download the Multilingual E5 Small model from Hugging Face and build a local semantic index. Extracted text, chunks, embeddings, and the ANN index remain on the Mac.
-- Inspect background extraction and semantic-index work, including progress, pause/resume, failure details, and retry.
-
-### Lumie · AI File Assistant
-
-Lumie routes natural-language questions over the active workspace:
-
-1. The selected AI service interprets the question using bounded recent context and file identities.
-2. File/version questions use local metadata queries. Content questions use bounded RAG passages. Historical comparisons read only the requested snapshots and send their local Diff for summarization.
-3. The answer, references, and target file/version-range context are stored in the active workspace. Version counts come directly from recorded database rows.
-
-It does not ask a model to open and scan every file. Conversation history survives application restarts and can be used for follow-up questions.
-
-#### AI service support
-
-| Service | Interface used by Lume Trace | Status |
+| Service | Connection | Status |
 | --- | --- | --- |
-| Ollama | Native `GET /api/tags` and `POST /api/chat` | Supported |
-| LM Studio | OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` | Supported |
-| Cloud API | OpenAI-compatible model discovery and Chat Completions with a locally stored API key | Supported |
-| Hermes CLI | Non-interactive, read-only RAG prompt | Supported |
-| Codex CLI | Non-interactive, read-only sandbox with only the prepared RAG prompt | Supported |
-| Claude Code | Restricted non-interactive RAG prompt | **Experimental** |
-| OpenCode | Restricted non-interactive RAG prompt | **Experimental** |
+| Ollama | Native Ollama API | Supported |
+| LM Studio | OpenAI-compatible API | Supported |
+| Cloud API | OpenAI-compatible API with your own key | Supported |
+| Hermes CLI | Installed Agent CLI | Supported |
+| Codex CLI | Installed Agent CLI | Supported |
+| Claude Code | Installed Agent CLI | **Experimental** |
+| OpenCode | Installed Agent CLI | **Experimental** |
 
-AI configuration is optional. File browsing, version tracking, full-text search, and the local semantic index do not require an answer model. A CLI connection check is not the same as an end-to-end answer guarantee; the two experimental CLI paths still require broader real-environment acceptance.
+Claude Code and OpenCode are available to try, but are not yet fully validated for everyday use. Connection checks confirm service availability; they do not guarantee answer quality.
 
-### macOS experience
+</details>
 
-- Use light, dark, or system-following appearance with the selected accent color applied consistently.
-- Use familiar macOS selection, keyboard, drag-and-drop, contextual-menu, sheet, and preview behavior.
-- Choose among Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, and Spanish.
+## Get started
 
-## Local data and privacy boundary
+LumeTrace is a free, single-user macOS app. The [v1.0.0 source release](https://github.com/gurudin/lumetrace/releases/tag/v1.0.0) is available; no packaged installer is attached to that release yet. For now, [run from source](#development).
 
-- Physical files stay in the selected workspace folder.
-- Workspace metadata, versions, extracted text, indexes, Trash records, and AI history are stored locally.
-- Installing the E5 model downloads model files but does not upload workspace content.
-- On a user-initiated AI query, the question, bounded recent context, target file identities, and relevant excerpts or requested version Diff may be sent to the selected local service, cloud endpoint, or Agent CLI. The entire workspace is not sent as one request.
-- Cloud API credentials are stored in the local workspace database and excluded from exported backups. Backup archives themselves are not encrypted.
+1. **Create a workspace.** Give it a name and choose a new or existing folder. For an existing folder, let file registration finish first.
+2. **Make a change.** Create or open a Markdown or text file, edit it, and save — in LumeTrace or your usual editor.
+3. **See its history.** Open the file's timeline, select two versions, and inspect the Diff. Make an earlier version current whenever you need to go back.
 
-## Current boundaries
+Text extraction and optional semantic indexing continue in the background after import. You can check their progress in Preferences; neither is required to start exploring a file's timeline.
 
-The first free release does not provide:
+## Your files stay yours
 
-- team accounts, member permissions, sharing, or real-time collaboration;
-- NAS synchronization, cloud synchronization, or cross-device conflict resolution;
-- Eagle-specific or other application-private database migration;
-- OCR for image-only PDFs or images;
-- release-accepted Windows or Linux installers.
+- **Local files and history.** Your files stay in the folder you choose. Workspace metadata, version snapshots, search indexes, Trash records, and AI conversations are stored locally.
+- **Local semantic indexing.** The optional E5 model downloads from Hugging Face. Building its index does not upload workspace content.
+- **AI only when you ask.** Your question, limited recent context, file identities, and relevant excerpts or a requested version Diff may be sent to your chosen model, cloud API, or Agent CLI. LumeTrace does not send the entire workspace as one request.
+- **Know what is stored.** Cloud API keys are stored locally without encryption and excluded from exported backups. Backup archives are not encrypted either; keep them somewhere safe.
 
-Claude Code and OpenCode are visible as experimental integrations; they should not be presented as fully accepted execution paths yet.
+## Good to know
 
-## First run
+**Can I keep using my editor?**
 
-1. Create a workspace and choose a new or existing physical folder.
-2. For an existing folder, let registration finish; content extraction continues as background work.
-3. Use `Command + K` for full-text search. Install the optional E5 model in Semantic Search if meaning-based recall is needed.
-4. Configure one supported AI service only if you want source-grounded questions, summaries, or analysis.
+Yes. Changes made by other applications are detected in the background and recorded in the file's timeline. Removing a workspace does not silently delete its physical folder.
+
+**Which files can I compare or search?**
+
+Line- and word-level Diff is available for supported text files, including Markdown, plain text, and source code. Full-text indexing can also extract readable text from PDF, DOCX, XLSX, and PPTX files. OCR for scanned documents and images is not included.
+
+**Does a timeline replace a backup?**
+
+No. Local history helps undo changes, but it is not an independent backup of your Mac. Export backups and keep a separate copy. Deleted items remain in Trash for up to 30 days unless you permanently remove them sooner.
+
+**Does it sync or migrate another app's library?**
+
+Not in v1.0.0. LumeTrace is a local, single-user workspace, without team sharing, NAS/cloud sync, or cross-device conflict resolution. You can import physical folders and restore LumeTrace backups; app-specific library migrations, such as Eagle, are not supported. Dot-prefixed hidden directories are excluded during folder initialization. See [import and backup details](docs/MIGRATION.md).
+
+Windows and Linux installers are not currently available.
+
+## Feedback & community
+
+- [GitHub Issues](https://github.com/gurudin/lumetrace/issues) — report a bug, suggest an improvement, or follow its progress.
+- [Discord](https://discord.gg/6pJVMTJ5UG) — ask questions and share how you use LumeTrace.
+
+When reporting a bug, include your app and macOS versions, steps to reproduce it, and a screenshot if useful. Remove private file contents and API keys before sharing logs or screenshots.
 
 ## Development
 
-Requirements:
-
-- Node.js and npm;
-- Rust toolchain;
-- Tauri 2 prerequisites for macOS;
-- an AI service only when testing the optional AI question-answering path.
+Requires Node.js/npm, Rust, and the [Tauri 2 prerequisites for macOS](https://v2.tauri.app/start/prerequisites/). From a local checkout:
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-Run development builds with `npm run tauri:dev`; do not install them into `/Applications`.
+Use development mode for local work; do not install development builds into `/Applications`. See the [development guide](docs/DEVELOPMENT.md) for architecture, AI integration details, and test commands.
 
-Useful checks:
+## License
 
-```bash
-npm test
-npm run typecheck
-npm run build
-cd src-tauri
-cargo fmt --check
-cargo test --lib
-cargo check
-```
+LumeTrace is licensed under the [GNU Affero General Public License v3.0](LICENSE) (`AGPL-3.0-only`).
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code boundaries, database migrations, background processing, and verification guidance.
+Third-party components retain their respective licenses.

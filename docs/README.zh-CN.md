@@ -1,125 +1,162 @@
-# Lume Trace
+<p align="center">
+  <img src="https://i.ibb.co/KxH6pYFd/logo.png" width="80" height="80" alt="LumeTrace 标志">
+</p>
 
-**一款本地优先的 macOS 文件空间，用于整理、查找、理解和追踪文件。**
+<h1 align="center">每个文件，都有自己的时间线。</h1>
 
-[English](../README.md) · [开发说明](DEVELOPMENT.md) · [导入与迁移边界](MIGRATION.md)
+<p align="center">自动记录每一次保存，直观对比每一处修改。</p>
 
-Lume Trace 不会把文件夹变成云盘。实体文件始终保存在你选择的目录中；应用在本地增加文件空间信息、版本快照、全文与语义索引、废纸篓，以及带来源引用的 AI 对话。
+<p align="center">
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">
+    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace 操作演示：将 Markdown 文件从 V1 修改为 V2，在时间线中查看两个版本，再通过行内与并排 Diff 对比修改。">
+  </a>
+</p>
 
-`1.0.0` 的范围是一款面向单用户的免费 macOS 应用，已由用户确认功能封板，详见 [v1.0.0 封板记录](releases/v1.0.0.md)。封板不代表已发布签名安装包或公开 Release。Windows 和 Linux 安装包尚未完成发布验收。
+<p align="center">
+  <a href="../README.md">English</a> ·
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">查看完整演示</a> ·
+  <a href="DEVELOPMENT.md">开发文档</a>
+</p>
 
-## 当前已经实现
+## 如何使用
 
-### 文件空间
+1. **照常编辑文件。** 在 LumeTrace 或你习惯的编辑器里修改并保存。
+2. **时间线自动记录。** 每次修改成为同一个文件的新版本，不必另存一份。
+3. **对比任意两个版本。** 在时间线中选择两个版本，通过 Diff 看清具体改了什么。
 
-- 新建空文件空间，或从已有实体文件夹初始化。
-- 创建、重命名、删除和切换多个文件空间；文件记录、搜索索引、历史版本、废纸篓和 AI 对话按空间隔离。
-- 实体文件夹始终归用户所有，删除文件空间时不会在未明确选择的情况下删除实体文件夹。
-- 大文件空间使用有界数据库查询和视口渲染，不把所有文件一次性加载到界面。
-- 从已有文件夹递归初始化时，排除以 `.` 开头的隐藏目录。
+<p align="center">
+  <img src="https://i.ibb.co/prMRVcND/download.png" width="960" alt="工作流程示意：同一个 Launch Plan.md 文件从 V1 逐步形成 V4，选择不相邻的 V1 和 V4 即可对比修改，不再需要 final_final_v2_really_final.md。">
+</p>
 
-### 文件、版本与恢复
+一个文件，一段完整历史。不再需要 `final_final_v2_really_final.md`。
 
-- 创建 Markdown 和 TXT 文件；导入文件和文件夹；重命名、移动、添加 Tag、多选，以及在文件夹之间或向其他应用拖动文件。
-- 提供自适应网格与列表布局、手动排序与时间排序、内置预览、按 `Space` 快速预览，以及使用系统应用打开。
-- 为导入文件创建初始快照，并在后台检测第三方应用后续产生的实体文件修改。
-- 查看文件版本时间线、预览历史版本、把旧版本设为当前版本，并对支持的文本版本进行逐行和词级 Diff。
-- 同一文件夹导入同名文件时，明确选择“合并为最新版本”或“重命名为独立文件”；内容完全相同时跳过导入并可直接定位已有文件。
-- 删除内容进入废纸篓；可恢复到记录的原位置，在确认后清空，并在删除 30 天后自动永久清理。
-- 支持导出和恢复 Lume Trace 备份；备份与第三方迁移的范围详见 [MIGRATION.md](MIGRATION.md)。
+## 围绕文件展开
 
-### 搜索与本地知识索引
+分开管理不同项目，找回之前的修改，找到需要的内容。需要一起分析时，再让 AI 帮忙。
 
-- macOS 使用 `Command + K` 唤起全局搜索；Windows 和 Linux 的键盘交互已实现 `Alt + K`。
-- 使用 SQLite FTS5 搜索已经索引的文件名、正文与 Tag。
-- 文件登记完成后异步提取正文；导入操作不等待正文提取或语义索引完成。
-- 支持提取 PDF、DOCX、XLSX、PPTX、Markdown、TXT、源代码和常见结构化文本。纯图片文档目前需要 OCR，因此尚不支持正文检索。
-- 可选从 Hugging Face 下载 Multilingual E5 Small，在本机建立语义索引。正文、分段、向量与 ANN 索引均保留在 Mac 上。
-- 可查看后台正文提取和语义索引进度，并进行暂停、恢复、查看失败原因和重试。
+<table>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/p6b4MzW0/image.png" width="420" alt="文件空间示意：写作、研究与个人资料分别保存在独立空间，当前选中写作空间。">
+      <h3>文件空间</h3>
+      <p>从空文件夹开始，也可以接入已有文件夹。自由命名、切换不同空间，文件记录、历史版本、搜索索引、废纸篓和 AI 对话各自独立。</p>
+      <p>实体文件始终保存在你选择的目录里。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/zVLBjFJb/image.png" width="420" alt="版本恢复示意：把 V2 设为当前版本，时间线仍保留 V1 和 V3。">
+      <h3>找回旧版本</h3>
+      <p>预览历史版本，再将它设为当前版本，其他历史记录依然保留。误删文件可以从废纸篓恢复，也可以导出和恢复 LumeTrace 备份。</p>
+      <p>想回到之前，总有迹可循。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/cKvqzfNY/image.png" width="420" alt="搜索示意：输入 launch，通过文件名、已索引的正文和标签找到相关文件。">
+      <h3>不止搜索文件名</h3>
+      <p>按下 <kbd>⌘ K</kbd>，搜索文件名、提取的正文和标签。即使忘了文件叫什么，也能通过里面写过的内容找到它。</p>
+      <p>全文搜索无需配置 AI 服务。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/WWBdXy8t/AI.png" width="420" alt="AI 问答示意：Lumie 解释状态从 Draft 改为 Ready，并引用 Launch Plan.md 的 V1 至 V2 版本差异。">
+      <h3>Lumie，你的 AI 文件助手</h3>
+      <p>用自然语言提问、连续追问，或总结两个版本之间的修改。回答附带来源，可以打开文件核对。</p>
+      <p>可接入 Ollama、LM Studio、兼容 OpenAI 的云端 API 或受支持的 Agent CLI。AI 不是必需项。</p>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/Dg1MXJf0/E5.png" width="420" alt="语义索引示意：Multilingual E5 Small 将提取的正文转换为向量，并在本地建立索引。">
+      <h3>在本地按语义检索</h3>
+      <p>从 Hugging Face 下载可选的 Multilingual E5 Small 模型，为搜索和 AI 检索增加语义相关性。建立索引时，正文与向量都留在你的 Mac 上。</p>
+      <p>随时查看索引进度、暂停处理，或重试失败的任务。</p>
+    </td>
+    <td width="50%" valign="top">
+      <img src="https://i.ibb.co/HfG8kKbH/image.png" width="420" alt="语言与外观示意：支持八种界面语言，以及浅色、深色和跟随系统的外观。">
+      <h3>你的语言，你的外观</h3>
+      <p>支持简体中文、繁体中文、英文、日文、韩文、德文、法文和西班牙文，共八种界面语言。</p>
+      <p>选择浅色、深色或跟随系统外观，再搭配喜欢的强调色。</p>
+    </td>
+  </tr>
+</table>
 
-### Lumie · AI 文件助手
+*功能插图使用示例内容绘制，并非应用截图。*
 
-Lumie 根据自然语言问题，选择当前文件空间内对应的查询方式：
+<details>
+<summary>AI 服务兼容性</summary>
 
-1. 所选 AI 服务结合有限的近期上下文与文件标识理解问题。
-2. 文件及版本信息直接查询本地数据库；正文问题走 RAG；历史比较只读取指定快照，在本地计算 Diff 后交给模型总结。
-3. 回答、引用以及目标文件 ID 和版本范围保存在当前文件空间。版本数量按实际记录计数，不根据正文猜测。
+在偏好设置中选择服务。文件浏览、版本追踪、Diff、全文搜索和本地语义索引均不需要 AI 服务。
 
-它不会要求模型逐个打开并遍历整个文件空间。对话历史会在重启后保留，并可用于连续追问。
-
-#### AI 服务支持状态
-
-| 服务 | Lume Trace 使用的接口 | 状态 |
+| 服务 | 连接方式 | 状态 |
 | --- | --- | --- |
-| Ollama | 原生 `GET /api/tags` 与 `POST /api/chat` | 已支持 |
-| LM Studio | OpenAI Compatible `GET /v1/models` 与 `POST /v1/chat/completions` | 已支持 |
-| 云端 API | OpenAI Compatible 模型列表与 Chat Completions；API Key 保存在本地 | 已支持 |
-| Hermes CLI | 非交互、只读的 RAG 提示词 | 已支持 |
-| Codex CLI | 非交互只读沙箱，仅接收准备好的 RAG 提示词 | 已支持 |
-| Claude Code | 受限制的非交互 RAG 提示词 | **实验性** |
-| OpenCode | 受限制的非交互 RAG 提示词 | **实验性** |
+| Ollama | Ollama 原生 API | 已支持 |
+| LM Studio | 兼容 OpenAI 的 API | 已支持 |
+| 云端 API | 兼容 OpenAI 的 API，使用你自己的 Key | 已支持 |
+| Hermes CLI | 本机已安装的 Agent CLI | 已支持 |
+| Codex CLI | 本机已安装的 Agent CLI | 已支持 |
+| Claude Code | 本机已安装的 Agent CLI | **实验性** |
+| OpenCode | 本机已安装的 Agent CLI | **实验性** |
 
-AI 配置不是必需项。文件浏览、版本追踪、全文搜索和本地语义索引都不依赖回答模型。CLI“测试连接”只代表探测链路成功，不等同于真实问答已经通过完整验收；两个实验性 CLI 仍需补充更多真实环境验收。
+Claude Code 和 OpenCode 可供尝试，但尚未完成日常使用场景的充分验证。连接检测确认的是服务可用性，不代表对回答质量的保证。
 
-### macOS 桌面体验
+</details>
 
-- 支持浅色、深色和跟随系统外观，并统一应用用户选择的强调色。
-- 使用符合 macOS 习惯的选择、键盘、拖放、右键菜单、Sheet 和快速预览交互。
-- 支持简体中文、繁体中文、英文、日文、韩文、德文、法文和西班牙文。
+## 开始使用
 
-## 本地数据与隐私边界
+LumeTrace 是一款面向单用户的免费 macOS 应用。[v1.0.0 源码版本](https://github.com/gurudin/lumetrace/releases/tag/v1.0.0)已发布，该 Release 暂无安装包附件。目前可以[从源码启动](#开发启动)。
 
-- 实体文件保留在用户选择的文件空间目录中。
-- 文件空间信息、历史版本、提取正文、搜索索引、废纸篓记录和 AI 对话保存在本地。
-- 安装 E5 只会下载模型文件，不会上传文件空间内容。
-- 用户主动发起 AI 查询时，会按需将问题、有限近期上下文、目标文件标识、相关正文片段或指定版本 Diff 交给当前选择的本地服务、云端接口或 Agent CLI；不会在单次请求中发送整个文件空间。
-- 云端 API 凭据保存在本地文件空间数据库中，并从导出的备份中排除；备份文件本身没有加密。
+1. **创建文件空间。** 为它命名，并选择新的或已有的文件夹。使用已有文件夹时，先等待文件登记完成。
+2. **保存一次修改。** 创建或打开 Markdown、TXT 等文本文件，在 LumeTrace 或常用编辑器中修改并保存。
+3. **查看文件历史。** 打开时间线，选择两个版本查看 Diff。需要恢复时，将较早的版本设为当前版本。
 
-## 当前边界
+导入后，正文提取和可选的语义索引会在后台继续。你可以在偏好设置中查看进度；查看文件时间线不需要等待这些任务完成。
 
-首个免费版本不提供：
+## 文件始终属于你
 
-- 团队账号、成员权限、分享和实时协作；
-- NAS 同步、云同步和跨设备冲突处理；
-- Eagle 或其他应用私有数据库的专用迁移；
-- 对纯图片 PDF 或图片执行 OCR；
-- 已通过发布验收的 Windows 或 Linux 安装包。
+- **文件与历史保存在本地。** 实体文件留在你选择的目录，文件空间信息、版本快照、搜索索引、废纸篓记录和 AI 对话也都保存在本地。
+- **语义索引在本机建立。** 可选的 E5 模型从 Hugging Face 下载，建立索引不会上传文件空间内容。
+- **主动提问，才使用 AI。** 问题、有限近期上下文、文件标识，以及相关正文片段或指定版本的 Diff，可能发送给你选择的模型、云端 API 或 Agent CLI。LumeTrace 不会在单次请求中发送整个文件空间。
+- **了解数据如何保存。** 云端 API Key 在本地未加密保存，并从导出的备份中排除。备份文件本身也没有加密，请妥善保管。
 
-Claude Code 和 OpenCode 会以实验性集成展示，暂不应描述为已经完整验收的执行链路。
+## 常见问题
 
-## 首次使用
+**可以继续使用原来的编辑器吗？**
 
-1. 创建文件空间，并选择新的或已有的实体文件夹。
-2. 从已有文件夹初始化时，等待文件登记完成；正文提取会在后台继续。
-3. 使用 `Command + K` 进行全文搜索；需要按内容含义召回时，再在“语义搜索”中安装可选 E5 模型。
-4. 只有在需要带来源的问答、总结或分析时，才配置一种已经支持的 AI 服务。
+可以。其他应用保存的文件修改会在后台被检测并记录到时间线。删除文件空间也不会悄悄删除对应的实体文件夹。
+
+**哪些文件可以对比或搜索？**
+
+Markdown、纯文本、源代码等受支持的文本文件可进行逐行和词级 Diff。全文索引还可从 PDF、DOCX、XLSX、PPTX 中提取可读正文。目前不提供扫描文档或图片的 OCR。
+
+**时间线可以代替备份吗？**
+
+不能。本地历史方便撤销修改，但不是独立于这台 Mac 的备份。建议导出备份，并另外保存一份。删除的内容最多在废纸篓保留 30 天，你也可以提前永久删除。
+
+**支持同步或迁移其他应用的资料库吗？**
+
+v1.0.0 暂不支持。LumeTrace 是本地、单用户的文件空间，不提供团队分享、NAS／云同步或跨设备冲突处理。你可以导入实体文件夹、恢复 LumeTrace 备份，但不支持 Eagle 等应用的专用资料库迁移。从文件夹初始化时，以 `.` 开头的隐藏目录会被排除。详见[导入与备份说明](MIGRATION.md)。
+
+目前不提供 Windows 和 Linux 安装包。
+
+## 反馈与社区
+
+- [GitHub Issues](https://github.com/gurudin/lumetrace/issues) — 报告问题、提出改进建议，或跟进处理进展。
+- [Discord](https://discord.gg/6pJVMTJ5UG) — 提问交流，分享你的使用方式。
+
+反馈问题时，请提供应用版本、macOS 版本和复现步骤，必要时附上截图。分享日志或截图前，请移除私人文件内容和 API Key。
 
 ## 开发启动
 
-需要：
-
-- Node.js 和 npm；
-- Rust 工具链；
-- macOS 上的 Tauri 2 平台依赖；
-- 仅在测试可选 AI 问答链路时，才需要准备 AI 服务。
+需要 Node.js/npm、Rust，以及 [macOS 上的 Tauri 2 平台依赖](https://v2.tauri.app/start/prerequisites/)。在本地项目目录中运行：
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-开发阶段只使用 `npm run tauri:dev`，不要将开发构建安装到 `/Applications`。
+本地开发请使用开发模式，不要将开发构建安装到 `/Applications`。架构、AI 接入细节和测试命令见[开发文档](DEVELOPMENT.md)。
 
-常用检查：
+## 许可证
 
-```bash
-npm test
-npm run typecheck
-npm run build
-cd src-tauri
-cargo fmt --check
-cargo test --lib
-cargo check
-```
+LumeTrace 使用 [GNU Affero General Public License v3.0](../LICENSE)（`AGPL-3.0-only`）许可。
 
-代码边界、数据库迁移、后台任务和验证方法参见 [DEVELOPMENT.md](DEVELOPMENT.md)。
+第三方组件仍遵循各自的许可证。
