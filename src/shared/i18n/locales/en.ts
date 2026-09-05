@@ -791,6 +791,7 @@ export const en = {
         loading: "Comparing versions…",
         unsupported: "Text comparison is not available for this file type.",
         tooLarge: "Text comparison supports versions up to 5 MB.",
+        tooManyChanges: "This diff is too large to display. Choose two versions with fewer changes.",
         loadError: "Unable to compare these versions.",
         retry: "Try Again",
         noChanges: "v{{before}} and v{{after}} have identical text.",

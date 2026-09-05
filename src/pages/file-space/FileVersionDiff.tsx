@@ -1,5 +1,5 @@
 import { AlertTriangle, ArrowLeftRight, Columns2, LoaderCircle, Rows3 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { MacSelect, type MacSelectOption } from "../../shared/ui/MacSelect";
 import type {
@@ -10,7 +10,7 @@ import type {
 } from "./versionDiff";
 import "./file-version-diff.css";
 
-export type VersionDiffStatus = "idle" | "loading" | "ready" | "unsupported" | "tooLarge" | "error";
+export type VersionDiffStatus = "idle" | "loading" | "ready" | "unsupported" | "tooLarge" | "tooManyChanges" | "error";
 
 interface DiffVersion {
   id: string;
@@ -114,6 +114,7 @@ export function FileVersionDiff({
   onRetry,
 }: FileVersionDiffProps) {
   const { t } = useTranslation();
+  const titleId = useId();
   const [viewMode, setViewMode] = useState<DiffViewMode>("unified");
   const beforeVersion = versions.find((version) => version.id === beforeVersionId) ?? null;
   const afterVersion = versions.find((version) => version.id === afterVersionId) ?? null;
@@ -127,10 +128,10 @@ export function FileVersionDiff({
   const afterOptions = options.map((option) => ({ ...option, disabled: option.value === beforeVersionId }));
 
   return (
-    <section className="file-version-diff" aria-labelledby="file-version-diff-title">
+    <section className="file-version-diff" aria-labelledby={titleId}>
       <header>
         <div>
-          <h3 id="file-version-diff-title">{t("fileSpace.timeline.diff.title")}</h3>
+          <h3 id={titleId}>{t("fileSpace.timeline.diff.title")}</h3>
           <p>{t("fileSpace.timeline.diff.description")}</p>
         </div>
         {status === "ready" && result && !result.identical ? (
@@ -197,6 +198,8 @@ export function FileVersionDiff({
           <div className="file-version-diff-state"><AlertTriangle size={18} /><span>{t("fileSpace.timeline.diff.unsupported")}</span></div>
         ) : status === "tooLarge" ? (
           <div className="file-version-diff-state"><AlertTriangle size={18} /><span>{t("fileSpace.timeline.diff.tooLarge")}</span></div>
+        ) : status === "tooManyChanges" ? (
+          <div className="file-version-diff-state"><AlertTriangle size={18} /><span>{t("fileSpace.timeline.diff.tooManyChanges")}</span></div>
         ) : status === "error" ? (
           <div className="file-version-diff-state is-error" role="alert"><AlertTriangle size={18} /><strong>{t("fileSpace.timeline.diff.loadError")}</strong>{error ? <span>{error}</span> : null}<button type="button" onClick={onRetry}>{t("fileSpace.timeline.diff.retry")}</button></div>
         ) : status === "ready" && result?.identical ? (

@@ -726,6 +726,7 @@ export const ja = {
         loading: "バージョンを比較中…",
         unsupported: "このファイル形式ではテキスト比較を利用できません。",
         tooLarge: "テキスト比較は5 MBまでのバージョンに対応しています。",
+        tooManyChanges: "差分が多すぎるため表示できません。変更の少ない2つのバージョンを選んでください。",
         loadError: "これらのバージョンを比較できません。",
         retry: "再試行",
         noChanges: "v{{before}}とv{{after}}のテキストは同じです。",

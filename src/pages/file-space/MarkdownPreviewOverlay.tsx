@@ -10,6 +10,7 @@ import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility"
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { claimFirstVersionChange, savedVersionNotification, viewVersionChangeEvent } from "./firstVersionChange";
 import type { FileSpaceVersionNotification } from "./versionNotification";
+import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
 import "./markdown-preview-overlay.css";
 
 interface MarkdownPreviewRequest {
@@ -43,7 +44,7 @@ interface TaskFileTimelineRecord {
   versions: TaskFileVersionRecord[];
 }
 
-type MarkdownMode = "preview" | "edit";
+type MarkdownMode = "preview" | "edit" | "diff";
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -205,6 +206,7 @@ export function MarkdownPreviewOverlay() {
   const dialogRef = useRef<HTMLDivElement>(null);
   const contentLoadSequenceRef = useRef(0);
   const initialLoadSequenceRef = useRef(0);
+  const timelineLoadSequenceRef = useRef(0);
   const presence = usePresence(open);
   const discardPresence = usePresence(confirmClose);
   const dirty = draft !== content;
@@ -212,6 +214,14 @@ export function MarkdownPreviewOverlay() {
   const historicalVersionSelected = Boolean(selectedVersion && !selectedVersion.isCurrent);
   const hasVersionTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
   const showVersionTimeline = hasVersionTimeline && timelineVisible;
+  const readDiffSnapshot = useCallback(async (fileId: string, versionId: string) => {
+    if (request && visualFixtureEnabled(request)) {
+      const version = timeline?.versions.find((candidate) => candidate.id === versionId);
+      if (!version) throw new Error("Unknown fixture version");
+      return Array.from(new TextEncoder().encode(markdownFixtureForVersion(version.versionNumber, request.currentVersion)));
+    }
+    return invoke<number[]>("read_task_file_version", { fileId, versionId });
+  }, [request, timeline]);
 
   const loadMarkdown = useCallback(async (target: MarkdownPreviewRequest) => {
     const loadSequence = contentLoadSequenceRef.current + 1;
@@ -238,6 +248,7 @@ export function MarkdownPreviewOverlay() {
   }, [copy.desktopOnly]);
 
   const loadTaskTimeline = useCallback(async (target: MarkdownPreviewRequest) => {
+    const sequence = ++timelineLoadSequenceRef.current;
     if (!target.hasVersionHistory || target.versionCount <= 0) {
       setTimeline(null);
       setSelectedVersionId(null);
@@ -250,15 +261,17 @@ export function MarkdownPreviewOverlay() {
       const loaded = visualFixtureEnabled(target)
         ? createTimelineVisualFixture(target)
         : await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: target.fileId });
+      if (sequence !== timelineLoadSequenceRef.current) return;
       setTimeline(loaded);
       setSelectedVersionId(loaded.currentVersionId);
       return loaded;
     } catch (error) {
+      if (sequence !== timelineLoadSequenceRef.current) return;
       setTimeline(null);
       setSelectedVersionId(null);
       setTimelineError(errorText(error));
     } finally {
-      setTimelineLoading(false);
+      if (sequence === timelineLoadSequenceRef.current) setTimelineLoading(false);
     }
   }, []);
 
@@ -270,7 +283,7 @@ export function MarkdownPreviewOverlay() {
     setVersionLoading(true);
     setVersionError(null);
     setLoadError(null);
-    setMode("preview");
+    setMode((current) => current === "diff" ? "diff" : "preview");
     setSaved(false);
     try {
       let loaded: string;
@@ -297,6 +310,7 @@ export function MarkdownPreviewOverlay() {
 
   const closeImmediately = useCallback((restoreFocus = true) => {
     initialLoadSequenceRef.current += 1;
+    timelineLoadSequenceRef.current += 1;
     setConfirmClose(false);
     setOpen(false);
     if (restoreFocus) window.setTimeout(() => returnFocusRef.current?.focus(), 220);
@@ -381,6 +395,7 @@ export function MarkdownPreviewOverlay() {
       const interactionStartedAt = performance.now();
       const initialLoadSequence = initialLoadSequenceRef.current + 1;
       initialLoadSequenceRef.current = initialLoadSequence;
+      timelineLoadSequenceRef.current += 1;
       event.preventDefault();
       event.stopImmediatePropagation();
       returnFocusRef.current = card.button;
@@ -433,6 +448,7 @@ export function MarkdownPreviewOverlay() {
   useEffect(() => {
     if (!open) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
         if (confirmClose) setConfirmClose(false);
@@ -516,14 +532,26 @@ export function MarkdownPreviewOverlay() {
             <button
               className={mode === "preview" ? "is-active" : ""}
               type="button"
+              aria-pressed={mode === "preview"}
               disabled={loading || versionLoading || Boolean(loadError) || Boolean(versionError)}
               onClick={() => setMode("preview")}
             >
               <Eye size={15} />{copy.preview}
             </button>
+            <PreviewDiffButton
+              active={mode === "diff"}
+              versionCount={timeline?.versions.length ?? request.versionCount}
+              disabled={dirty || saving}
+              disabledReason={dirty ? copy.unsaved : undefined}
+              onClick={() => {
+                setMode((current) => current === "diff" ? "preview" : "diff");
+                if (!timeline && !timelineLoading) void loadTaskTimeline(request);
+              }}
+            />
             <button
               className={mode === "edit" ? "is-active" : ""}
               type="button"
+              aria-pressed={mode === "edit"}
               disabled={loading || versionLoading || historicalVersionSelected || Boolean(loadError) || Boolean(versionError)}
               onClick={() => setMode("edit")}
             >
@@ -639,7 +667,17 @@ export function MarkdownPreviewOverlay() {
         ) : null}
 
         <main className={`file-markdown-preview-body is-${mode}`}>
-          {loading || versionLoading ? (
+          {mode === "diff" ? (open ? (
+            <PreviewVersionDiff
+              fileId={request.fileId}
+              selectedVersionId={selectedVersionId}
+              versions={timeline?.versions}
+              loading={timelineLoading}
+              error={timelineError}
+              onRetry={() => void loadTaskTimeline(request)}
+              readSnapshot={readDiffSnapshot}
+            />
+          ) : null) : loading || versionLoading ? (
             <div className="file-markdown-preview-state" role="status">
               <LoaderCircle className="is-spinning" size={22} />
               <span>{versionLoading ? copy.versionLoading : copy.loading}</span>

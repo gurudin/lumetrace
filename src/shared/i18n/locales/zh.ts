@@ -791,6 +791,7 @@ export const zh = {
         loading: "正在比较版本…",
         unsupported: "这种文件类型暂不支持文本 Diff。",
         tooLarge: "文本 Diff 暂时支持不超过 5 MB 的版本。",
+        tooManyChanges: "本次差异过多，暂不展开显示。请选择变化更少的两个版本。",
         loadError: "无法比较这两个版本。",
         retry: "重试",
         noChanges: "v{{before}} 与 v{{after}} 的文本内容相同。",

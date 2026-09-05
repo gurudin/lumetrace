@@ -726,6 +726,7 @@ export const fr = {
         loading: "Comparaison des versions…",
         unsupported: "La comparaison de texte n’est pas disponible pour ce type de fichier.",
         tooLarge: "La comparaison de texte prend en charge les versions jusqu’à 5 Mo.",
+        tooManyChanges: "Cette comparaison est trop volumineuse. Choisissez deux versions avec moins de modifications.",
         loadError: "Impossible de comparer ces versions.",
         retry: "Réessayer",
         noChanges: "v{{before}} et v{{after}} ont un texte identique.",

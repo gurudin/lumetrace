@@ -726,6 +726,7 @@ export const zhTW = {
         loading: "正在比較版本…",
         unsupported: "此檔案類型暫不支援文字 Diff。",
         tooLarge: "文字 Diff 暫時支援不超過 5 MB 的版本。",
+        tooManyChanges: "本次差異過多，暫不展開顯示。請選擇變化較少的兩個版本。",
         loadError: "無法比較這兩個版本。",
         retry: "重試",
         noChanges: "v{{before}} 與 v{{after}} 的文字內容相同。",

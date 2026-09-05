@@ -726,6 +726,7 @@ export const de = {
         loading: "Versionen werden verglichen…",
         unsupported: "Für diesen Dateityp ist kein Textvergleich verfügbar.",
         tooLarge: "Der Textvergleich unterstützt Versionen bis 5 MB.",
+        tooManyChanges: "Dieser Vergleich ist zu umfangreich. Wähle zwei Versionen mit weniger Änderungen.",
         loadError: "Diese Versionen konnten nicht verglichen werden.",
         retry: "Erneut versuchen",
         noChanges: "v{{before}} und v{{after}} enthalten denselben Text.",

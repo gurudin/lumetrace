@@ -6,6 +6,7 @@ import { usePresence } from "../../shared/ui/usePresence";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
+import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
 import "./text-preview-overlay.css";
 
 interface TextPreviewRequest {
@@ -18,6 +19,7 @@ interface TextPreviewRequest {
 interface TaskFileVersionRecord {
   id: string;
   versionNumber: number;
+  sizeBytes: number;
   origin: "task" | "user_edit";
   taskTitle: string | null;
   roundNumber: number | null;
@@ -59,6 +61,7 @@ export function TextPreviewOverlay() {
   };
   const [request, setRequest] = useState<TextPreviewRequest | null>(null);
   const [open, setOpen] = useState(false);
+  const [diffVisible, setDiffVisible] = useState(false);
   const [content, setContent] = useState("");
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -71,6 +74,7 @@ export function TextPreviewOverlay() {
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const loadSequenceRef = useRef(0);
+  const timelineLoadSequenceRef = useRef(0);
   const presence = usePresence(open);
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
   const hasTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
@@ -93,17 +97,20 @@ export function TextPreviewOverlay() {
   }, [copy.desktopOnly]);
 
   const loadTimeline = useCallback(async (target: TextPreviewRequest) => {
+    const sequence = ++timelineLoadSequenceRef.current;
     if (!target.hasVersionHistory || target.versionCount <= 0) return;
     setTimelineLoading(true);
     setTimelineError(null);
     try {
       const loaded = await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: target.fileId });
+      if (sequence !== timelineLoadSequenceRef.current) return;
       setTimeline(loaded);
       setSelectedVersionId(loaded.currentVersionId);
     } catch (error) {
+      if (sequence !== timelineLoadSequenceRef.current) return;
       setTimelineError(errorText(error));
     } finally {
-      setTimelineLoading(false);
+      if (sequence === timelineLoadSequenceRef.current) setTimelineLoading(false);
     }
   }, []);
 
@@ -129,6 +136,7 @@ export function TextPreviewOverlay() {
   }, [loading, request, selectedVersionId]);
 
   const closePreview = useCallback(() => {
+    timelineLoadSequenceRef.current += 1;
     setOpen(false);
     window.setTimeout(() => returnFocusRef.current?.focus(), 220);
   }, []);
@@ -151,6 +159,8 @@ export function TextPreviewOverlay() {
         versionCount: Number.isFinite(versionCount) ? Math.max(0, versionCount) : 0,
       };
       returnFocusRef.current = button;
+      timelineLoadSequenceRef.current += 1;
+      setDiffVisible(false);
       setRequest(target);
       setContent("");
       setTimeline(null);
@@ -169,6 +179,7 @@ export function TextPreviewOverlay() {
     if (!open) return undefined;
     window.requestAnimationFrame(() => closeButtonRef.current?.focus());
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return;
       if (event.key === "Escape") {
         event.preventDefault();
         closePreview();
@@ -215,7 +226,14 @@ export function TextPreviewOverlay() {
           <strong title={request.name}>{request.name}</strong>
           {selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}
         </div>
-        <button ref={closeButtonRef} type="button" onClick={closePreview} title={copy.close} aria-label={copy.close}><X size={18} /></button>
+        <div className="file-text-preview-actions">
+          <PreviewDiffButton
+            active={diffVisible}
+            versionCount={timeline?.versions.length ?? request.versionCount}
+            onClick={() => setDiffVisible((visible) => !visible)}
+          />
+          <button ref={closeButtonRef} type="button" onClick={closePreview} title={copy.close} aria-label={copy.close}><X size={18} /></button>
+        </div>
       </header>
       <div className={`file-text-preview-workspace file-preview-version-workspace${showTimeline ? " has-version-timeline" : ""}`}>
         {hasTimeline ? (
@@ -251,8 +269,15 @@ export function TextPreviewOverlay() {
             onToggle={() => setTimelineVisible((visible) => !visible)}
           />
         ) : null}
-        <main className="file-text-preview-body">
-          {loading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={22} /><span>{copy.loading}</span></div>
+        <main className={`file-text-preview-body${diffVisible ? " is-diff" : ""}`}>
+          {diffVisible ? (open ? <PreviewVersionDiff
+            fileId={request.fileId}
+            selectedVersionId={selectedVersionId}
+            versions={timeline?.versions}
+            loading={timelineLoading}
+            error={timelineError}
+            onRetry={() => void loadTimeline(request)}
+          /> : null) : loading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={22} /><span>{copy.loading}</span></div>
             : loadError ? <div className="file-text-preview-state is-error"><AlertTriangle size={22} /><strong>{copy.loadError}</strong><span>{loadError}</span><button type="button" onClick={() => void (selectedVersion ? selectVersion(selectedVersion, true) : loadCurrent(request))}>{copy.retry}</button></div>
               : content ? <pre data-native-context-menu="true">{content}</pre> : <p>{copy.empty}</p>}
         </main>

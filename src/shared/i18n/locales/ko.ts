@@ -726,6 +726,7 @@ export const ko = {
         loading: "버전 비교 중…",
         unsupported: "이 파일 형식은 텍스트 비교를 지원하지 않습니다.",
         tooLarge: "텍스트 비교는 5 MB 이하 버전을 지원합니다.",
+        tooManyChanges: "차이가 너무 많아 표시할 수 없습니다. 변경 사항이 더 적은 두 버전을 선택하세요.",
         loadError: "이 버전을 비교할 수 없습니다.",
         retry: "다시 시도",
         noChanges: "v{{before}}와 v{{after}}의 텍스트 내용이 같습니다.",
