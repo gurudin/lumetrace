@@ -3,6 +3,8 @@ import {
   CircleAlert,
   CircleCheck,
   Cloud,
+  Eye,
+  EyeOff,
   HardDrive,
   LoaderCircle,
   LockKeyhole,
@@ -28,6 +30,7 @@ import {
 import {
   defaultAiServiceMode,
   defaultLocalBaseUrl,
+  retainedCloudApiKeyVisibility,
   type AiServiceMode,
 } from "./aiServiceSettingsState";
 
@@ -62,6 +65,7 @@ interface CloudAiSettings {
   baseUrl: string;
   model: string;
   hasApiKey: boolean;
+  apiKey: string | null;
 }
 
 interface AiServiceSettingsSnapshot {
@@ -77,6 +81,8 @@ interface LegacyAgentCliSettings extends SavedAgentCliSettings {
 
 interface AiServiceSettingsProps {
   onCancel: () => void;
+  embedded?: boolean;
+  visible?: boolean;
 }
 
 const cloudProvider: CloudProvider = "openai";
@@ -87,6 +93,7 @@ const localProviderExampleUrls: Record<LocalProvider, string> = {
   lmStudio: "http://127.0.0.1:1234/v1",
 };
 const agentCliSettingsStorageKey = "lumetrace.aiService.agentCli";
+const experimentalAgentCliKeys: ReadonlySet<AgentCliKey> = new Set(["claude", "opencode"]);
 let cachedAgentChecks: Record<AgentCliKey, AgentCheck> | null = null;
 let startupAgentCheckPromise: Promise<Record<AgentCliKey, AgentCheck>> | null = null;
 
@@ -170,12 +177,13 @@ function getStartupAgentChecks(onResult?: (key: AgentCliKey, check: AgentCheck) 
   return startupAgentCheckPromise;
 }
 
-export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
+export function AiServiceSettings({ onCancel, embedded = false, visible = true }: AiServiceSettingsProps) {
   const { t } = useTranslation();
   const legacySettings = useMemo(readLegacyAgentCliSettings, []);
   const [mode, setMode] = useState<AiServiceMode>(defaultAiServiceMode);
   const [cloudBaseUrl, setCloudBaseUrl] = useState(defaultCloudBaseUrl);
   const [cloudApiKey, setCloudApiKey] = useState("");
+  const [showCloudApiKey, setShowCloudApiKey] = useState(false);
   const [cloudHasSavedApiKey, setCloudHasSavedApiKey] = useState(false);
   const [cloudModels, setCloudModels] = useState<string[]>([]);
   const [selectedCloudModel, setSelectedCloudModel] = useState("");
@@ -193,60 +201,72 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   );
   const [detectingAgents, setDetectingAgents] = useState(false);
   const [loadingSettings, setLoadingSettings] = useState(() => isTauri());
+  const [settingsLoadError, setSettingsLoadError] = useState(false);
   const [savingSettings, setSavingSettings] = useState(false);
   const [saveError, setSaveError] = useState(false);
+  const [saveSucceeded, setSaveSucceeded] = useState(false);
   const requestedStartupDetection = useRef(false);
+  const settingsLoadRequest = useRef(0);
   const localConnectionRequest = useRef(0);
   const cloudConnectionRequest = useRef(0);
 
-  useEffect(() => {
+  const loadAiServiceSettings = useCallback(async () => {
     if (!isTauri()) {
       setLoadingSettings(false);
-      return undefined;
+      return;
     }
-    let cancelled = false;
-    void (async () => {
-      try {
-        let snapshot = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
-        if (!snapshot.agentCli && legacySettings) {
-          await invoke<SavedAgentCliSettings>("save_agent_cli_settings", {
-            settings: legacySettings,
-          });
-          snapshot = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
-        }
-        const agentSettings = snapshot.agentCli;
-        if (agentSettings && isAgentCliKey(agentSettings.cli) && isAgentFilePermission(agentSettings.permission)) {
-          localStorage.removeItem(agentCliSettingsStorageKey);
-          if (!cancelled) {
-            setSelectedAgent(agentSettings.cli);
-            setPermission(agentSettings.permission);
-            window.dispatchEvent(new CustomEvent("lumetrace:agent-cli-settings-changed", { detail: agentSettings }));
-          }
-        }
-        if (snapshot.local && localProviders.includes(snapshot.local.provider) && !cancelled) {
-          setLocalProvider(snapshot.local.provider);
-          setLocalBaseUrl(snapshot.local.baseUrl);
-          setLocalModels([snapshot.local.model]);
-          setSelectedLocalModel(snapshot.local.model);
-          setLocalConnectionState("idle");
-        }
-        if (snapshot.cloud && snapshot.cloud.provider === "openai" && !cancelled) {
-          setCloudBaseUrl(snapshot.cloud.baseUrl);
-          setCloudHasSavedApiKey(snapshot.cloud.hasApiKey);
-          setCloudModels([snapshot.cloud.model]);
-          setSelectedCloudModel(snapshot.cloud.model);
-          setCloudConnectionState("idle");
-        }
-      } catch {
-        // Keep a valid legacy value visible. A later explicit Save retries SQLite persistence.
-      } finally {
-        if (!cancelled) setLoadingSettings(false);
+    const requestId = settingsLoadRequest.current + 1;
+    settingsLoadRequest.current = requestId;
+    setLoadingSettings(true);
+    setSettingsLoadError(false);
+    try {
+      let snapshot = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
+      if (!snapshot.agentCli && legacySettings) {
+        await invoke<SavedAgentCliSettings>("save_agent_cli_settings", {
+          settings: legacySettings,
+        });
+        snapshot = await invoke<AiServiceSettingsSnapshot>("get_ai_service_settings");
       }
-    })();
-    return () => {
-      cancelled = true;
-    };
+      if (settingsLoadRequest.current !== requestId) return;
+      const agentSettings = snapshot.agentCli;
+      if (agentSettings && isAgentCliKey(agentSettings.cli) && isAgentFilePermission(agentSettings.permission)) {
+        localStorage.removeItem(agentCliSettingsStorageKey);
+        setSelectedAgent(agentSettings.cli);
+        setPermission(agentSettings.permission);
+        window.dispatchEvent(new CustomEvent("lumetrace:agent-cli-settings-changed", { detail: agentSettings }));
+      }
+      if (snapshot.local && localProviders.includes(snapshot.local.provider)) {
+        setLocalProvider(snapshot.local.provider);
+        setLocalBaseUrl(snapshot.local.baseUrl);
+        setLocalModels([snapshot.local.model]);
+        setSelectedLocalModel(snapshot.local.model);
+        setLocalConnectionState("idle");
+      }
+      if (snapshot.cloud && snapshot.cloud.provider === "openai") {
+        setCloudBaseUrl(snapshot.cloud.baseUrl);
+        setCloudApiKey(snapshot.cloud.apiKey ?? "");
+        setCloudHasSavedApiKey(snapshot.cloud.hasApiKey);
+        setCloudModels([snapshot.cloud.model]);
+        setSelectedCloudModel(snapshot.cloud.model);
+        setCloudConnectionState("idle");
+      }
+    } catch {
+      if (settingsLoadRequest.current === requestId) setSettingsLoadError(true);
+    } finally {
+      if (settingsLoadRequest.current === requestId) setLoadingSettings(false);
+    }
   }, [legacySettings]);
+
+  useEffect(() => {
+    void loadAiServiceSettings();
+    return () => {
+      settingsLoadRequest.current += 1;
+    };
+  }, [loadAiServiceSettings]);
+
+  useEffect(() => {
+    setShowCloudApiKey((current) => retainedCloudApiKeyVisibility(current, mode, visible));
+  }, [mode, visible]);
 
   const localProviderOptions = useMemo<readonly MacSelectOption<LocalProvider>[]>(
     () => localProviders.map((value) => ({
@@ -285,6 +305,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     setSelectedLocalModel("");
     setLocalConnectionState("idle");
     setSaveError(false);
+    setSaveSucceeded(false);
   };
 
   const resetCloudConnection = () => {
@@ -294,6 +315,13 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     setCloudConnectionState("idle");
     setCloudConnectionError(null);
     setSaveError(false);
+    setSaveSucceeded(false);
+  };
+
+  const selectMode = (nextMode: AiServiceMode) => {
+    setMode(nextMode);
+    setSaveError(false);
+    setSaveSucceeded(false);
   };
 
   const changeCloudBaseUrl = (baseUrl: string) => {
@@ -318,6 +346,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   };
 
   const detectAgentClis = useCallback(async () => {
+    setSaveSucceeded(false);
     setDetectingAgents(true);
     setAgentChecks(createAgentCheckMap("checking"));
     const checks = await requestAgentChecks((key, check) => {
@@ -349,6 +378,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const testSelectedAgent = async () => {
     const previousCheck = agentChecks[selectedAgent];
     if (!isTauri() || previousCheck.state === "checking") return;
+    setSaveSucceeded(false);
     setAgentChecks((current) => ({
       ...current,
       [selectedAgent]: { ...current[selectedAgent], state: "checking" },
@@ -380,6 +410,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const testLocalModelConnection = async () => {
     const baseUrl = localBaseUrl.trim();
     if (!baseUrl || !isTauri() || localConnectionState === "checking") return;
+    setSaveSucceeded(false);
     const requestId = localConnectionRequest.current + 1;
     localConnectionRequest.current = requestId;
     setLocalConnectionState("checking");
@@ -405,6 +436,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
     const baseUrl = cloudBaseUrl.trim();
     const apiKey = cloudApiKey.trim();
     if (!baseUrl || (!apiKey && !cloudHasSavedApiKey) || !isTauri() || cloudConnectionState === "checking") return;
+    setSaveSucceeded(false);
     const requestId = cloudConnectionRequest.current + 1;
     cloudConnectionRequest.current = requestId;
     setCloudConnectionState("checking");
@@ -437,13 +469,15 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       version: selectedCheck.version,
     };
     setSaveError(false);
+    setSaveSucceeded(false);
     setSavingSettings(true);
     try {
       const saved = await invoke<SavedAgentCliSettings>("save_agent_cli_settings", { settings });
       localStorage.removeItem(agentCliSettingsStorageKey);
       window.dispatchEvent(new CustomEvent("lumetrace:agent-cli-settings-changed", { detail: saved }));
       window.dispatchEvent(new CustomEvent("lumetrace:ai-service-settings-changed", { detail: { mode: "agentCli" } }));
-      onCancel();
+      setSaveSucceeded(true);
+      if (!embedded) onCancel();
     } catch {
       setSaveError(true);
     } finally {
@@ -454,6 +488,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const saveLocalModelSettings = async () => {
     if (localConnectionState !== "passed" || !selectedLocalModel || !isTauri() || savingSettings) return;
     setSaveError(false);
+    setSaveSucceeded(false);
     setSavingSettings(true);
     try {
       const saved = await invoke<LocalLlmSettings>("save_local_llm_settings", {
@@ -467,7 +502,8 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
       setLocalBaseUrl(saved.baseUrl);
       setSelectedLocalModel(saved.model);
       window.dispatchEvent(new CustomEvent("lumetrace:ai-service-settings-changed", { detail: { mode: "local", local: saved } }));
-      onCancel();
+      setSaveSucceeded(true);
+      if (!embedded) onCancel();
     } catch {
       setSaveError(true);
     } finally {
@@ -478,6 +514,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   const saveCloudSettings = async () => {
     if (cloudConnectionState !== "passed" || !selectedCloudModel || !isTauri() || savingSettings) return;
     setSaveError(false);
+    setSaveSucceeded(false);
     setSavingSettings(true);
     try {
       const saved = await invoke<CloudAiSettings>("save_cloud_ai_settings", {
@@ -489,11 +526,12 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
         },
       });
       setCloudBaseUrl(saved.baseUrl);
-      setCloudApiKey("");
+      setCloudApiKey(saved.apiKey ?? "");
       setCloudHasSavedApiKey(saved.hasApiKey);
       setSelectedCloudModel(saved.model);
       window.dispatchEvent(new CustomEvent("lumetrace:ai-service-settings-changed", { detail: { mode: "cloud", cloud: saved } }));
-      onCancel();
+      setSaveSucceeded(true);
+      if (!embedded) onCancel();
     } catch {
       setSaveError(true);
     } finally {
@@ -502,27 +540,29 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
   };
 
   const selectedCheck = agentChecks[selectedAgent];
+  const settingsUnavailable = loadingSettings || settingsLoadError;
   const canTestSelectedAgent = selectedCheck.state !== "idle"
     && selectedCheck.state !== "checking"
     && selectedCheck.state !== "missing"
+    && !settingsLoadError
     && isTauri();
-  const canSaveAgent = selectedCheck.state === "passed" && !loadingSettings && !savingSettings;
+  const canSaveAgent = selectedCheck.state === "passed" && !settingsUnavailable && !savingSettings;
   const canTestLocal = Boolean(localBaseUrl.trim())
     && localConnectionState !== "checking"
-    && !loadingSettings
+    && !settingsUnavailable
     && isTauri();
   const canSaveLocal = localConnectionState === "passed"
     && Boolean(selectedLocalModel)
-    && !loadingSettings
+    && !settingsUnavailable
     && !savingSettings;
   const canTestCloud = Boolean(cloudBaseUrl.trim())
     && (Boolean(cloudApiKey.trim()) || cloudHasSavedApiKey)
     && cloudConnectionState !== "checking"
-    && !loadingSettings
+    && !settingsUnavailable
     && isTauri();
   const canSaveCloud = cloudConnectionState === "passed"
     && Boolean(selectedCloudModel)
-    && !loadingSettings
+    && !settingsUnavailable
     && !savingSettings;
   const SelectedStatusIcon = selectedCheck.state === "passed"
     ? CircleCheck
@@ -550,25 +590,39 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
 
   return (
     <>
-      <div className="file-space-settings-ai-service">
+      <div className={`file-space-settings-ai-service${embedded ? " is-preferences-embedded" : ""}`}>
         <p className="file-space-settings-ai-service-intro">
           {t("fileSpace.settings.aiService.description")}
         </p>
+
+        {settingsLoadError ? (
+          <div className="file-space-ai-settings-load-error" role="alert">
+            <CircleAlert size={18} aria-hidden="true" />
+            <div>
+              <strong>{t("fileSpace.settings.aiService.loadError.title")}</strong>
+              <p>{t("fileSpace.settings.aiService.loadError.description")}</p>
+            </div>
+            <button type="button" onClick={() => void loadAiServiceSettings()}>
+              <RefreshCw size={14} aria-hidden="true" />
+              {t("fileSpace.settings.aiService.loadError.retry")}
+            </button>
+          </div>
+        ) : null}
 
         <div
           className="file-space-ai-service-segment"
           role="group"
           aria-label={t("fileSpace.settings.aiService.modeLabel")}
         >
-          <button className={mode === "local" ? "is-active" : ""} type="button" aria-pressed={mode === "local"} onClick={() => setMode("local")}>
+          <button className={mode === "local" ? "is-active" : ""} type="button" aria-pressed={mode === "local"} disabled={settingsUnavailable} onClick={() => selectMode("local")}>
             <HardDrive size={15} />
             {t("fileSpace.settings.aiService.local")}
           </button>
-          <button className={mode === "cloud" ? "is-active" : ""} type="button" aria-pressed={mode === "cloud"} onClick={() => setMode("cloud")}>
+          <button className={mode === "cloud" ? "is-active" : ""} type="button" aria-pressed={mode === "cloud"} disabled={settingsUnavailable} onClick={() => selectMode("cloud")}>
             <Cloud size={15} />
             {t("fileSpace.settings.aiService.cloud")}
           </button>
-          <button className={mode === "agentCli" ? "is-active" : ""} type="button" aria-pressed={mode === "agentCli"} onClick={() => setMode("agentCli")}>
+          <button className={mode === "agentCli" ? "is-active" : ""} type="button" aria-pressed={mode === "agentCli"} disabled={settingsUnavailable} onClick={() => selectMode("agentCli")}>
             <Terminal size={15} />
             {t("fileSpace.settings.aiService.agentCli")}
           </button>
@@ -581,7 +635,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 <strong>{t("fileSpace.settings.aiService.agentCliSectionTitle")}</strong>
                 <span>{t("fileSpace.settings.aiService.agentCliSectionDescription")}</span>
               </div>
-              <button type="button" disabled={detectingAgents} onClick={() => void detectAgentClis()}>
+              <button type="button" disabled={settingsUnavailable || detectingAgents} onClick={() => void detectAgentClis()}>
                 <RefreshCw className={detectingAgents ? "is-spinning" : ""} size={14} />
                 {t("fileSpace.settings.aiService.recheck")}
               </button>
@@ -596,13 +650,23 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                     type="button"
                     role="radio"
                     aria-checked={selectedAgent === agent}
-                    disabled={check.state === "checking"}
+                    disabled={settingsUnavailable || check.state === "checking"}
                     key={agent}
-                    onClick={() => setSelectedAgent(agent)}
+                    onClick={() => {
+                      setSelectedAgent(agent);
+                      setSaveSucceeded(false);
+                    }}
                   >
                     <span className="file-space-ai-agent-icon"><AgentCliLogo agent={agent} /></span>
                     <span className="file-space-ai-agent-copy">
-                      <strong>{t(`fileSpace.settings.aiService.providers.${agent}`)}</strong>
+                      <span className="file-space-ai-agent-name">
+                        <strong>{t(`fileSpace.settings.aiService.providers.${agent}`)}</strong>
+                        {experimentalAgentCliKeys.has(agent) ? (
+                          <span className="file-space-ai-agent-experimental">
+                            {t("fileSpace.settings.aiService.experimental")}
+                          </span>
+                        ) : null}
+                      </span>
                       <small>{check.version ?? t(`fileSpace.settings.aiService.agentStatus.${check.state}`)}</small>
                     </span>
                     <span className={`file-space-ai-agent-badge is-${check.state}`}>
@@ -619,7 +683,11 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 className="file-space-ai-service-select"
                 value={permission}
                 options={permissionOptions}
-                onChange={setPermission}
+                disabled={settingsUnavailable}
+                onChange={(nextPermission) => {
+                  setPermission(nextPermission);
+                  setSaveSucceeded(false);
+                }}
                 ariaLabel={t("fileSpace.settings.aiService.permission")}
                 menuMinWidth={250}
               />
@@ -651,7 +719,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
           <>
             <div className="file-space-ai-service-form">
               <span>{t("fileSpace.settings.aiService.provider")}</span>
-              <MacSelect className="file-space-ai-service-select" value={localProvider} options={localProviderOptions} onChange={changeLocalProvider} ariaLabel={t("fileSpace.settings.aiService.provider")} menuMinWidth={250} />
+              <MacSelect className="file-space-ai-service-select" value={localProvider} options={localProviderOptions} onChange={changeLocalProvider} ariaLabel={t("fileSpace.settings.aiService.provider")} disabled={settingsUnavailable} menuMinWidth={250} />
 
               <label htmlFor="file-space-ai-service-base-url">{t("fileSpace.settings.aiService.baseUrl")}</label>
               <input
@@ -659,7 +727,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 type="url"
                 value={localBaseUrl}
                 aria-describedby="file-space-ai-service-base-url-example"
-                disabled={localConnectionState === "checking" || savingSettings}
+                disabled={settingsUnavailable || localConnectionState === "checking" || savingSettings}
                 placeholder={baseUrlPlaceholder}
                 spellCheck={false}
                 autoCapitalize="none"
@@ -675,9 +743,12 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 className="file-space-ai-service-select"
                 value={selectedLocalModel}
                 options={localModelOptions}
-                onChange={setSelectedLocalModel}
+                onChange={(model) => {
+                  setSelectedLocalModel(model);
+                  setSaveSucceeded(false);
+                }}
                 ariaLabel={t("fileSpace.settings.aiService.model")}
-                disabled={localConnectionState !== "passed" || savingSettings}
+                disabled={settingsUnavailable || localConnectionState !== "passed" || savingSettings}
                 menuMinWidth={250}
               />
             </div>
@@ -714,7 +785,7 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 id="file-space-ai-service-base-url"
                 type="url"
                 value={cloudBaseUrl}
-                disabled={cloudConnectionState === "checking" || savingSettings}
+                disabled={settingsUnavailable || cloudConnectionState === "checking" || savingSettings}
                 placeholder={baseUrlPlaceholder}
                 spellCheck={false}
                 autoCapitalize="none"
@@ -727,9 +798,9 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                 <LockKeyhole size={14} aria-hidden="true" />
                 <input
                   id="file-space-ai-service-api-key"
-                  type="password"
+                  type={showCloudApiKey ? "text" : "password"}
                   value={cloudApiKey}
-                  disabled={cloudConnectionState === "checking" || savingSettings}
+                  disabled={settingsUnavailable || cloudConnectionState === "checking" || savingSettings}
                   placeholder={t(cloudHasSavedApiKey
                     ? "fileSpace.settings.aiService.apiKeySavedPlaceholder"
                     : "fileSpace.settings.aiService.apiKeyPlaceholder")}
@@ -738,10 +809,25 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
                   spellCheck={false}
                   onChange={(event) => changeCloudApiKey(event.target.value)}
                 />
+                <button
+                  type="button"
+                  className="file-space-ai-service-secret-toggle"
+                  aria-label={t(showCloudApiKey
+                    ? "fileSpace.settings.aiService.hideApiKey"
+                    : "fileSpace.settings.aiService.showApiKey")}
+                  aria-pressed={showCloudApiKey}
+                  disabled={settingsUnavailable || cloudConnectionState === "checking" || savingSettings}
+                  onClick={() => setShowCloudApiKey((current) => !current)}
+                >
+                  {showCloudApiKey ? <EyeOff size={15} aria-hidden="true" /> : <Eye size={15} aria-hidden="true" />}
+                </button>
               </div>
 
               <span>{t("fileSpace.settings.aiService.model")}</span>
-              <MacSelect className="file-space-ai-service-select" value={selectedCloudModel} options={cloudModelOptions} onChange={setSelectedCloudModel} ariaLabel={t("fileSpace.settings.aiService.model")} disabled={cloudConnectionState !== "passed" || savingSettings} menuMinWidth={250} />
+              <MacSelect className="file-space-ai-service-select" value={selectedCloudModel} options={cloudModelOptions} onChange={(model) => {
+                setSelectedCloudModel(model);
+                setSaveSucceeded(false);
+              }} ariaLabel={t("fileSpace.settings.aiService.model")} disabled={settingsUnavailable || cloudConnectionState !== "passed" || savingSettings} menuMinWidth={250} />
             </div>
 
             <div className="file-space-ai-service-notice">
@@ -766,8 +852,14 @@ export function AiServiceSettings({ onCancel }: AiServiceSettingsProps) {
         )}
       </div>
 
-      <footer>
-        <button type="button" onClick={onCancel}>{t("fileSpace.settings.cancel")}</button>
+      <footer className={embedded ? "file-space-ai-service-actions" : undefined}>
+        {embedded && saveSucceeded ? (
+          <span className="file-space-ai-service-saved" role="status">
+            <CircleCheck size={14} aria-hidden="true" />
+            {t("fileSpace.settings.aiService.saved")}
+          </span>
+        ) : null}
+        {!embedded ? <button type="button" onClick={onCancel}>{t("fileSpace.settings.cancel")}</button> : null}
         <button
           type="button"
           disabled={mode === "local" ? !canTestLocal : mode === "agentCli" ? !canTestSelectedAgent : !canTestCloud}

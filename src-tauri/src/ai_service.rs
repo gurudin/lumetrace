@@ -16,8 +16,8 @@ pub(crate) const AI_SERVICE_MODE_KEY: &str = "ai.service_mode";
 pub(crate) const AI_SERVICE_MODE_AGENT_CLI: &str = "agentCli";
 const AI_SERVICE_MODE_CLOUD: &str = "cloud";
 const AI_SERVICE_MODE_LOCAL: &str = "local";
-const CLOUD_AI_API_KEY_KEY: &str = "ai.cloud_api_key";
-const CLOUD_AI_SETTINGS_KEY: &str = "ai.cloud";
+pub(crate) const CLOUD_AI_API_KEY_KEY: &str = "ai.cloud_api_key";
+pub(crate) const CLOUD_AI_SETTINGS_KEY: &str = "ai.cloud";
 const LOCAL_LLM_SETTINGS_KEY: &str = "ai.local_llm";
 const CLOUD_AI_CONNECTION_TIMEOUT: Duration = Duration::from_secs(20);
 const LOCAL_LLM_CONNECTION_TIMEOUT: Duration = Duration::from_secs(12);
@@ -88,13 +88,27 @@ pub struct CloudAiSettingsRequest {
     model: String,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CloudAiSettingsSnapshot {
     provider: String,
     base_url: String,
     model: String,
     has_api_key: bool,
+    api_key: Option<String>,
+}
+
+impl std::fmt::Debug for CloudAiSettingsSnapshot {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CloudAiSettingsSnapshot")
+            .field("provider", &self.provider)
+            .field("base_url", &self.base_url)
+            .field("model", &self.model)
+            .field("has_api_key", &self.has_api_key)
+            .field("api_key", &self.api_key.as_ref().map(|_| "[redacted]"))
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
@@ -277,7 +291,7 @@ fn load_stored_cloud_ai_settings_record(
         .transpose()
 }
 
-fn cloud_ai_is_configured(database: &Database) -> Result<bool, String> {
+pub(crate) fn cloud_ai_is_configured(database: &Database) -> Result<bool, String> {
     Ok(load_cloud_ai_runtime_settings_record(database)?.is_some())
 }
 
@@ -402,6 +416,7 @@ fn save_cloud_ai_settings_record(
         base_url: settings.base_url,
         model: settings.model,
         has_api_key: true,
+        api_key: Some(api_key),
     })
 }
 
@@ -1030,33 +1045,41 @@ pub(crate) fn run_cloud_ai(
     final_stream_answer(result).map_err(cloud_runtime_error)
 }
 
-#[tauri::command]
-pub fn get_ai_service_settings(
-    database: State<'_, Database>,
+fn load_ai_service_settings_snapshot_record(
+    database: &Database,
 ) -> Result<AiServiceSettingsSnapshot, String> {
-    let cloud = load_stored_cloud_ai_settings_record(database.inner())?;
-    let cloud_api_key_exists = read_setting(database.inner(), CLOUD_AI_API_KEY_KEY)?
-        .is_some_and(|api_key| validate_api_key(api_key).is_ok());
-    let cloud_configured = cloud_ai_is_configured(database.inner())?;
-    let local = load_local_llm_settings_record(database.inner())?;
-    let agent_cli = load_agent_cli_settings_record(database.inner())?;
+    let cloud = load_stored_cloud_ai_settings_record(database)?;
+    let cloud_api_key = read_setting(database, CLOUD_AI_API_KEY_KEY)?
+        .and_then(|api_key| validate_api_key(api_key).ok());
+    let cloud_configured = cloud.is_some() && cloud_api_key.is_some();
+    let local = load_local_llm_settings_record(database)?;
+    let agent_cli = load_agent_cli_settings_record(database)?;
     let mode = resolved_mode(
-        load_service_mode_record(database.inner())?,
+        load_service_mode_record(database)?,
         cloud_configured,
         &local,
         &agent_cli,
     );
+    let has_cloud_api_key = cloud_api_key.is_some();
     Ok(AiServiceSettingsSnapshot {
         mode,
         cloud: cloud.map(|settings| CloudAiSettingsSnapshot {
             provider: settings.provider,
             base_url: settings.base_url,
             model: settings.model,
-            has_api_key: cloud_api_key_exists,
+            has_api_key: has_cloud_api_key,
+            api_key: cloud_api_key,
         }),
         local,
         agent_cli,
     })
+}
+
+#[tauri::command]
+pub fn get_ai_service_settings(
+    database: State<'_, Database>,
+) -> Result<AiServiceSettingsSnapshot, String> {
+    load_ai_service_settings_snapshot_record(database.inner())
 }
 
 #[tauri::command]
@@ -1370,7 +1393,7 @@ mod tests {
     }
 
     #[test]
-    fn cloud_settings_persist_locally_without_exposing_the_api_key() {
+    fn cloud_settings_persist_locally_and_rehydrate_the_api_key_without_debug_leaks() {
         let root =
             std::env::temp_dir().join(format!("lumetrace-cloud-ai-settings-{}", Uuid::new_v4()));
         let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
@@ -1386,9 +1409,14 @@ mod tests {
         .unwrap();
         assert_eq!(saved.base_url, "https://api.openai.com/v1");
         assert!(saved.has_api_key);
-        assert!(!serde_json::to_string(&saved)
-            .unwrap()
-            .contains("sk-local-test-value"));
+        assert_eq!(saved.api_key.as_deref(), Some("sk-local-test-value"));
+        assert_eq!(
+            serde_json::to_value(&saved).unwrap()["apiKey"],
+            "sk-local-test-value"
+        );
+        let saved_debug = format!("{saved:?}");
+        assert!(saved_debug.contains("[redacted]"));
+        assert!(!saved_debug.contains("sk-local-test-value"));
         assert!(cloud_ai_is_configured(&database).unwrap());
         assert_eq!(
             load_service_mode_record(&database).unwrap().as_deref(),
@@ -1421,12 +1449,22 @@ mod tests {
         )
         .unwrap();
         assert_eq!(updated.model, "gpt-5.1");
+        assert_eq!(updated.api_key.as_deref(), Some("sk-local-test-value"));
         assert_eq!(
             read_setting(&database, CLOUD_AI_API_KEY_KEY)
                 .unwrap()
                 .as_deref(),
             Some("sk-local-test-value")
         );
+
+        let snapshot = load_ai_service_settings_snapshot_record(&database).unwrap();
+        let cloud = snapshot.cloud.as_ref().unwrap();
+        assert!(cloud.has_api_key);
+        assert_eq!(cloud.api_key.as_deref(), Some("sk-local-test-value"));
+        assert_eq!(cloud.model, "gpt-5.1");
+        let snapshot_debug = format!("{snapshot:?}");
+        assert!(snapshot_debug.contains("[redacted]"));
+        assert!(!snapshot_debug.contains("sk-local-test-value"));
 
         drop(database);
         std::fs::remove_dir_all(root).unwrap();

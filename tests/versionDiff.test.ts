@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { defaultVersionComparison, diffTextVersions } from "../src/pages/file-space/versionDiff.ts";
 
+test("a version-change action compares the notified version even after newer edits", () => {
+  assert.deepEqual(defaultVersionComparison([
+    { id: "v3", versionNumber: 3, isCurrent: true },
+    { id: "v2", versionNumber: 2, isCurrent: false },
+    { id: "v1", versionNumber: 1, isCurrent: false },
+  ], "v2"), { beforeVersionId: "v1", afterVersionId: "v2" });
+});
+
 test("reports inserted and removed lines with surrounding context", () => {
   const result = diffTextVersions(
     "alpha\nbeta\ngamma\ndelta\nepsilon\n",

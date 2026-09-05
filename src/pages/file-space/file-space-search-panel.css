@@ -77,12 +77,14 @@
   outline: 0;
   color: var(--text);
   background: transparent;
-  font-size: 17px;
+  font-size: var(--type-title-2-size);
+  font-weight: 500;
+  line-height: var(--type-title-2-line);
   letter-spacing: -0.012em;
 }
 
 .file-space-global-search-input-row > input::placeholder {
-  color: color-mix(in srgb, var(--text-muted) 78%, transparent);
+  color: var(--text-tertiary);
 }
 
 .file-space-global-search-input-row > button {
@@ -165,8 +167,8 @@
 .file-space-global-search-results-heading {
   height: 31px;
   padding: 0 14px;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta-size);
   font-weight: 600;
   line-height: 31px;
 }
@@ -211,7 +213,7 @@
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 7px;
-  color: var(--highlight);
+  color: var(--preview-ink);
   background: var(--surface);
 }
 
@@ -231,8 +233,9 @@
 
 .file-space-global-search-result-copy > strong {
   overflow: hidden;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--type-emphasis-size);
+  font-weight: 500;
+  line-height: var(--type-emphasis-line);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -243,8 +246,9 @@
   align-items: center;
   gap: 4px;
   overflow: hidden;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -256,8 +260,9 @@
 .file-space-global-search-result-meta {
   max-width: 150px;
   align-items: flex-end;
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta-size);
+  line-height: var(--type-meta-line);
   white-space: nowrap;
 }
 
@@ -281,8 +286,8 @@
   justify-content: flex-end;
   gap: 14px;
   border-top: 1px solid var(--separator);
-  color: var(--text-muted);
-  font-size: 11px;
+  color: var(--text-tertiary);
+  font-size: var(--type-meta-size);
 }
 
 .file-space-global-search-footer > span {

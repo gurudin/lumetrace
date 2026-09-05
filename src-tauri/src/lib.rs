@@ -6,9 +6,14 @@ mod database;
 mod file_space;
 mod pdf_preview;
 mod semantic_search;
+mod version_comparison;
 mod workspace;
 
-use tauri::{Manager, RunEvent, WindowEvent};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
+use tauri::{webview::PageLoadEvent, Manager, RunEvent, WindowEvent};
 
 fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     if let Some(window) = app.get_webview_window("main") {
@@ -20,15 +25,31 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let startup_ready = Arc::new(AtomicBool::new(false));
+    let ready_for_page = Arc::clone(&startup_ready);
+    let ready_for_instance = Arc::clone(&startup_ready);
+    #[cfg(target_os = "macos")]
+    let ready_for_reopen = Arc::clone(&startup_ready);
+
     let app = tauri::Builder::default()
+        .plugin(tauri_plugin_single_instance::init(move |app, _, _| {
+            if ready_for_instance.load(Ordering::Acquire) {
+                show_main_window(app);
+            }
+        }))
+        .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("lumetrace-file-preview", |context, request| {
             let database = context.app_handle().state::<database::Database>();
             file_space::file_preview_response(database.inner(), request.uri().path())
         })
-        .plugin(tauri_plugin_dialog::init())
-        .plugin(tauri_plugin_single_instance::init(|app, _, _| {
-            show_main_window(app);
-        }))
+        .on_page_load(move |webview, payload| {
+            if webview.label() != "main" || !matches!(payload.event(), PageLoadEvent::Finished) {
+                return;
+            }
+            if !ready_for_page.swap(true, Ordering::AcqRel) {
+                show_main_window(webview.app_handle());
+            }
+        })
         .setup(|app| {
             let (database, workspace_registry) = workspace::initialize(app.handle()).map_err(
                 |error| -> Box<dyn std::error::Error> { std::io::Error::other(error).into() },
@@ -113,6 +134,7 @@ pub fn run() {
             file_space::get_task_file_timeline,
             file_space::set_current_task_file_version,
             file_space::read_task_file_version,
+            version_comparison::get_task_file_text_diff,
             file_space::read_file_space_markdown,
             file_space::read_file_space_text,
             file_space::save_file_space_markdown,
@@ -130,7 +152,7 @@ pub fn run() {
         ])
         .build(tauri::generate_context!())
         .expect("error while building Lume Trace");
-    app.run(|app, event| {
+    app.run(move |app, event| {
         #[cfg(target_os = "macos")]
         if let RunEvent::WindowEvent {
             label,
@@ -148,7 +170,7 @@ pub fn run() {
         }
 
         #[cfg(target_os = "macos")]
-        if matches!(event, RunEvent::Reopen { .. }) {
+        if matches!(event, RunEvent::Reopen { .. }) && ready_for_reopen.load(Ordering::Acquire) {
             show_main_window(app);
         }
     });

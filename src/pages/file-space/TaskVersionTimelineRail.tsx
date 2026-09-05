@@ -1,4 +1,5 @@
 import { AlertTriangle, History, LoaderCircle } from "lucide-react";
+import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 
 export interface PreviewTaskFileVersion {
   id: string;
@@ -67,7 +68,7 @@ export function TaskVersionTimelineRail({
             <li key={version.id} className={`${selectedVersionId === version.id ? "is-selected" : ""}${version.isCurrent ? " is-current" : ""}`}>
               <button type="button" aria-pressed={selectedVersionId === version.id} disabled={disabled} onClick={() => onSelect(version)}>
                 <time dateTime={new Date(version.producedAt).toISOString()}>{new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(version.producedAt)}</time>
-                <strong>v{version.versionNumber}{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
+                <strong><VersionName number={version.versionNumber} />{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
                 <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
                 {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
               </button>
@@ -75,6 +76,7 @@ export function TaskVersionTimelineRail({
           ))}
         </ol>
       ) : null}
+      {!loading && !error ? <InitialVersionHint versions={versions} /> : null}
     </aside>
   );
 }

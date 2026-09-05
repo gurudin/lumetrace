@@ -2,12 +2,12 @@ import { invoke, isTauri } from "@tauri-apps/api/core";
 import { CircleAlert, LoaderCircle, Pause } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
-import { openBackgroundStatusEventName } from "./aiAnswerPresentation";
 import {
   backgroundStatusCount,
   backgroundStatusIndicatorState,
   type BackgroundStatus,
 } from "./backgroundStatusPresentation";
+import { openBackgroundStatusEventName } from "./preferencesNavigation";
 
 export function FileSpaceBackgroundStatusButton() {
   const { t } = useTranslation();

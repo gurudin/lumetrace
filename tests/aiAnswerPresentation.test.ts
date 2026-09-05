@@ -6,7 +6,6 @@ import {
   aiPendingElapsedSeconds,
   isAiCancelledError,
   isAiNoSourcesError,
-  openBackgroundStatusEventName,
   referencedAiFiles,
   shouldAcceptAiProgress,
   shouldSelectAiSourceFromClickDetail,
@@ -70,10 +69,6 @@ test("presents a user-cancelled request separately from an AI failure", () => {
   assert.equal(isAiCancelledError("ai_cancelled"), true);
   assert.equal(isAiCancelledError("ai_cloud_failed"), false);
   assert.equal(isAiCancelledError(null), false);
-});
-
-test("uses one event contract to open background task status", () => {
-  assert.equal(openBackgroundStatusEventName, "lumetrace:open-background-status");
 });
 
 test("AI source clicks select once while leaving double-click to open", () => {

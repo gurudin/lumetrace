@@ -47,6 +47,8 @@ const FILE_SPACE_VERSION_NOTIFICATION_LIMIT: usize = 100;
 const FILE_SPACE_INITIAL_PAGE_LIMIT: usize = 160;
 const FILE_SPACE_FILE_PAGE_MAX_LIMIT: usize = 320;
 const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
+const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
+const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v1";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
 static FILE_SPACE_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static FILE_SPACE_IMPORT_CANCELLATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
@@ -1413,6 +1415,8 @@ fn reconcile_task_file_with_options(
                 ],
             )
             .map_err(|error| format!("Unable to save Task file modification event: {error}"))?;
+        queue_changed_file_index(&transaction, file_id)
+            .map_err(|error| format!("Unable to queue edited file indexing: {error}"))?;
         transaction
             .commit()
             .map_err(|error| format!("Unable to complete Task file edit capture: {error}"))?;
@@ -3408,8 +3412,13 @@ pub fn start_file_content_extractor(app: tauri::AppHandle) -> Result<(), String>
                 continue;
             }
             let database = app.state::<Database>();
-            let result = lock_file_space_operations()
-                .and_then(|_operation| process_next_content_extraction(database.inner()));
+            let result = lock_file_space_operations().and_then(|_operation| {
+                // Repair old omissions in bounded metadata-only batches. Never
+                // put a workspace-wide body scan on startup or search paths.
+                let repaired = repair_missed_edit_indexes_batch(database.inner())?;
+                let extracted = process_next_content_extraction(database.inner())?;
+                Ok(repaired || extracted)
+            });
             match result {
                 Ok(true) => std::thread::sleep(CONTENT_EXTRACTION_DOCUMENT_PAUSE),
                 Ok(false) => std::thread::sleep(Duration::from_millis(500)),
@@ -3614,6 +3623,128 @@ pub async fn retry_file_space_background_failures<R: tauri::Runtime>(
     .map_err(|error| format!("Unable to retry background tasks: {error}"))?
 }
 
+/// Persist index invalidation in the SAME transaction as the file/version edit.
+/// This only updates one file's metadata and queue; extraction/embedding remain
+/// in the existing throttled background workers. Stale chunks are excluded by
+/// their document_indexed_at until the worker replaces them.
+fn queue_changed_file_index(
+    transaction: &rusqlite::Transaction<'_>,
+    file_id: &str,
+) -> rusqlite::Result<()> {
+    let requested_at = now_millis();
+    transaction.execute(
+        "INSERT INTO file_space_search_documents
+         (file_id, file_name, body_text, extraction_status, extraction_error,
+          extraction_version, tag_text, task_text, cell_text, file_updated_at, size_bytes, indexed_at)
+         SELECT f.id, f.original_name, '', 'pending', NULL, ?2,
+                COALESCE((SELECT group_concat(tag, char(31)) FROM file_space_file_tags WHERE file_id = f.id), ''),
+                COALESCE(d.task_text, v.task_title, ''), COALESCE(d.cell_text, v.cell_name, ''),
+                f.updated_at, COALESCE(f.size_bytes, 0), ?3
+         FROM files f
+         LEFT JOIN file_space_search_documents d ON d.file_id = f.id
+         LEFT JOIN file_space_artifacts a ON a.file_id = f.id
+         LEFT JOIN file_space_artifact_versions v ON v.id = a.current_version_id
+         WHERE f.id = ?1 AND f.trashed_at IS NULL AND f.storage_path IS NOT NULL
+         ON CONFLICT(file_id) DO UPDATE SET
+           file_name = excluded.file_name, body_text = '', extraction_status = 'pending',
+           extraction_error = NULL, extraction_version = excluded.extraction_version,
+           tag_text = excluded.tag_text, task_text = excluded.task_text, cell_text = excluded.cell_text,
+           file_updated_at = excluded.file_updated_at, size_bytes = excluded.size_bytes,
+           indexed_at = MAX(file_space_search_documents.indexed_at + 1, excluded.indexed_at)",
+        params![file_id, EXTRACTION_VERSION, requested_at],
+    )?;
+    transaction.execute(
+        "INSERT INTO file_space_index_jobs
+         (file_id, requested_document_indexed_at, status, retry_count, error,
+          requested_at, started_at, completed_at)
+         SELECT d.file_id, d.indexed_at, 'pending', 0, NULL, ?2, NULL, NULL
+         FROM file_space_search_documents d JOIN files f ON f.id = d.file_id
+         WHERE d.file_id = ?1 AND f.trashed_at IS NULL AND f.storage_path IS NOT NULL
+         ON CONFLICT(file_id) DO UPDATE SET
+           requested_document_indexed_at = excluded.requested_document_indexed_at,
+           status = 'pending', retry_count = 0, error = NULL,
+           requested_at = excluded.requested_at, started_at = NULL, completed_at = NULL",
+        params![file_id, requested_at],
+    )?;
+    Ok(())
+}
+
+/// One-time, resumable repair for files missed by older create/edit handlers.
+/// Keyset-page before joining metadata, so even a healthy million-file workspace
+/// never has to scan all rows looking for one missing document in a single tick.
+fn repair_missed_edit_indexes_batch(database: &Database) -> Result<bool, String> {
+    let Some(root) = read_storage_root(database)? else {
+        return Ok(false);
+    };
+    if inspect_root(Some(&root)) != "ready" {
+        return Ok(false);
+    }
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin index repair: {error}"))?;
+    let cursor: String = transaction
+        .query_row(
+            "SELECT value FROM app_settings WHERE key = ?1",
+            [EDIT_INDEX_REPAIR_KEY],
+            |row| row.get(0),
+        )
+        .optional()
+        .map_err(|error| format!("Unable to read index repair progress: {error}"))?
+        .unwrap_or_default();
+    if cursor == "done" {
+        return Ok(false);
+    }
+    let candidates = {
+        let mut statement = transaction
+            .prepare(
+                "SELECT f.id, f.trashed_at IS NULL AND f.storage_path IS NOT NULL AND (
+                 d.file_id IS NULL OR d.file_name <> f.original_name
+                 OR d.file_updated_at <> f.updated_at OR d.size_bytes <> COALESCE(f.size_bytes, 0)
+                 OR d.extraction_version <> ?3)
+             FROM (SELECT id, original_name, storage_path, trashed_at, updated_at, size_bytes
+                   FROM files WHERE id > ?1 ORDER BY id LIMIT ?2) f
+             LEFT JOIN file_space_search_documents d ON d.file_id = f.id ORDER BY f.id",
+            )
+            .map_err(|error| format!("Unable to prepare index repair: {error}"))?;
+        statement
+            .query_map(
+                params![cursor, EDIT_INDEX_REPAIR_BATCH_SIZE, EXTRACTION_VERSION],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+            )
+            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+            .map_err(|error| format!("Unable to read index repair candidates: {error}"))?
+    };
+    for (file_id, stale) in &candidates {
+        if *stale {
+            queue_changed_file_index(&transaction, file_id)
+                .map_err(|error| format!("Unable to repair a file index: {error}"))?;
+        }
+    }
+    let next = if candidates.len() < EDIT_INDEX_REPAIR_BATCH_SIZE {
+        "done"
+    } else {
+        candidates
+            .last()
+            .map(|row| row.0.as_str())
+            .unwrap_or("done")
+    };
+    transaction
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+            params![EDIT_INDEX_REPAIR_KEY, next, now_millis()],
+        )
+        .map_err(|error| format!("Unable to save index repair progress: {error}"))?;
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to commit index repair: {error}"))?;
+    Ok(!candidates.is_empty())
+}
+
 fn synchronize_file_search_index_for_files(
     database: &Database,
     root: Option<&Path>,
@@ -3792,7 +3923,7 @@ fn synchronize_file_search_index_scope(
                    cell_text = excluded.cell_text,
                    file_updated_at = excluded.file_updated_at,
                    size_bytes = excluded.size_bytes,
-                   indexed_at = excluded.indexed_at",
+                   indexed_at = MAX(file_space_search_documents.indexed_at + 1, excluded.indexed_at)",
                 params![
                     candidate.file_id,
                     candidate.file_name,
@@ -4894,6 +5025,8 @@ fn create_text_file_record(
                 ],
             )
             .map_err(|error| format!("Unable to save the first file event: {error}"))?;
+        queue_changed_file_index(&transaction, &file_id)
+            .map_err(|error| format!("Unable to queue the new file for indexing: {error}"))?;
         transaction
             .commit()
             .map_err(|error| format!("Unable to complete file creation: {error}"))?;
@@ -5611,18 +5744,26 @@ fn save_markdown_file_record(
                 )),
             };
         }
-    } else if !is_task_artifact {
+    } else if !is_task_artifact && content != original_content {
         let size_bytes = i64::try_from(content.len())
             .map_err(|_| "The Markdown content is too large".to_owned())?;
         let connection = database
             .0
             .lock()
             .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
-        let update_result = connection.execute(
-            "UPDATE files SET size_bytes = ?1, updated_at = ?2
+        let update_result = (|| -> rusqlite::Result<usize> {
+            let transaction = connection.unchecked_transaction()?;
+            let changed = transaction.execute(
+                "UPDATE files SET size_bytes = ?1, updated_at = ?2
                  WHERE id = ?3 AND trashed_at IS NULL",
-            params![size_bytes, now_millis(), file_id],
-        );
+                params![size_bytes, now_millis(), file_id],
+            )?;
+            if changed > 0 {
+                queue_changed_file_index(&transaction, file_id)?;
+            }
+            transaction.commit()?;
+            Ok(changed)
+        })();
         match update_result {
             Ok(0) => {
                 drop(connection);
@@ -11072,21 +11213,31 @@ pub fn create_file_space_folder(
 }
 
 #[tauri::command]
-pub fn create_file_space_text_file<R: tauri::Runtime>(
+pub async fn create_file_space_text_file<R: tauri::Runtime>(
     parent_id: Option<String>,
     name: String,
     format: String,
     app: tauri::AppHandle<R>,
-    database: State<'_, Database>,
 ) -> Result<FileSpaceCreatedFileResult, String> {
-    let _operation = lock_file_space_operations()?;
-    create_text_file_record(
-        database.inner(),
-        &artifact_store_path(&app)?,
-        parent_id.as_deref(),
-        &name,
-        &format,
-    )
+    let location = app.state::<Database>().location()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = lock_file_space_operations()?;
+        let artifact_store = location.artifact_store_path.clone();
+        let database = crate::database::open_workspace_database(
+            location.database_path,
+            location.artifact_store_path,
+            location.workspace_id,
+        )?;
+        create_text_file_record(
+            &database,
+            &artifact_store,
+            parent_id.as_deref(),
+            &name,
+            &format,
+        )
+    })
+    .await
+    .map_err(|error| format!("Unable to create the text file: {error}"))?
 }
 
 #[tauri::command]
@@ -11485,19 +11636,24 @@ pub async fn read_file_space_text<R: tauri::Runtime>(
 }
 
 #[tauri::command]
-pub fn save_file_space_markdown<R: tauri::Runtime>(
+pub async fn save_file_space_markdown<R: tauri::Runtime>(
     file_id: String,
     content: String,
     app: tauri::AppHandle<R>,
-    database: State<'_, Database>,
 ) -> Result<FileSpaceSnapshot, String> {
-    let _operation = lock_file_space_operations()?;
-    save_markdown_file_record(
-        database.inner(),
-        &artifact_store_path(&app)?,
-        &file_id,
-        &content,
-    )
+    let location = app.state::<Database>().location()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let _operation = lock_file_space_operations()?;
+        let artifact_store = location.artifact_store_path.clone();
+        let database = crate::database::open_workspace_database(
+            location.database_path,
+            location.artifact_store_path,
+            location.workspace_id,
+        )?;
+        save_markdown_file_record(&database, &artifact_store, &file_id, &content)
+    })
+    .await
+    .map_err(|error| format!("Unable to save the Markdown file: {error}"))?
 }
 
 #[tauri::command]
@@ -11693,6 +11849,10 @@ pub fn cancel_file_space_import(request_id: String) -> Result<(), String> {
         .insert(request_id);
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "file_space_edit_index_tests.rs"]
+mod edit_index_tests;
 
 #[cfg(test)]
 mod tests {

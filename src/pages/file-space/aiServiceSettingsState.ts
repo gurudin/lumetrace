@@ -8,6 +8,14 @@ export const defaultAiServiceMode: AiServiceMode = "local";
 // and present provider defaults as examples instead of assumed values.
 export const defaultLocalBaseUrl = "";
 
+export function retainedCloudApiKeyVisibility(
+  current: boolean,
+  mode: AiServiceMode,
+  visible: boolean,
+) {
+  return current && mode === "cloud" && visible;
+}
+
 interface AiServiceConfigurationSnapshot {
   mode: AiServiceMode | null;
   cloud?: {

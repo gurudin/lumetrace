@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type PropsWithChildren } from "react";
+import { useEffect, useLayoutEffect, useMemo, useState, type PropsWithChildren } from "react";
 import {
   ThemeContext,
   type AppearancePreferences,
@@ -21,9 +21,9 @@ export const defaultAppearance: AppearancePreferences = {
 };
 
 const uiFontStacks: Record<UiFont, string> = {
-  system: 'ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-  inter: 'Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif',
-  pingfang: '"PingFang SC", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", sans-serif',
+  system: '-apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif',
+  inter: 'Inter, -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", "Microsoft YaHei", sans-serif',
+  pingfang: '"PingFang SC", -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif',
   "microsoft-yahei": '"Microsoft YaHei", "Segoe UI", system-ui, sans-serif',
 };
 
@@ -35,12 +35,58 @@ function clampSize(value: unknown, minimum: number, maximum: number, fallback: n
   return Math.min(maximum, Math.max(minimum, Math.round(numericValue)));
 }
 
-function getContrastColor(hexColor: string) {
-  const red = Number.parseInt(hexColor.slice(1, 3), 16);
-  const green = Number.parseInt(hexColor.slice(3, 5), 16);
-  const blue = Number.parseInt(hexColor.slice(5, 7), 16);
-  const perceivedBrightness = (red * 299 + green * 587 + blue * 114) / 1000;
-  return perceivedBrightness > 164 ? "#111214" : "#FFFFFF";
+interface RgbColor {
+  red: number;
+  green: number;
+  blue: number;
+}
+
+function parseHexColor(hexColor: string): RgbColor {
+  return {
+    red: Number.parseInt(hexColor.slice(1, 3), 16),
+    green: Number.parseInt(hexColor.slice(3, 5), 16),
+    blue: Number.parseInt(hexColor.slice(5, 7), 16),
+  };
+}
+
+function hexColor({ red, green, blue }: RgbColor) {
+  return `#${[red, green, blue]
+    .map((channel) => Math.round(channel).toString(16).padStart(2, "0"))
+    .join("")}`.toUpperCase();
+}
+
+function relativeLuminance(color: RgbColor) {
+  const [red, green, blue] = [color.red, color.green, color.blue].map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return red * 0.2126 + green * 0.7152 + blue * 0.0722;
+}
+
+function contrastRatio(first: RgbColor, second: RgbColor) {
+  const light = Math.max(relativeLuminance(first), relativeLuminance(second));
+  const dark = Math.min(relativeLuminance(first), relativeLuminance(second));
+  return (light + 0.05) / (dark + 0.05);
+}
+
+function blendColor(source: RgbColor, target: RgbColor, amount: number): RgbColor {
+  return {
+    red: source.red + (target.red - source.red) * amount,
+    green: source.green + (target.green - source.green) * amount,
+    blue: source.blue + (target.blue - source.blue) * amount,
+  };
+}
+
+function getAdaptiveHighlight(hexValue: string, theme: Theme) {
+  const source = parseHexColor(hexValue);
+  const surface = parseHexColor(theme === "dark" ? "#2C2C2E" : "#FFFFFF");
+  if (contrastRatio(source, surface) >= 3) return hexValue.toUpperCase();
+  const contrastTarget = parseHexColor(theme === "dark" ? "#FFFFFF" : "#000000");
+  for (let step = 1; step <= 20; step += 1) {
+    const adjusted = blendColor(source, contrastTarget, step / 20);
+    if (contrastRatio(adjusted, surface) >= 3) return hexColor(adjusted);
+  }
+  return hexColor(contrastTarget);
 }
 
 function getInitialAppearance(): AppearancePreferences {
@@ -101,7 +147,7 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     return () => systemThemeQuery.removeEventListener("change", updateSystemTheme);
   }, [systemThemeQuery]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.dataset.theme = theme;
     document.documentElement.dataset.themePreference = themePreference;
     document.documentElement.style.colorScheme = theme;
@@ -109,16 +155,17 @@ export function ThemeProvider({ children }: PropsWithChildren) {
     localStorage.removeItem(legacyThemeStorageKey);
   }, [theme, themePreference]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const root = document.documentElement;
-    root.style.setProperty("--highlight", appearance.highlightColor);
-    root.style.setProperty("--highlight-foreground", getContrastColor(appearance.highlightColor));
+    const highlightColor = getAdaptiveHighlight(appearance.highlightColor, theme);
+    root.style.setProperty("--highlight", highlightColor);
+    root.style.removeProperty("--highlight-foreground");
     root.style.setProperty("--font-family-ui", uiFontStacks[appearance.uiFont]);
     root.style.setProperty("--font-size-body", `${appearance.bodyFontSize}px`);
     root.style.setProperty("--font-size-code", `${appearance.codeFontSize}px`);
     root.dataset.fontSmoothing = appearance.fontSmoothing ? "on" : "off";
     localStorage.setItem(appearanceStorageKey, JSON.stringify(appearance));
-  }, [appearance]);
+  }, [appearance, theme]);
 
   const value = useMemo(
     () => ({

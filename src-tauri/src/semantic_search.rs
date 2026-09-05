@@ -127,8 +127,8 @@ const MODEL_FILES: [ModelFile; 5] = [
 ];
 
 const MODEL_SOURCES: [&str; 2] = [
-    "https://hf-mirror.com/Xenova/multilingual-e5-small/resolve",
     "https://huggingface.co/Xenova/multilingual-e5-small/resolve",
+    "https://hf-mirror.com/Xenova/multilingual-e5-small/resolve",
 ];
 
 fn model_total_bytes() -> u64 {
@@ -1473,6 +1473,17 @@ fn ensure_model_loaded(runtime: &SemanticSearchRuntime) -> Result<(), String> {
     Ok(())
 }
 
+#[cfg(test)]
+pub(crate) fn index_one_document_with_installed_test_model(
+    database: &Database,
+    runtime: &SemanticSearchRuntime,
+) -> Result<bool, String> {
+    // Opt-in tests use existing model assets but an isolated workspace database.
+    // No downloads, configured AI services, or user documents are accessed.
+    ensure_model_loaded(runtime)?;
+    process_next_document(database, runtime)
+}
+
 pub(crate) fn status_record(
     database: &Database,
     runtime: &SemanticSearchRuntime,
@@ -2569,6 +2580,17 @@ pub(crate) fn retry_failed_index_jobs(database: &Database) -> Result<(), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn semantic_model_download_prefers_the_official_source() {
+        assert_eq!(
+            MODEL_SOURCES,
+            [
+                "https://huggingface.co/Xenova/multilingual-e5-small/resolve",
+                "https://hf-mirror.com/Xenova/multilingual-e5-small/resolve",
+            ]
+        );
+    }
 
     #[test]
     fn chunking_preserves_content_with_overlap() {

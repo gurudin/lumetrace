@@ -28,7 +28,6 @@ import {
   aiPendingElapsedSeconds,
   isAiCancelledError,
   isAiNoSourcesError,
-  openBackgroundStatusEventName,
   referencedAiFiles,
   shouldAcceptAiProgress,
   shouldSelectAiSourceFromClickDetail,
@@ -42,6 +41,10 @@ import {
   canAskConfiguredAiService,
   isAiServiceConfigured,
 } from "./aiServiceSettingsState";
+import {
+  openAiServiceSettingsEventName,
+  openBackgroundStatusEventName,
+} from "./preferencesNavigation";
 import {
   aiConfigurationLoadFailed,
   aiConfigurationLoadResolved,
@@ -270,6 +273,7 @@ function AiPendingAnswer({
             className="file-space-ai-thinking file-space-ai-answer-content"
             ref={thinkingRef}
             aria-live="polite"
+            data-native-context-menu="true"
           >
             <AiSafeMarkdown markdown={thinking} />
           </div>
@@ -324,7 +328,7 @@ function AiNoSourcesAnswer({ onOpenBackgroundStatus }: AiNoSourcesAnswerProps) {
 
 function AiMarkdownAnswer({ answer }: { answer: string }) {
   return (
-    <div className="file-space-ai-answer-content">
+    <div className="file-space-ai-answer-content" data-native-context-menu="true">
       <AiSafeMarkdown markdown={visibleAiAnswer(answer)} />
     </div>
   );
@@ -536,7 +540,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
 
   const openAiServiceSettings = () => {
     closePanel(false);
-    window.dispatchEvent(new CustomEvent("lumetrace:open-ai-service-settings"));
+    window.dispatchEvent(new CustomEvent(openAiServiceSettingsEventName));
   };
 
   const openBackgroundStatus = () => {
@@ -715,7 +719,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                 {turns.map((turn) => (
                   <article className="file-space-ai-turn" key={turn.id}>
                     <section className="file-space-ai-user-message" aria-label={t("fileSpace.ai.questionLabel")}>
-                      <p>{turn.question}</p>
+                      <p data-native-context-menu="true">{turn.question}</p>
                     </section>
                     {turn.status === "pending" ? (
                       <AiPendingAnswer
@@ -777,7 +781,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
                 {pendingQuestion ? (
                   <article className="file-space-ai-turn is-transient">
                     <section className="file-space-ai-user-message" aria-label={t("fileSpace.ai.questionLabel")}>
-                      <p>{pendingQuestion}</p>
+                      <p data-native-context-menu="true">{pendingQuestion}</p>
                     </section>
                     {requestActive ? (
                       <AiPendingAnswer

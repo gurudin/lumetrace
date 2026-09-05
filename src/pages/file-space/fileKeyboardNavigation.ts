@@ -1,6 +1,32 @@
 import type { JustifiedFilePlacement } from "./fileJustifiedLayout";
 
 export type FileKeyboardDirection = "left" | "right" | "up" | "down";
+export type FileKeyboardShortcutAction = "preview" | "trash";
+
+interface FileKeyboardShortcutInput {
+  key: string;
+  metaKey: boolean;
+  ctrlKey: boolean;
+  altKey: boolean;
+  shiftKey: boolean;
+  repeat: boolean;
+  isComposing: boolean;
+}
+
+export function fileKeyboardShortcutAction({
+  key,
+  metaKey,
+  ctrlKey,
+  altKey,
+  shiftKey,
+  repeat,
+  isComposing,
+}: FileKeyboardShortcutInput): FileKeyboardShortcutAction | null {
+  if (repeat || isComposing || ctrlKey || altKey || shiftKey) return null;
+  if (key === " " && !metaKey) return "preview";
+  if (metaKey && (key === "Backspace" || key === "Delete")) return "trash";
+  return null;
+}
 
 interface FileKeyboardNavigationOptions {
   orderedIds: string[];

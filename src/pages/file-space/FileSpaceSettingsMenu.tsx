@@ -1,9 +1,8 @@
+import { getVersion } from "@tauri-apps/api/app";
 import { invoke, isTauri } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
-  Activity,
   ArchiveRestore,
-  Bot,
   CircleAlert,
   CircleCheck,
   Download,
@@ -29,24 +28,28 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
+import appPackage from "../../../package.json";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
-import { AiServiceSettings } from "./AiServiceSettings";
-import { openBackgroundStatusEventName } from "./aiAnswerPresentation";
-import { FileSpaceBackgroundTasks } from "./FileSpaceBackgroundTasks";
+import { FileSpacePreferences } from "./FileSpacePreferences";
 import {
   FileSpaceWorkspaceSettings,
   type FileSpaceWorkspaceDirectory,
   type FileSpaceWorkspaceMutation,
 } from "./FileSpaceWorkspaceMenu";
-import { SetupPreferences } from "./SetupPreferences";
 import {
   semanticStatusView,
   shouldPollSemanticStatus,
   type SemanticStatusReadState,
 } from "./semanticStatusPresentation";
+import {
+  openAiServiceSettingsEventName,
+  openBackgroundStatusEventName,
+  preferencesSectionForOpenEvent,
+  type PreferencesSection,
+} from "./preferencesNavigation";
 
-type SettingsPanel = "workspace" | "about" | "preferences" | "background" | "semantic" | "aiService" | "backup" | "restore" | "privacy";
+type SettingsPanel = "workspace" | "about" | "preferences" | "semantic" | "backup" | "restore" | "privacy";
 type BackupStatus = "idle" | "exporting" | "success" | "error";
 type RestoreStatus = "idle" | "ready" | "restoring" | "success" | "error";
 
@@ -99,14 +102,14 @@ interface SemanticSearchStatus {
 const menuItems: readonly SettingsPanel[] = [
   "workspace",
   "preferences",
-  "background",
   "semantic",
-  "aiService",
   "backup",
   "restore",
   "privacy",
   "about",
 ];
+
+const privacyUpdatedAt = new Date(2026, 8, 4);
 
 interface FileSpaceSettingsMenuProps<TSnapshot> {
   workspaceDirectory: FileSpaceWorkspaceDirectory | null;
@@ -162,6 +165,8 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   const semanticActionBusyRef = useRef(false);
   const [isMenuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<SettingsPanel | null>(null);
+  const [preferencesInitialSection, setPreferencesInitialSection] = useState<PreferencesSection>("appearance");
+  const [preferencesNavigationRequest, setPreferencesNavigationRequest] = useState(0);
   const [backupFeedback, setBackupFeedback] = useState<BackupFeedback>({ status: "idle" });
   const [restoreFeedback, setRestoreFeedback] = useState<RestoreFeedback>({ status: "idle" });
   const [semanticStatus, setSemanticStatus] = useState<SemanticSearchStatus>(semanticPreviewStatus);
@@ -170,6 +175,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   const [semanticBusy, setSemanticBusy] = useState(false);
   const [workspaceBusy, setWorkspaceBusy] = useState(false);
   const [confirmingModelRemoval, setConfirmingModelRemoval] = useState(false);
+  const [appVersion, setAppVersion] = useState(appPackage.version);
   const menuPresence = usePresence(isMenuOpen, 120);
   const dialogPresence = usePresence(Boolean(activePanel), 160);
 
@@ -192,6 +198,13 @@ export function FileSpaceSettingsMenu<TSnapshot>({
       setSemanticStatusReadError(null);
     }
     setActivePanel(panel);
+  }, []);
+
+  const openPreferences = useCallback((section: PreferencesSection = "appearance") => {
+    setMenuOpen(false);
+    setPreferencesInitialSection(section);
+    setPreferencesNavigationRequest((request) => request + 1);
+    setActivePanel("preferences");
   }, []);
 
   const refreshSemanticStatus = useCallback(async (showLoading = false) => {
@@ -374,6 +387,19 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   };
 
   useEffect(() => {
+    if (activePanel !== "about" || !isTauri()) return undefined;
+    let cancelled = false;
+    void getVersion()
+      .then((version) => {
+        if (!cancelled) setAppVersion(version);
+      })
+      .catch(() => undefined);
+    return () => {
+      cancelled = true;
+    };
+  }, [activePanel]);
+
+  useEffect(() => {
     if (!isMenuOpen) return undefined;
     const frame = window.requestAnimationFrame(() => {
       menuRef.current?.focus();
@@ -446,15 +472,17 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   }, [activePanel, refreshSemanticStatus, semanticBusy, semanticStatus.state, semanticStatusReadState]);
 
   useEffect(() => {
-    const openAiServiceSettings = () => openPanel("aiService");
-    const openBackgroundStatus = () => openPanel("background");
-    window.addEventListener("lumetrace:open-ai-service-settings", openAiServiceSettings);
-    window.addEventListener(openBackgroundStatusEventName, openBackgroundStatus);
-    return () => {
-      window.removeEventListener("lumetrace:open-ai-service-settings", openAiServiceSettings);
-      window.removeEventListener(openBackgroundStatusEventName, openBackgroundStatus);
+    const openPreferencesSection = (event: Event) => {
+      const section = preferencesSectionForOpenEvent(event.type);
+      if (section) openPreferences(section);
     };
-  }, [openPanel]);
+    window.addEventListener(openAiServiceSettingsEventName, openPreferencesSection);
+    window.addEventListener(openBackgroundStatusEventName, openPreferencesSection);
+    return () => {
+      window.removeEventListener(openAiServiceSettingsEventName, openPreferencesSection);
+      window.removeEventListener(openBackgroundStatusEventName, openPreferencesSection);
+    };
+  }, [openPreferences]);
 
   const handleMenuKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     const items = Array.from(menuRef.current?.querySelectorAll<HTMLButtonElement>('[role="menuitem"]:not(:disabled)') ?? []);
@@ -483,12 +511,12 @@ export function FileSpaceSettingsMenu<TSnapshot>({
     if (event.target === event.currentTarget) closeDialog();
   };
 
-  const panelTitle = activePanel === "backup" || activePanel === "restore" || activePanel === "background" || activePanel === "semantic" || activePanel === "aiService"
+  const panelTitle = activePanel === "backup" || activePanel === "restore" || activePanel === "semantic"
     ? t(`fileSpace.settings.${activePanel}Title`)
     : activePanel
       ? t(`fileSpace.settings.${activePanel}`)
       : "";
-  const panelClassName = activePanel === "aiService" ? "ai-service" : activePanel;
+  const panelClassName = activePanel;
   const semanticView = semanticStatusView(semanticStatusReadState);
 
   return (
@@ -523,12 +551,8 @@ export function FileSpaceSettingsMenu<TSnapshot>({
               ? Info
               : item === "preferences"
                 ? SlidersHorizontal
-                : item === "background"
-                  ? Activity
                 : item === "semantic"
                   ? Sparkles
-                : item === "aiService"
-                  ? Bot
                 : item === "backup"
                   ? Download
                   : item === "restore"
@@ -549,17 +573,14 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                 onClick={() => {
                   if (item === "backup") void exportBackup();
                   else if (item === "restore") void chooseRestoreBackup();
+                  else if (item === "preferences") openPreferences();
                   else openPanel(item);
                 }}
               >
                 <Icon size={17} />
                 <span>{item === "semantic"
                   ? t("fileSpace.settings.semantic.menu")
-                  : item === "background"
-                    ? t("fileSpace.settings.background.menu")
-                  : item === "aiService"
-                    ? t("fileSpace.settings.aiService.menu")
-                    : t(`fileSpace.settings.${item}`)}</span>
+                  : t(`fileSpace.settings.${item}`)}</span>
               </button>
             );
           })}
@@ -606,22 +627,32 @@ export function FileSpaceSettingsMenu<TSnapshot>({
             {activePanel === "about" ? (
               <div className="file-space-settings-about">
                 <img src={lumeTraceLogo} alt="" />
-                <div>
+                <div className="file-space-settings-about-copy">
                   <strong>Lume Trace</strong>
-                  <span>{t("fileSpace.settings.aboutDescription")}</span>
+                  <span className="file-space-settings-about-version">
+                    {t("fileSpace.settings.aboutVersion", { version: appVersion })}
+                  </span>
+                  <p>{t("fileSpace.settings.aboutDescription")}</p>
                 </div>
+                <button
+                  className="file-space-settings-about-privacy"
+                  type="button"
+                  onClick={() => openPanel("privacy")}
+                >
+                  <ShieldCheck size={15} />
+                  {t("fileSpace.settings.privacy")}
+                </button>
+                <small>{t("fileSpace.settings.aboutCopyright", { year: new Date().getFullYear() })}</small>
               </div>
             ) : null}
 
             {activePanel === "preferences" ? (
-              <div className="file-space-settings-preferences">
-                <p>{t("fileSpace.settings.preferencesDescription")}</p>
-                <SetupPreferences />
-              </div>
-            ) : null}
-
-            {activePanel === "background" ? (
-              <FileSpaceBackgroundTasks onOpenSemantic={() => openPanel("semantic")} />
+              <FileSpacePreferences
+                initialSection={preferencesInitialSection}
+                navigationRequest={preferencesNavigationRequest}
+                onClose={closeDialog}
+                onOpenSemantic={() => openPanel("semantic")}
+              />
             ) : null}
 
             {activePanel === "semantic" ? (
@@ -632,7 +663,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                 <section className="file-space-settings-semantic-model" aria-label={t("fileSpace.settings.semantic.modelLabel")}>
                   <div className="file-space-settings-semantic-model-heading">
                     <span className="file-space-settings-semantic-model-icon" aria-hidden="true">
-                      <Sparkles size={20} />
+                      E5
                     </span>
                     <div>
                       <strong>{semanticStatus.modelName}</strong>
@@ -758,13 +789,54 @@ export function FileSpaceSettingsMenu<TSnapshot>({
               </div>
             ) : null}
 
-            {activePanel === "aiService" ? <AiServiceSettings onCancel={closeDialog} /> : null}
-
             {activePanel === "privacy" ? (
-              <div className="file-space-settings-privacy">
-                <ShieldCheck size={23} />
-                <p>{t("fileSpace.settings.privacyDescription")}</p>
-              </div>
+              <article className="file-space-settings-privacy">
+                <header className="file-space-settings-privacy-intro">
+                  <span aria-hidden="true"><ShieldCheck size={20} /></span>
+                  <div>
+                    <h3>{t("fileSpace.settings.privacyDetails.introTitle")}</h3>
+                    <p>{t("fileSpace.settings.privacyDetails.introDescription")}</p>
+                  </div>
+                </header>
+
+                <div className="file-space-settings-privacy-sections">
+                  <section>
+                    <h3>{t("fileSpace.settings.privacyDetails.localTitle")}</h3>
+                    <p>{t("fileSpace.settings.privacyDetails.localDescription")}</p>
+                  </section>
+
+                  <section>
+                    <h3>{t("fileSpace.settings.privacyDetails.networkTitle")}</h3>
+                    <ul>
+                      {(["cloud", "localModel", "agentCli", "modelDownload"] as const).map((item) => (
+                        <li key={item}>
+                          <strong>{t(`fileSpace.settings.privacyDetails.network.${item}.title`)}</strong>
+                          <span>{t(`fileSpace.settings.privacyDetails.network.${item}.description`)}</span>
+                        </li>
+                      ))}
+                    </ul>
+                  </section>
+
+                  <section>
+                    <h3>{t("fileSpace.settings.privacyDetails.credentialsTitle")}</h3>
+                    <p>{t("fileSpace.settings.privacyDetails.credentialsDescription")}</p>
+                  </section>
+
+                  <section>
+                    <h3>{t("fileSpace.settings.privacyDetails.backupTitle")}</h3>
+                    <p>{t("fileSpace.settings.privacyDetails.backupDescription")}</p>
+                  </section>
+                </div>
+
+                <p className="file-space-settings-privacy-third-party">
+                  {t("fileSpace.settings.privacyDetails.thirdPartyDescription")}
+                </p>
+                <time dateTime="2026-09-04">
+                  {t("fileSpace.settings.privacyDetails.updated", {
+                    date: new Intl.DateTimeFormat(i18n.resolvedLanguage, { dateStyle: "long" }).format(privacyUpdatedAt),
+                  })}
+                </time>
+              </article>
             ) : null}
 
             {activePanel === "backup" ? (
@@ -846,7 +918,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
               </div>
             ) : null}
 
-            {activePanel !== "aiService" && activePanel !== "workspace" ? <footer>
+            {activePanel !== "workspace" && activePanel !== "preferences" ? <footer>
               {activePanel === "semantic" && confirmingModelRemoval ? (
                 <>
                   <button type="button" disabled={semanticBusy} onClick={() => setConfirmingModelRemoval(false)}>

@@ -33,3 +33,14 @@ For every material UI or interaction change:
 - Do not install development builds into `/Applications`.
 - Keep the user-facing product name `Lume Trace`; keep internal package, database, bundle, protocol, and storage identifiers as `lumetrace` unless a migration is explicitly planned.
 - Preserve the existing file-card DOM contracts used by previews, system opening, and drag behavior unless every dependent path is updated and verified together.
+
+## Git repository and delivery rules
+
+- The GitHub repository is `git@github.com:gurudin/lumetrace.git`, configured as `origin`.
+- `main` is the default branch. `develop` is the development branch and the only branch on which agents may create commits.
+- Stay on `develop` throughout development. Before editing, committing, or pushing, verify the current branch. If it is not `develop`, stop and ask the user rather than changing branches automatically.
+- Do not create, switch to, merge, rebase, reset, delete, or push another branch without an explicit user instruction. In particular, never merge or push development changes into `main` automatically.
+- After each completed change, review the diff, run the relevant checks, create a commit, and push it to `origin develop`. This is standing authorization for that commit and push; do not request confirmation each time.
+- All commit titles and descriptions must be written in English. Prefer concise conventional commit messages, such as `fix: refresh indexes after file edits`.
+- Commit only the intended project changes. Exclude credentials, local user files, generated artifacts, and unrelated work. Never force-push or rewrite published history without explicit authorization.
+- If verification, commit, or push fails, report the exact failure and do not claim that delivery is complete.

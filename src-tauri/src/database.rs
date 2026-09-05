@@ -1,8 +1,11 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, Transaction, TransactionBehavior};
 use std::{fs, path::PathBuf, sync::Mutex};
 
-const SCHEMA: &str = r#"
-PRAGMA foreign_keys = ON;
+// Migration numbers are append-only once released. Never change or reuse an
+// existing number; add a new migration and advance CURRENT_SCHEMA_VERSION.
+const CURRENT_SCHEMA_VERSION: i64 = 2;
+
+const MIGRATION_1_SCHEMA: &str = r#"
 
 CREATE TABLE IF NOT EXISTS app_settings (
   key        TEXT PRIMARY KEY,
@@ -356,114 +359,175 @@ pub struct DatabaseLocation {
 
 pub struct Database(pub Mutex<Connection>, Mutex<DatabaseLocation>);
 
-fn open_connection(path: &PathBuf) -> Result<Connection, String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .map_err(|error| format!("Unable to create Lume Trace database directory: {error}"))?;
-    }
-    let connection = Connection::open(path)
-        .map_err(|error| format!("Unable to open Lume Trace database: {error}"))?;
-    connection
-        .execute_batch(SCHEMA)
-        .map_err(|error| format!("Unable to initialize Lume Trace database: {error}"))?;
-    let ai_turn_columns = {
-        let mut statement = connection
-            .prepare("PRAGMA table_info(file_space_ai_turns)")
-            .map_err(|error| format!("Unable to inspect AI conversation storage: {error}"))?;
-        statement
-            .query_map([], |row| row.get::<_, String>(1))
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .map_err(|error| format!("Unable to inspect AI conversation storage: {error}"))?
-    };
+fn table_columns(connection: &Connection, table_name: &str) -> rusqlite::Result<Vec<String>> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table_name})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(columns)
+}
+
+fn table_exists(connection: &Connection, table_name: &str) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "SELECT EXISTS(
+           SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1
+         )",
+        [table_name],
+        |row| row.get(0),
+    )
+}
+
+fn migrate_to_v1(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    // Existing unversioned workspaces may already contain a fully populated
+    // index. Record this before CREATE IF NOT EXISTS so adopting the v1 marker
+    // never turns application startup into a synchronous full-index rebuild.
+    let document_fts_existed = table_exists(transaction, "file_space_search_fts")?;
+    let chunk_fts_existed = table_exists(transaction, "file_space_search_chunks_fts")?;
+
+    transaction.execute_batch(MIGRATION_1_SCHEMA)?;
+
+    // Databases created before schema versioning already contain these tables,
+    // so CREATE TABLE IF NOT EXISTS cannot add the later columns for us.
+    let ai_turn_columns = table_columns(transaction, "file_space_ai_turns")?;
     if !ai_turn_columns.iter().any(|column| column == "status") {
-        connection
-            .execute(
-                "ALTER TABLE file_space_ai_turns
-                 ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate AI conversation status: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_ai_turns
+             ADD COLUMN status TEXT NOT NULL DEFAULT 'completed'",
+            [],
+        )?;
     }
     if !ai_turn_columns.iter().any(|column| column == "error_code") {
-        connection
-            .execute(
-                "ALTER TABLE file_space_ai_turns ADD COLUMN error_code TEXT",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate AI conversation errors: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_ai_turns ADD COLUMN error_code TEXT",
+            [],
+        )?;
     }
     if !ai_turn_columns.iter().any(|column| column == "updated_at") {
-        connection
-            .execute(
-                "ALTER TABLE file_space_ai_turns
-                 ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate AI conversation timestamps: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_ai_turns
+             ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
     }
     if !ai_turn_columns.iter().any(|column| column == "duration_ms") {
-        connection
-            .execute(
-                "ALTER TABLE file_space_ai_turns ADD COLUMN duration_ms INTEGER",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate AI answer durations: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_ai_turns ADD COLUMN duration_ms INTEGER",
+            [],
+        )?;
     }
-    let search_document_columns = {
-        let mut statement = connection
-            .prepare("PRAGMA table_info(file_space_search_documents)")
-            .map_err(|error| {
-                format!("Unable to inspect file content extraction storage: {error}")
-            })?;
-        statement
-            .query_map([], |row| row.get::<_, String>(1))
-            .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
-            .map_err(|error| {
-                format!("Unable to inspect file content extraction storage: {error}")
-            })?
-    };
+
+    let search_document_columns = table_columns(transaction, "file_space_search_documents")?;
     if !search_document_columns
         .iter()
         .any(|column| column == "extraction_status")
     {
-        connection
-            .execute(
-                "ALTER TABLE file_space_search_documents
-                 ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'pending'",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate file extraction status: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_search_documents
+             ADD COLUMN extraction_status TEXT NOT NULL DEFAULT 'pending'",
+            [],
+        )?;
     }
     if !search_document_columns
         .iter()
         .any(|column| column == "extraction_error")
     {
-        connection
-            .execute(
-                "ALTER TABLE file_space_search_documents ADD COLUMN extraction_error TEXT",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate file extraction errors: {error}"))?;
+        transaction.execute(
+            "ALTER TABLE file_space_search_documents ADD COLUMN extraction_error TEXT",
+            [],
+        )?;
     }
     if !search_document_columns
         .iter()
         .any(|column| column == "extraction_version")
     {
-        connection
-            .execute(
-                "ALTER TABLE file_space_search_documents
-                 ADD COLUMN extraction_version INTEGER NOT NULL DEFAULT 0",
-                [],
-            )
-            .map_err(|error| format!("Unable to migrate file extraction version: {error}"))?;
-    }
-    connection
-        .execute(
-            "CREATE INDEX IF NOT EXISTS idx_file_space_search_documents_extraction
-             ON file_space_search_documents(extraction_status, indexed_at, file_id)",
+        transaction.execute(
+            "ALTER TABLE file_space_search_documents
+             ADD COLUMN extraction_version INTEGER NOT NULL DEFAULT 0",
             [],
-        )
-        .map_err(|error| format!("Unable to index file extraction status: {error}"))?;
+        )?;
+    }
+    transaction.execute(
+        "CREATE INDEX IF NOT EXISTS idx_file_space_search_documents_extraction
+         ON file_space_search_documents(extraction_status, indexed_at, file_id)",
+        [],
+    )?;
+
+    // Only a table created by this migration needs historical rows backfilled.
+    // Existing FTS tables are left untouched to keep large-workspace startup
+    // bounded and to preserve their already-built index state.
+    if !document_fts_existed {
+        transaction.execute(
+            "INSERT INTO file_space_search_fts(file_space_search_fts) VALUES('rebuild')",
+            [],
+        )?;
+    }
+    if !chunk_fts_existed {
+        transaction.execute(
+            "INSERT INTO file_space_search_chunks_fts(rowid, chunk_id, file_id, body_text)
+             SELECT rowid, id, file_id, body_text FROM file_space_search_chunks",
+            [],
+        )?;
+    }
+
+    Ok(())
+}
+
+fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
+    let mut version = connection
+        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+        .map_err(|error| format!("Unable to read Lume Trace schema version: {error}"))?;
+
+    if version > CURRENT_SCHEMA_VERSION {
+        return Err(format!(
+            "This Lume Trace database uses schema version {version}, but this app supports up to version {CURRENT_SCHEMA_VERSION}"
+        ));
+    }
+
+    while version < CURRENT_SCHEMA_VERSION {
+        let next_version = version + 1;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|error| {
+                format!("Unable to start Lume Trace schema migration {next_version}: {error}")
+            })?;
+
+        match next_version {
+            1 => migrate_to_v1(&transaction),
+            2 => transaction.execute_batch(
+                "ALTER TABLE file_space_ai_turns ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';",
+            ),
+            // CURRENT_SCHEMA_VERSION and this match must advance together.
+            _ => unreachable!("missing migration for schema version {next_version}"),
+        }
+        .map_err(|error| {
+            format!("Unable to apply Lume Trace schema migration {next_version}: {error}")
+        })?;
+
+        transaction
+            .pragma_update(None, "user_version", next_version)
+            .map_err(|error| {
+                format!("Unable to record Lume Trace schema version {next_version}: {error}")
+            })?;
+        transaction.commit().map_err(|error| {
+            format!("Unable to commit Lume Trace schema migration {next_version}: {error}")
+        })?;
+        version = next_version;
+    }
+
+    Ok(())
+}
+
+fn open_connection(path: &PathBuf) -> Result<Connection, String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Unable to create Lume Trace database directory: {error}"))?;
+    }
+    let mut connection = Connection::open(path)
+        .map_err(|error| format!("Unable to open Lume Trace database: {error}"))?;
+    connection
+        .pragma_update(None, "foreign_keys", "ON")
+        .map_err(|error| format!("Unable to enable Lume Trace database integrity: {error}"))?;
+    migrate_connection(&mut connection)?;
     Ok(connection)
 }
 
@@ -553,6 +617,12 @@ mod tests {
     use super::*;
     use uuid::Uuid;
 
+    fn schema_version(connection: &Connection) -> i64 {
+        connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap()
+    }
+
     #[test]
     fn existing_ai_turns_receive_answer_duration_column() {
         let root = std::env::temp_dir().join(format!(
@@ -638,6 +708,300 @@ mod tests {
         drop(connection);
         drop(database);
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_unversioned_database_is_upgraded_without_losing_ai_or_search_data() {
+        let root = std::env::temp_dir().join(format!(
+            "lumetrace-schema-baseline-migration-{}",
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("lumetrace.sqlite3");
+        {
+            let connection = Connection::open(&path).unwrap();
+            connection
+                .execute_batch(
+                    "CREATE TABLE file_space_ai_turns (
+                       sequence INTEGER PRIMARY KEY AUTOINCREMENT,
+                       id TEXT NOT NULL UNIQUE,
+                       question TEXT NOT NULL,
+                       answer TEXT NOT NULL DEFAULT '',
+                       sources_json TEXT NOT NULL DEFAULT '[]',
+                       created_at INTEGER NOT NULL
+                     );
+                     INSERT INTO file_space_ai_turns
+                       (id, question, answer, sources_json, created_at)
+                     VALUES (
+                       'legacy-turn',
+                       '断流后如何恢复？',
+                       '保留的旧回答',
+                       '[{\"fileId\":\"legacy-file\"}]',
+                       1234
+                     );
+
+                     CREATE TABLE file_space_search_documents (
+                       file_id TEXT PRIMARY KEY,
+                       file_name TEXT NOT NULL,
+                       body_text TEXT NOT NULL DEFAULT '',
+                       tag_text TEXT NOT NULL DEFAULT '',
+                       task_text TEXT NOT NULL DEFAULT '',
+                       cell_text TEXT NOT NULL DEFAULT '',
+                       file_updated_at INTEGER NOT NULL,
+                       size_bytes INTEGER NOT NULL,
+                       indexed_at INTEGER NOT NULL
+                     );
+                     INSERT INTO file_space_search_documents
+                       (file_id, file_name, body_text, tag_text, task_text, cell_text,
+                        file_updated_at, size_bytes, indexed_at)
+                     VALUES (
+                       'legacy-file',
+                       '8月第二周-周报.md',
+                       '断流恢复策略',
+                       '周报',
+                       '任务计划',
+                       '',
+                       100,
+                       16,
+                       200
+                     );",
+                )
+                .unwrap();
+            assert_eq!(schema_version(&connection), 0);
+        }
+
+        let database = open_database(path.clone()).unwrap();
+        {
+            let connection = database.0.lock().unwrap();
+            assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+
+            let ai_turn = connection
+                .query_row(
+                    "SELECT question, answer, sources_json, status, error_code,
+                            duration_ms, created_at, updated_at
+                     FROM file_space_ai_turns WHERE id = 'legacy-turn'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, Option<String>>(4)?,
+                            row.get::<_, Option<i64>>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, i64>(7)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(ai_turn.0, "断流后如何恢复？");
+            assert_eq!(ai_turn.1, "保留的旧回答");
+            assert_eq!(ai_turn.2, "[{\"fileId\":\"legacy-file\"}]");
+            assert_eq!(ai_turn.3, "completed");
+            assert_eq!(ai_turn.4, None);
+            assert_eq!(ai_turn.5, None);
+            assert_eq!(ai_turn.6, 1234);
+            assert_eq!(ai_turn.7, 0);
+
+            let search_document = connection
+                .query_row(
+                    "SELECT file_name, body_text, tag_text, task_text,
+                            extraction_status, extraction_error, extraction_version,
+                            indexed_at
+                     FROM file_space_search_documents WHERE file_id = 'legacy-file'",
+                    [],
+                    |row| {
+                        Ok((
+                            row.get::<_, String>(0)?,
+                            row.get::<_, String>(1)?,
+                            row.get::<_, String>(2)?,
+                            row.get::<_, String>(3)?,
+                            row.get::<_, String>(4)?,
+                            row.get::<_, Option<String>>(5)?,
+                            row.get::<_, i64>(6)?,
+                            row.get::<_, i64>(7)?,
+                        ))
+                    },
+                )
+                .unwrap();
+            assert_eq!(search_document.0, "8月第二周-周报.md");
+            assert_eq!(search_document.1, "断流恢复策略");
+            assert_eq!(search_document.2, "周报");
+            assert_eq!(search_document.3, "任务计划");
+            assert_eq!(search_document.4, "pending");
+            assert_eq!(search_document.5, None);
+            assert_eq!(search_document.6, 0);
+            assert_eq!(search_document.7, 200);
+
+            let indexed_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM file_space_search_fts
+                     WHERE file_space_search_fts MATCH '断流恢复策略'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(indexed_count, 1);
+        }
+        drop(database);
+
+        // A second open must not replay or duplicate an already-applied migration.
+        let reopened = open_database(path).unwrap();
+        let connection = reopened.0.lock().unwrap();
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        let ai_turn_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM file_space_ai_turns WHERE id = 'legacy-turn'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let search_document_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM file_space_search_documents
+                 WHERE file_id = 'legacy-file'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(ai_turn_count, 1);
+        assert_eq!(search_document_count, 1);
+        drop(connection);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn adopting_an_existing_unversioned_database_does_not_rebuild_fts_tables() {
+        let root = std::env::temp_dir().join(format!(
+            "lumetrace-existing-fts-migration-{}",
+            Uuid::new_v4()
+        ));
+        let path = root.join("lumetrace.sqlite3");
+        fs::create_dir_all(&root).unwrap();
+        {
+            // Build the historical schema itself, not today's schema with its
+            // version flag reset (which would retain columns added by v2+).
+            let mut connection = Connection::open(&path).unwrap();
+            let transaction = connection.transaction().unwrap();
+            migrate_to_v1(&transaction).unwrap();
+            transaction.commit().unwrap();
+            // Orphan sentinel rows make a rebuild or clear directly observable
+            // without allocating a large test database.
+            connection
+                .execute(
+                    "INSERT INTO file_space_search_fts
+                       (rowid, file_name, body_text, tag_text, task_text, cell_text)
+                     VALUES (900001, 'document_fts_sentinel', '', '', '', '')",
+                    [],
+                )
+                .unwrap();
+            connection
+                .execute(
+                    "INSERT INTO file_space_search_chunks_fts
+                       (rowid, chunk_id, file_id, body_text)
+                     VALUES (900002, 'chunk-sentinel', 'file-sentinel',
+                             'chunk_fts_sentinel')",
+                    [],
+                )
+                .unwrap();
+            connection.pragma_update(None, "user_version", 0).unwrap();
+        }
+
+        let reopened = open_database(path).unwrap();
+        let connection = reopened.0.lock().unwrap();
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        let document_sentinel_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM file_space_search_fts
+                 WHERE file_space_search_fts MATCH 'document_fts_sentinel'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let chunk_sentinel_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM file_space_search_chunks_fts
+                 WHERE file_space_search_chunks_fts MATCH 'chunk_fts_sentinel'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(document_sentinel_count, 1);
+        assert_eq!(chunk_sentinel_count, 1);
+        drop(connection);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_schema_migration_rolls_back_ddl_and_version_together() {
+        let connection = &mut Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(
+                "CREATE VIEW file_space_search_documents AS
+                 SELECT 'file' AS file_id, 'name' AS file_name;",
+            )
+            .unwrap();
+
+        let error = migrate_connection(connection).unwrap_err();
+        assert!(error.contains("schema migration 1"));
+        assert_eq!(schema_version(connection), 0);
+        let created_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'app_settings'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(created_table_count, 0);
+    }
+
+    #[test]
+    fn database_from_a_newer_app_is_not_opened_by_an_older_schema() {
+        let connection = &mut Connection::open_in_memory().unwrap();
+        connection
+            .pragma_update(None, "user_version", CURRENT_SCHEMA_VERSION + 1)
+            .unwrap();
+
+        let error = migrate_connection(connection).unwrap_err();
+        assert!(error.contains(&format!("supports up to version {CURRENT_SCHEMA_VERSION}")));
+        assert_eq!(schema_version(connection), CURRENT_SCHEMA_VERSION + 1);
+    }
+
+    #[test]
+    fn schema_two_preserves_existing_turns_and_is_not_reapplied() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let transaction = connection.transaction().unwrap();
+        migrate_to_v1(&transaction).unwrap();
+        transaction.pragma_update(None, "user_version", 1).unwrap();
+        transaction.commit().unwrap();
+        connection.execute(
+            "INSERT INTO file_space_ai_turns (id, question, answer, sources_json, status, created_at, updated_at)
+             VALUES ('synthetic-turn', 'version one', 'version two', '[]', 'completed', 1, 2)", []
+        ).unwrap();
+        migrate_connection(&mut connection).unwrap();
+        let record: (String, String, String) = connection.query_row(
+            "SELECT question, answer, context_json FROM file_space_ai_turns WHERE id = 'synthetic-turn'", [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?))
+        ).unwrap();
+        assert_eq!(
+            record,
+            ("version one".into(), "version two".into(), "[]".into())
+        );
+        connection.execute("UPDATE file_space_ai_turns SET context_json = '[\"synthetic-file\"]' WHERE id = 'synthetic-turn'", []).unwrap();
+        migrate_connection(&mut connection).unwrap();
+        let context: String = connection
+            .query_row(
+                "SELECT context_json FROM file_space_ai_turns WHERE id = 'synthetic-turn'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(context, "[\"synthetic-file\"]");
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
     }
 
     #[test]

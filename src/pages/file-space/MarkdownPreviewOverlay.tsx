@@ -7,6 +7,9 @@ import remarkGfm from "remark-gfm";
 import { usePresence } from "../../shared/ui/usePresence";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { InitialVersionHint, VersionName } from "./InitialVersionHint";
+import { claimFirstVersionChange, savedVersionNotification, viewVersionChangeEvent } from "./firstVersionChange";
+import type { FileSpaceVersionNotification } from "./versionNotification";
 import "./markdown-preview-overlay.css";
 
 interface MarkdownPreviewRequest {
@@ -186,6 +189,7 @@ export function MarkdownPreviewOverlay() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [firstVersionChange, setFirstVersionChange] = useState<FileSpaceVersionNotification | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
   const [timelineLoading, setTimelineLoading] = useState(false);
@@ -248,6 +252,7 @@ export function MarkdownPreviewOverlay() {
         : await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: target.fileId });
       setTimeline(loaded);
       setSelectedVersionId(loaded.currentVersionId);
+      return loaded;
     } catch (error) {
       setTimeline(null);
       setSelectedVersionId(null);
@@ -290,11 +295,11 @@ export function MarkdownPreviewOverlay() {
     }
   }, [dirty, request, saving, selectedVersionId, versionLoading]);
 
-  const closeImmediately = useCallback(() => {
+  const closeImmediately = useCallback((restoreFocus = true) => {
     initialLoadSequenceRef.current += 1;
     setConfirmClose(false);
     setOpen(false);
-    window.setTimeout(() => returnFocusRef.current?.focus(), 220);
+    if (restoreFocus) window.setTimeout(() => returnFocusRef.current?.focus(), 220);
   }, []);
 
   const requestClose = useCallback(() => {
@@ -324,14 +329,27 @@ export function MarkdownPreviewOverlay() {
         window.dispatchEvent(new CustomEvent("lumetrace:file-space-snapshot", { detail: snapshot }));
       }
       if (request.hasVersionHistory && !isVisualFixture) {
-        await loadTaskTimeline(request);
+        const loaded = await loadTaskTimeline(request);
+        if (loaded) {
+          const notification = savedVersionNotification(request.fileId, request.name,
+            Math.max(request.currentVersion ?? 0, ...(timeline?.versions.map((version) => version.versionNumber) ?? [])),
+            loaded.versions);
+          setRequest((current) => current?.fileId === request.fileId
+            ? { ...current, versionCount: loaded.versions.length,
+                currentVersion: loaded.versions.find((version) => version.isCurrent)?.versionNumber ?? current.currentVersion }
+            : current);
+          if (notification && claimFirstVersionChange(notification)) {
+            setFirstVersionChange(notification);
+            setTimelineVisible(true);
+          }
+        }
       }
     } catch (error) {
       setSaveError(errorText(error));
     } finally {
       setSaving(false);
     }
-  }, [dirty, draft, historicalVersionSelected, loadTaskTimeline, request, saving]);
+  }, [dirty, draft, historicalVersionSelected, loadTaskTimeline, request, saving, timeline]);
 
   useEffect(() => {
     const markdownCardFromTarget = (target: EventTarget | null) => {
@@ -375,6 +393,7 @@ export function MarkdownPreviewOverlay() {
       setSaveError(null);
       setSaved(false);
       setConfirmClose(false);
+      setFirstVersionChange(null);
       setTimeline(null);
       setTimelineLoading(false);
       setTimelineError(null);
@@ -534,6 +553,21 @@ export function MarkdownPreviewOverlay() {
         </div>
       </header>
 
+      {firstVersionChange ? (
+        <div className="file-markdown-first-change" role="status" aria-live="polite">
+          <History size={16} aria-hidden="true" />
+          <div>
+            <strong>{t("fileSpace.versionNotification.firstTitle")}</strong>
+            <span>{t("fileSpace.versionNotification.firstDescription", { name: firstVersionChange.fileName })}</span>
+          </div>
+          <button type="button" disabled={dirty || saving} onClick={() => {
+            closeImmediately(false);
+            window.dispatchEvent(new CustomEvent(viewVersionChangeEvent, { detail: firstVersionChange }));
+          }}>{t("fileSpace.versionNotification.viewChanges")}</button>
+          <button type="button" className="file-markdown-first-change-dismiss" onClick={() => setFirstVersionChange(null)} aria-label={t("fileSpace.feedback.dismiss")}><X size={15} /></button>
+        </div>
+      ) : null}
+
       <div className={`file-markdown-preview-workspace file-preview-version-workspace${showVersionTimeline ? " has-version-timeline" : ""}`}>
         {hasVersionTimeline ? (
           <VersionTimelineRegion visible={showVersionTimeline}>
@@ -575,7 +609,7 @@ export function MarkdownPreviewOverlay() {
                         ).format(version.producedAt)}
                       </time>
                       <strong>
-                        v{version.versionNumber}
+                        <VersionName number={version.versionNumber} />
                         {version.isCurrent ? <span>{copy.currentVersion}</span> : null}
                       </strong>
                       <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
@@ -585,6 +619,7 @@ export function MarkdownPreviewOverlay() {
                 ))}
               </ol>
             ) : null}
+            {!timelineLoading && !timelineError ? <InitialVersionHint versions={timeline?.versions ?? null} /> : null}
             </aside>
           </VersionTimelineRegion>
         ) : null}
@@ -634,10 +669,9 @@ export function MarkdownPreviewOverlay() {
                 setSaveError(null);
               }}
               aria-label={copy.editorLabel}
-              spellCheck={false}
             />
           ) : (
-            <article className="file-markdown-document">
+            <article className="file-markdown-document" data-native-context-menu="true">
               {draft ? (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
@@ -671,7 +705,7 @@ export function MarkdownPreviewOverlay() {
             </div>
             <div className="file-markdown-discard-actions">
               <button type="button" onClick={() => setConfirmClose(false)}>{copy.keepEditing}</button>
-              <button ref={discardButtonRef} className="is-danger" type="button" onClick={closeImmediately}>{copy.discard}</button>
+              <button ref={discardButtonRef} className="is-danger" type="button" onClick={() => closeImmediately()}>{copy.discard}</button>
             </div>
           </div>
         </div>

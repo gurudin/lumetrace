@@ -21,6 +21,35 @@
   transform: none;
 }
 
+.file-markdown-first-change {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: var(--font-size-secondary);
+}
+.file-markdown-first-change > svg { flex: 0 0 auto; color: var(--highlight); }
+.file-markdown-first-change > div { flex: 1; min-width: 0; display: grid; gap: 3px; }
+.file-markdown-first-change strong { color: var(--text); font-size: inherit; font-weight: 600; }
+.file-markdown-first-change span { color: var(--text-muted); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
+.file-markdown-first-change button {
+  flex: 0 0 auto;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: var(--highlight);
+  color: var(--highlight-foreground);
+  font-size: var(--font-size-secondary);
+  cursor: pointer;
+}
+.file-markdown-first-change button:disabled { opacity: .5; cursor: default; }
+.file-markdown-first-change button:focus-visible { outline: 2px solid var(--highlight); outline-offset: 2px; }
+.file-markdown-first-change .file-markdown-first-change-dismiss { display: grid; place-items: center; padding: 4px 6px; background: transparent; color: var(--text-muted); }
+
 .file-markdown-preview-toolbar {
   display: flex;
   min-height: 60px;
@@ -399,12 +428,12 @@
 .file-markdown-document blockquote > :last-child { margin-bottom: 0; }
 
 .file-markdown-document a {
-  color: #356fc4;
+  color: var(--link-ink);
   text-decoration-color: color-mix(in srgb, currentColor 42%, transparent);
   text-underline-offset: 2px;
 }
 
-:root[data-theme="dark"] .file-markdown-document a { color: #8ab4f8; }
+:root[data-theme="dark"] .file-markdown-document a { color: var(--link-ink); }
 
 .file-markdown-document code {
   padding: 2px 5px;
@@ -522,8 +551,8 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  color: #a33e47;
-  background: color-mix(in srgb, #b3454d 8%, var(--surface));
+  color: var(--danger-ink);
+  background: color-mix(in srgb, var(--danger) 8%, var(--surface));
   font-size: var(--font-size-secondary);
 }
 
@@ -594,9 +623,9 @@
 }
 
 .file-markdown-discard-actions > button.is-danger {
-  border-color: #b3454d;
+  border-color: var(--danger-fill);
   color: #fff;
-  background: #b3454d;
+  background: var(--danger-fill);
 }
 
 .is-spinning { animation: file-markdown-spin 800ms linear infinite; }

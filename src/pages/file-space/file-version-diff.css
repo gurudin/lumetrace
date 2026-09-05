@@ -39,10 +39,8 @@
   font-weight: 650;
 }
 
-.file-version-diff-stats .is-added { color: #258148; }
-.file-version-diff-stats .is-removed { color: #c03b36; }
-:root[data-theme="dark"] .file-version-diff-stats .is-added { color: #66d28a; }
-:root[data-theme="dark"] .file-version-diff-stats .is-removed { color: #ff827b; }
+.file-version-diff-stats .is-added { color: var(--success-ink); }
+.file-version-diff-stats .is-removed { color: var(--danger-ink); }
 
 .file-version-diff-controls {
   display: grid;
@@ -106,7 +104,7 @@
   text-align: center;
 }
 
-.file-version-diff-state.is-error { color: var(--danger); }
+.file-version-diff-state.is-error { color: var(--danger-ink); }
 
 .file-version-diff-state > button {
   min-height: 28px;
@@ -164,18 +162,18 @@
 
 .file-version-diff-unified-line.is-added,
 .file-version-diff-split-side.is-added {
-  background: color-mix(in srgb, #34c759 13%, transparent);
+  background: color-mix(in srgb, var(--success) 13%, transparent);
 }
 
 .file-version-diff-unified-line.is-removed,
 .file-version-diff-split-side.is-removed {
-  background: color-mix(in srgb, #ff3b30 12%, transparent);
+  background: color-mix(in srgb, var(--danger) 12%, transparent);
 }
 
 .file-version-diff-unified-line.is-added > b,
-.file-version-diff-split-side.is-added > b { color: #258148; }
+.file-version-diff-split-side.is-added > b { color: var(--success-ink); }
 .file-version-diff-unified-line.is-removed > b,
-.file-version-diff-split-side.is-removed > b { color: #c03b36; }
+.file-version-diff-split-side.is-removed > b { color: var(--danger-ink); }
 
 .file-version-diff mark {
   color: inherit;
@@ -185,13 +183,13 @@
 .file-version-diff .is-added mark.is-added,
 .file-version-diff mark.is-added {
   border-radius: 3px;
-  background: color-mix(in srgb, #34c759 28%, transparent);
+  background: color-mix(in srgb, var(--success) 28%, transparent);
 }
 
 .file-version-diff .is-removed mark.is-removed,
 .file-version-diff mark.is-removed {
   border-radius: 3px;
-  background: color-mix(in srgb, #ff3b30 25%, transparent);
+  background: color-mix(in srgb, var(--danger) 25%, transparent);
 }
 
 .file-version-diff-omitted {

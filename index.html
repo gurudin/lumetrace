@@ -3,10 +3,147 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#101113" />
+    <meta name="theme-color" content="#ffffff" />
+    <script>
+      (() => {
+        try {
+          const savedTheme = localStorage.getItem("lumetrace.theme.preference")
+            ?? localStorage.getItem("lumetrace.theme");
+          const systemTheme = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+          const theme = savedTheme === "dark" || savedTheme === "light" ? savedTheme : systemTheme;
+          const savedAppearance = JSON.parse(localStorage.getItem("lumetrace.appearance") ?? "null");
+          const accent = typeof savedAppearance?.highlightColor === "string"
+            && /^#[0-9a-f]{6}$/i.test(savedAppearance.highlightColor)
+            ? savedAppearance.highlightColor
+            : "#0A84FF";
+          document.documentElement.dataset.theme = theme;
+          document.documentElement.style.colorScheme = theme;
+          document.documentElement.style.setProperty("--startup-accent", accent);
+          document.querySelector('meta[name="theme-color"]')
+            ?.setAttribute("content", theme === "dark" ? "#1c1c1e" : "#ffffff");
+        } catch {
+          // The startup surface still uses its system-theme fallback when storage is unavailable.
+        }
+      })();
+    </script>
+    <style>
+      :root {
+        --startup-background: #ffffff;
+        --startup-foreground: #202226;
+        --startup-secondary: #6e6e73;
+        --startup-track: #d8dbe0;
+        --startup-accent: #0a84ff;
+        font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Segoe UI", sans-serif;
+      }
+
+      :root[data-theme="dark"] {
+        --startup-background: #1c1c1e;
+        --startup-foreground: #f5f5f7;
+        --startup-secondary: #a1a1a6;
+        --startup-track: #454549;
+      }
+
+      html,
+      body,
+      #root {
+        width: 100%;
+        height: 100%;
+        margin: 0;
+      }
+
+      body {
+        overflow: hidden;
+        background: var(--startup-background);
+      }
+
+      .lume-trace-startup {
+        position: fixed;
+        z-index: 2147483647;
+        inset: 0;
+        display: grid;
+        place-items: center;
+        color: var(--startup-foreground);
+        background: var(--startup-background);
+        opacity: 1;
+        transition: opacity 160ms cubic-bezier(0.4, 0, 1, 1);
+      }
+
+      .lume-trace-startup[data-state="closing"] {
+        opacity: 0;
+        pointer-events: none;
+      }
+
+      .lume-trace-startup-content {
+        display: flex;
+        align-items: center;
+        flex-direction: column;
+        gap: 12px;
+        transform: translateY(-8px);
+        animation: lume-trace-startup-enter 240ms cubic-bezier(0.22, 1, 0.36, 1) both;
+      }
+
+      .lume-trace-startup-logo {
+        width: 72px;
+        height: 72px;
+        object-fit: contain;
+        filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.14));
+        user-select: none;
+        -webkit-user-drag: none;
+      }
+
+      .lume-trace-startup-name {
+        color: var(--startup-foreground);
+        font-size: 15px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+
+      .lume-trace-startup-spinner {
+        width: 18px;
+        height: 18px;
+        border: 2px solid var(--startup-track);
+        border-top-color: var(--startup-accent);
+        border-radius: 50%;
+        animation: lume-trace-startup-spin 760ms linear infinite;
+      }
+
+      @keyframes lume-trace-startup-enter {
+        from { opacity: 0; transform: translateY(-3px) scale(0.98); }
+        to { opacity: 1; transform: translateY(-8px) scale(1); }
+      }
+
+      @keyframes lume-trace-startup-spin {
+        to { transform: rotate(360deg); }
+      }
+
+      @media (prefers-reduced-motion: reduce) {
+        .lume-trace-startup {
+          transition-duration: 0ms;
+        }
+
+        .lume-trace-startup-content,
+        .lume-trace-startup-spinner {
+          animation: none;
+        }
+      }
+    </style>
     <title>Lume Trace</title>
   </head>
   <body>
+    <div
+      id="lume-trace-startup"
+      class="lume-trace-startup"
+      role="status"
+      aria-label="Lume Trace"
+      aria-busy="true"
+      data-tauri-drag-region
+    >
+      <div class="lume-trace-startup-content" data-tauri-drag-region>
+        <img class="lume-trace-startup-logo" src="/src-tauri/icons/icon.png" alt="" aria-hidden="true" />
+        <strong class="lume-trace-startup-name">Lume Trace</strong>
+        <span class="lume-trace-startup-spinner" aria-hidden="true"></span>
+      </div>
+    </div>
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

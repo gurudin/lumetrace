@@ -15,8 +15,6 @@ export interface FileSpaceAiSourceReference extends AiCitationSource {
   semanticSimilarity: number | null;
 }
 
-export const openBackgroundStatusEventName = "lumetrace:open-background-status";
-
 export type AiProgressPhase = "retrieving" | "generating" | "thinking";
 
 export interface AiProgress {

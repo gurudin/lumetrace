@@ -63,7 +63,8 @@ function isFocusableTarget(target: EventTarget | null) {
 
 function focusAdjacentElement(trigger: HTMLElement | null, backwards: boolean) {
   if (!trigger) return;
-  const focusableElements = Array.from(document.querySelectorAll<HTMLElement>(
+  const focusScope = trigger.closest<HTMLElement>('[role="dialog"][aria-modal="true"]') ?? document;
+  const focusableElements = Array.from(focusScope.querySelectorAll<HTMLElement>(
     "button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
   )).filter((element) => element.getClientRects().length > 0 && element.getAttribute("aria-hidden") !== "true");
   const triggerIndex = focusableElements.indexOf(trigger);

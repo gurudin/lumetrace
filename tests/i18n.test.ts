@@ -76,6 +76,42 @@ test("an explicit language preference overrides the system language", () => {
   assert.equal(resolveLanguagePreference("es-ES", ["ja-JP"]), "es-ES");
 });
 
+test("preferences center exposes appearance, language, AI, and background sections", () => {
+  assert.equal(zh.fileSpace.preferences.center.sections.general, "语言");
+  assert.equal(zh.fileSpace.preferences.center.sections.appearance, "外观");
+  assert.equal(zh.fileSpace.settings.aiServiceTitle, "AI 服务");
+  assert.equal(zh.fileSpace.settings.backgroundTitle, "后台任务与状态");
+  assert.equal(zh.fileSpace.preferences.center.theme, "主题");
+  assert.equal(zh.fileSpace.preferences.center.accentColor, "强调色");
+  assert.equal(zh.fileSpace.preferences.center.uiFont, "界面字体");
+  assert.equal(zh.fileSpace.preferences.center.resetAppearance, "恢复默认外观");
+  assert.equal(zh.fileSpace.settings.aiService.saved, "已保存");
+  assert.equal(zh.fileSpace.settings.aiService.showApiKey, "显示 API Key");
+  assert.equal(zh.fileSpace.settings.aiService.hideApiKey, "隐藏 API Key");
+  assert.equal(zh.fileSpace.settings.aiService.loadError.retry, "重新加载");
+});
+
+test("about and privacy surfaces describe the current local and connected data paths", () => {
+  assert.equal(zh.fileSpace.settings.privacy, "隐私与数据");
+  assert.match(zh.fileSpace.settings.aboutVersion, /{{version}}/);
+  assert.match(zh.fileSpace.settings.aboutCopyright, /{{year}}/);
+  assert.match(zh.fileSpace.settings.privacyDetails.localDescription, /全文索引/);
+  assert.match(zh.fileSpace.settings.privacyDetails.localDescription, /语义向量/);
+  assert.match(zh.fileSpace.settings.privacyDetails.localDescription, /应用级设置/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.cloud.description, /相关文件片段/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.localModel.description, /局域网/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.localModel.description, /公网/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.agentCli.description, /自身配置/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.modelDownload.description, /Hugging Face/);
+  assert.doesNotMatch(zh.fileSpace.settings.privacyDetails.network.modelDownload.description, /镜像|回退/);
+  assert.match(zh.fileSpace.settings.privacyDetails.credentialsDescription, /未加密/);
+  assert.match(zh.fileSpace.settings.privacyDetails.credentialsDescription, /不使用系统钥匙串/);
+  assert.match(zh.fileSpace.settings.privacyDetails.credentialsDescription, /备份中会移除/);
+  assert.match(zh.fileSpace.settings.privacyDetails.backupDescription, /未加密/);
+  assert.match(zh.fileSpace.settings.privacyDetails.backupDescription, /废纸篓/);
+  assert.match(zh.fileSpace.settings.privacyDetails.backupDescription, /AI 对话/);
+});
+
 test("Chinese file cards use the compact version badge copy", () => {
   assert.equal(zh.fileSpace.content.versionCount_one, "共 {{count}} 版");
   assert.equal(zh.fileSpace.content.versionCount_other, "共 {{count}} 版");
@@ -101,7 +137,7 @@ test("file area menu and text-file creation use the requested Chinese flow", () 
   assert.equal(zh.fileSpace.contentMenu.layoutOptions.adaptive, "自适应");
   assert.equal(zh.fileSpace.contentMenu.layoutOptions.list, "列表");
   assert.equal(zh.fileSpace.content.listColumns.name, "名称");
-  assert.equal(zh.fileSpace.content.listColumns.dimensions, "尺寸");
+  assert.equal(zh.fileSpace.content.listColumns.versions, "版本");
   assert.equal(zh.fileSpace.content.listColumns.extension, "扩展名");
   assert.equal(zh.fileSpace.content.listColumns.fileSize, "文件大小");
   assert.equal(zh.fileSpace.content.listColumns.addedAt, "添加日期");
@@ -161,6 +197,24 @@ test("local model settings expose a real connection flow", () => {
   assert.match(zh.fileSpace.settings.aiService.localConnection.idle.description, /测试连接/);
   assert.match(zh.fileSpace.settings.aiService.localConnection.passed.description, /选择模型/);
   assert.doesNotMatch(zh.fileSpace.settings.aiService.localPrivacy, /未来/);
+  for (const [locale, resource] of Object.entries(translations)) {
+    assert.doesNotMatch(
+      resource.fileSpace.settings.aiService.localConnection.error.description,
+      /OpenAI/i,
+      `${locale} local connection errors must stay protocol-neutral`,
+    );
+  }
+});
+
+test("experimental Agent CLI copy is available in every supported locale", () => {
+  for (const [locale, resource] of Object.entries(translations)) {
+    assert.ok(
+      resource.fileSpace.settings.aiService.experimental.trim().length > 0,
+      `${locale} must provide the experimental Agent CLI label`,
+    );
+  }
+  assert.equal(zh.fileSpace.settings.aiService.experimental, "实验性");
+  assert.equal(zhTW.fileSpace.settings.aiService.experimental, "實驗性");
 });
 
 test("AI no-result copy exposes an inline index-status action", () => {

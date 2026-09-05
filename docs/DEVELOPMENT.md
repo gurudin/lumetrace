@@ -26,10 +26,20 @@ The selected AI service settings and installed semantic-model setting are copied
 | Content extraction | `src-tauri/src/content_extractor.rs` | Plain-text, PDF, DOCX, XLSX, and PPTX text extraction with size limits. |
 | Semantic indexing | `src-tauri/src/semantic_search.rs` | Optional model installation, embedding queue, semantic ranking, status, pause, and retry. |
 | Agent CLI configuration | `src-tauri/src/agent_cli.rs` | CLI discovery, health checks, status classification, and persisted service settings. |
-| Local model service | `src-tauri/src/ai_service.rs` | OpenAI-compatible local-service connection checks, model discovery, normalized settings, and persistence. |
-| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, local-model, Hermes, or Codex execution, history, follow-up context, and citations. |
+| AI service adapters | `src-tauri/src/ai_service.rs` | Native Ollama, OpenAI-compatible LM Studio/cloud requests, model discovery, streaming responses, and persisted settings. |
+| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, AI-service execution, history, follow-up context, cancellation, and citations. |
 | File-space interface | `src/pages/file-space/` | Browser, previews, selection, drag/drop, search, settings, background status, version Diff, Trash, workspaces, and AI panel. |
 | Localization | `src/shared/i18n/locales/` | Eight synchronized language dictionaries. |
+
+## Database schema migrations
+
+Workspace databases use SQLite `PRAGMA user_version`. The current schema baseline is version `1`.
+
+- A database with `user_version = 0`, including a database created before explicit schema versioning, is upgraded through migration 1 when it is opened.
+- Each migration runs sequentially inside an `IMMEDIATE` transaction. Its schema changes and the new `user_version` are committed together, so a failed migration does not leave the database marked as upgraded.
+- A database newer than `CURRENT_SCHEMA_VERSION` is rejected rather than opened by older code.
+- Released migration numbers are append-only. Never edit or reuse an existing migration number; add a new migration and advance `CURRENT_SCHEMA_VERSION`.
+- Every schema change needs tests for a fresh database, an upgrade from the previously shipped version, rollback on failure where applicable, and reopen at the resulting version.
 
 ## Import and indexing pipeline
 
@@ -79,15 +89,17 @@ question + recent workspace history
   -> indexed lexical candidate retrieval
   -> optional local semantic chunk ranking
   -> bounded source excerpts with file/version IDs
-  -> selected OpenAI-compatible local/cloud model or read-only Agent CLI invocation
+  -> selected Ollama, OpenAI-compatible LM Studio/cloud, or read-only Agent CLI invocation
   -> persisted answer, duration, and source references
 ```
 
 Important boundaries:
 
-- Ollama and LM Studio are supported through OpenAI-compatible `/v1/models` and `/v1/chat/completions` endpoints. Thinking-mode response fields are normalized and only final answer content is shown.
-- Claude Code, Hermes, Codex, and OpenCode execute file-space questions non-interactively after an exact-marker connection check.
-- Cloud OpenAI-compatible APIs use model discovery before saving and execute through the same bounded RAG prompt path.
+- Ollama uses its native API: `GET /api/tags` for model discovery and `POST /api/chat` for streamed answers. Do not route it through the OpenAI-compatible adapter.
+- LM Studio uses the OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` endpoints.
+- Cloud APIs use OpenAI-compatible model discovery and Chat Completions with Bearer authentication before saving, then execute through the same bounded RAG prompt path.
+- Hermes and Codex are the currently supported Agent CLI answer paths. Claude Code and OpenCode have detection, configuration, and restricted invocation code, but remain **experimental** until their real end-to-end question-answering paths complete release acceptance.
+- An exact-marker CLI connection check verifies the probe process only. It must not be treated as proof that retrieval, prompt delivery, streaming output, persistence, and citations all work together.
 - Only retrieved excerpts are included in the selected AI-service prompt; the entire workspace is not sent.
 - Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
 - Every Agent CLI execution requires the stored permission to be `readOnly`.
@@ -152,4 +164,7 @@ OS-owned interactions such as Finder-to-app drag/drop, app-to-app drag-out, nati
 - team identity, roles, permissions, sharing, or concurrent collaboration;
 - NAS or cloud synchronization and conflict resolution;
 - Eagle-specific or other application-specific database migration;
-- OCR for image-only documents.
+- OCR for image-only documents;
+- release-accepted Windows and Linux packages.
+
+Claude Code and OpenCode are implemented as experimental Agent CLI adapters, not release-accepted AI answer paths.

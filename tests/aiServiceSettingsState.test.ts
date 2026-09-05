@@ -5,6 +5,7 @@ import {
   defaultAiServiceMode,
   defaultLocalBaseUrl,
   isAiServiceConfigured,
+  retainedCloudApiKeyVisibility,
 } from "../src/pages/file-space/aiServiceSettingsState.ts";
 
 test("AI service settings always opens on the local model tab", () => {
@@ -13,6 +14,13 @@ test("AI service settings always opens on the local model tab", () => {
 
 test("a new local model configuration does not assume a Base URL", () => {
   assert.equal(defaultLocalBaseUrl, "");
+});
+
+test("API key visibility resets outside the visible cloud settings page", () => {
+  assert.equal(retainedCloudApiKeyVisibility(true, "cloud", true), true);
+  assert.equal(retainedCloudApiKeyVisibility(true, "cloud", false), false);
+  assert.equal(retainedCloudApiKeyVisibility(true, "local", true), false);
+  assert.equal(retainedCloudApiKeyVisibility(false, "cloud", true), false);
 });
 
 test("a saved cloud model and API key count as an active AI service", () => {

@@ -41,6 +41,8 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
+import { useTheme } from "../../shared/theme/useTheme";
+import { dismissStartupSplash } from "../../shared/ui/startupSplash";
 import { usePresence } from "../../shared/ui/usePresence";
 import {
   FileSpaceAiSurface,
@@ -73,9 +75,11 @@ import {
   type JustifiedFileLayout,
 } from "./fileJustifiedLayout";
 import {
+  fileKeyboardShortcutAction,
   nextFileIdForKeyboard,
   type FileKeyboardDirection,
 } from "./fileKeyboardNavigation";
+import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
 import {
   fileCardMetadataText,
   fileDocumentArtworkFormat,
@@ -115,6 +119,8 @@ import {
   mergeVersionNotifications,
   type FileSpaceVersionNotification,
 } from "./versionNotification";
+import { claimFirstVersionChange, viewVersionChangeEvent } from "./firstVersionChange";
+import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import {
   inspectorVisibilityStorageKey,
   storedInspectorVisibility,
@@ -1131,8 +1137,12 @@ function FileArtwork({
         </>
       )}
       {shouldShowFileVersionBadge(file.versionCount) ? (
-        <span className="file-space-file-version-count">
-          {t("fileSpace.content.versionCount", { count: file.versionCount })}
+        <span
+          className="file-space-file-version-count"
+          title={t("fileSpace.content.versionCount", { count: file.versionCount })}
+        >
+          <Clock3 size={11} aria-hidden="true" />
+          <span>{t("fileSpace.content.versionCount", { count: file.versionCount })}</span>
         </span>
       ) : null}
     </span>
@@ -1185,6 +1195,7 @@ function FolderTreeChildren({
 
 export function FileSpacePage() {
   const { t, i18n } = useTranslation();
+  const { appearance } = useTheme();
   const [snapshot, setSnapshot] = useState<FileSpaceSnapshot>(emptySnapshot);
   const [workspaceDirectory, setWorkspaceDirectory] = useState<FileSpaceWorkspaceDirectory | null>(null);
   const [workspaceGeneration, setWorkspaceGeneration] = useState(0);
@@ -1257,6 +1268,7 @@ export function FileSpacePage() {
   const [importConflictFeedback, setImportConflictFeedback] = useState<IdenticalImportNotice | null>(null);
   const [versionNotifications, setVersionNotifications] = useState<FileSpaceVersionNotification[]>([]);
   const versionNotification = versionNotifications[0] ?? null;
+  const [firstVersionNotificationId, setFirstVersionNotificationId] = useState<string | null>(null);
   const [restoreConfirmationEntryId, setRestoreConfirmationEntryId] = useState<string | null>(null);
   const [isEmptyTrashConfirmationOpen, setEmptyTrashConfirmationOpen] = useState(false);
   const [emptyTrashEntryIds, setEmptyTrashEntryIds] = useState<string[]>([]);
@@ -1388,6 +1400,10 @@ export function FileSpacePage() {
   }), [locale]);
   const searchKey = `${query.trim()}\u0000${[...searchScopes].sort().join(",")}`;
   const globalSearchShortcut = globalSearchShortcutLabel();
+  const fileDetailsHeight = Math.max(
+    fileDetailsHeightFallback,
+    appearance.bodyFontSize * 2 + 12,
+  );
 
   const closeTimelinePanel = useCallback(() => {
     timelineRequestRef.current += 1;
@@ -2652,7 +2668,7 @@ export function FileSpacePage() {
             horizontalGap: fileLayoutHorizontalGap,
             verticalGap: fileLayoutVerticalGap,
             previewDetailsGap: filePreviewDetailsGap,
-            detailsHeight: fileDetailsHeightFallback,
+            detailsHeight: fileDetailsHeight,
             items: fileLayoutItems,
           });
       setFileJustifiedLayout((current) => (
@@ -2673,7 +2689,7 @@ export function FileSpacePage() {
       if (animationFrame) window.cancelAnimationFrame(animationFrame);
       resizeObserver.disconnect();
     };
-  }, [fileLayoutItems, fileLayoutMode, previewSize]);
+  }, [fileDetailsHeight, fileLayoutItems, fileLayoutMode, previewSize]);
 
   const updateFileVirtualViewport = useCallback(() => {
     const scroll = contentDropZoneRef.current;
@@ -2803,7 +2819,7 @@ export function FileSpacePage() {
     return () => { cancelled = true; };
   }, [selectedFile?.id, selectedFile?.updatedAt, selectedFile?.versionCount]);
 
-  const openTimeline = async (file: FileSpaceFileRecord) => {
+  const openTimeline = async (file: FileSpaceFileRecord, targetVersionId?: string) => {
     if (file.versionCount < 1 && inspectorTimeline?.fileId !== file.id) return;
     const requestId = timelineRequestRef.current + 1;
     timelineRequestRef.current = requestId;
@@ -2826,15 +2842,18 @@ export function FileSpacePage() {
       setInspectorTimeline(loaded);
       setTimelineFile(timelineFileRecord);
       setTimeline(loaded);
-      setSelectedVersionId(loaded.currentVersionId);
+      const selectedId = loaded.versions.some((version) => version.id === targetVersionId)
+        ? targetVersionId! : loaded.currentVersionId;
+      setSelectedVersionId(selectedId);
       setVersionPreview(null);
-      const comparison = defaultVersionComparison(loaded.versions, loaded.currentVersionId);
+      const comparison = defaultVersionComparison(loaded.versions, selectedId);
       setDiffBeforeVersionId(comparison?.beforeVersionId ?? null);
       setDiffAfterVersionId(comparison?.afterVersionId ?? null);
       setVersionDiffStatus(comparison ? "loading" : "idle");
       setVersionDiffResult(null);
       setVersionDiffError(null);
       setTimelinePanelOpen(true);
+      return true;
     } catch (timelineError) {
       if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
         setError(errorText(timelineError));
@@ -2913,17 +2932,16 @@ export function FileSpacePage() {
     setVersionNotifications((current) => current.slice(1));
   };
 
-  const viewVersionNotification = async () => {
-    const notification = versionNotifications[0];
+  const viewVersionNotification = async (notification = versionNotifications[0]) => {
     if (!notification) return;
-    dismissVersionNotification();
-    let latestSnapshot = snapshot;
-    let file = latestSnapshot.files.find((candidate) => candidate.id === notification.fileId);
+    let file = snapshot.files.find((candidate) => candidate.id === notification.fileId);
     if (!file && isTauri()) {
       try {
-        latestSnapshot = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
-        setSnapshot(latestSnapshot);
-        file = latestSnapshot.files.find((candidate) => candidate.id === notification.fileId);
+        const page = await invoke<FileSpaceFilePage>("list_file_space_files", {
+          request: { folderId: null, sort: "updatedDesc", typeFilter: "all", tagFilter: null,
+            updatedAfter: null, matchIds: [notification.fileId], cursor: null, limit: 1 },
+        });
+        [file] = page.files;
       } catch {
         file = undefined;
       }
@@ -2932,12 +2950,26 @@ export function FileSpacePage() {
       setError(t("fileSpace.versionNotification.unavailable"));
       return;
     }
-    setActiveCollection("files");
-    setCurrentFolderId(file.folderId);
-    setQuery("");
-    updateSelectedFiles(new Set([file.id]), file.id);
-    await openTimeline(file);
+    revealFileInWorkspace(file);
+    if (await openTimeline(file, notification.versionId)) {
+      setVersionNotifications((current) => current.filter((item) => item.versionId !== notification.versionId));
+    }
   };
+
+  useEffect(() => {
+    if (!importConflictFeedback && versionNotification && claimFirstVersionChange(versionNotification)) {
+      setFirstVersionNotificationId(versionNotification.versionId);
+    }
+  }, [importConflictFeedback, versionNotification]);
+
+  useEffect(() => {
+    const viewSavedChange = (event: Event) => {
+      const notification = (event as CustomEvent<FileSpaceVersionNotification>).detail;
+      if (notification?.fileId && notification.versionId) void viewVersionNotification(notification);
+    };
+    window.addEventListener(viewVersionChangeEvent, viewSavedChange);
+    return () => window.removeEventListener(viewVersionChangeEvent, viewSavedChange);
+  });
 
   const viewIdenticalImportFile = async () => {
     const notice = importConflictFeedback;
@@ -4575,6 +4607,50 @@ export function FileSpacePage() {
   };
 
   const handleFileGridKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const shortcutAction = fileKeyboardShortcutAction(event.nativeEvent);
+    if (shortcutAction) {
+      const target = event.target;
+      const editingText = target instanceof Element
+        && Boolean(target.closest("input, textarea, select, [contenteditable='true']"));
+      const interactionBlocked = editingText
+        || nativeDropBlocked
+        || Boolean(operationRef.current)
+        || Boolean(fileDragGestureRef.current)
+        || Boolean(marqueeGestureRef.current)
+        || Boolean(document.querySelector('[aria-modal="true"]'));
+      if (interactionBlocked || selectedFileIdsRef.current.size !== 1) return;
+
+      const [selectedFileId] = selectedFileIdsRef.current;
+      const file = selectedFileId ? visibleFileById.get(selectedFileId) : null;
+      if (!file) return;
+
+      if (shortcutAction === "trash") {
+        event.preventDefault();
+        event.stopPropagation();
+        requestDeleteFile(file.id);
+        return;
+      }
+
+      const cardButton = document.querySelector<HTMLButtonElement>(
+        `.file-space-file-card[data-file-id="${CSS.escape(file.id)}"] > button:first-child`,
+      );
+      if (!cardButton) return;
+      const route = resolveFileDoubleClickRoute(
+        file.name,
+        Boolean(cardButton.querySelector(".file-space-file-art.has-preview")),
+      );
+      if (route !== "internal-preview") return;
+      event.preventDefault();
+      event.stopPropagation();
+      cardButton.dispatchEvent(new MouseEvent("dblclick", {
+        bubbles: true,
+        cancelable: true,
+        button: 0,
+        view: window,
+      }));
+      return;
+    }
+
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "a") {
       event.preventDefault();
       const allIds = sortedVisibleFiles.map((file) => file.id);
@@ -5253,6 +5329,11 @@ export function FileSpacePage() {
 
   const rootView = fileSpaceRootView(loading, initialLoadError, snapshot.rootStatus);
 
+  useEffect(() => {
+    if (rootView === "loading") return undefined;
+    return dismissStartupSplash();
+  }, [rootView]);
+
   if (rootView === "loading") {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
@@ -5484,7 +5565,15 @@ export function FileSpacePage() {
               </>
             ) : isTrashView ? (
               <strong className="file-space-toolbar-title" title={workspaceTitle} data-trash-heading tabIndex={-1} data-tauri-drag-region>{workspaceTitle}</strong>
-            ) : null}
+            ) : (
+              <strong
+                className="file-space-toolbar-title"
+                title={t("fileSpace.sidebar.all")}
+                data-tauri-drag-region
+              >
+                {t("fileSpace.sidebar.all")}
+              </strong>
+            )}
           </div>
           {isTrashView ? <>
             <span className="file-space-toolbar-spacer" />
@@ -5642,7 +5731,7 @@ export function FileSpacePage() {
                 <i>{sortOption === "nameAsc" ? "↑" : "↓"}</i>
               ) : null}
             </span>
-            <span>{t("fileSpace.content.listColumns.dimensions")}</span>
+            <span>{t("fileSpace.content.listColumns.versions")}</span>
             <span className="file-space-file-list-date-heading">
               {t("fileSpace.content.listColumns.extension")}
               {sortOption === "typeAsc" ? <i>↑</i> : null}
@@ -5819,13 +5908,10 @@ export function FileSpacePage() {
                           <>
                             <span className="file-space-file-list-name">
                               <strong>{file.name}</strong>
-                              {shouldShowFileVersionBadge(file.versionCount) ? (
-                                <small>{t("fileSpace.content.versionCount", { count: file.versionCount })}</small>
-                              ) : null}
                             </span>
                             <span className="file-space-file-list-value">
-                              {imageDimensions?.width && imageDimensions.height
-                                ? `${imageDimensions.width} × ${imageDimensions.height}`
+                              {file.versionCount > 0
+                                ? t("fileSpace.content.versionCount", { count: file.versionCount })
                                 : "–"}
                             </span>
                             <span className="file-space-file-list-value">{extension || "–"}</span>
@@ -6033,8 +6119,10 @@ export function FileSpacePage() {
           >
             <span className="file-space-version-notification-icon"><Clock3 size={17} /></span>
             <div className="file-space-version-notification-copy">
-              <strong>{t("fileSpace.versionNotification.title")}</strong>
-              <p>{t("fileSpace.versionNotification.description", {
+              <strong>{t(versionNotification.versionId === firstVersionNotificationId
+                ? "fileSpace.versionNotification.firstTitle" : "fileSpace.versionNotification.title")}</strong>
+              <p>{t(versionNotification.versionId === firstVersionNotificationId
+                ? "fileSpace.versionNotification.firstDescription" : "fileSpace.versionNotification.description", {
                 name: versionNotification.fileName,
                 version: versionNotification.versionNumber,
               })}</p>
@@ -6044,7 +6132,7 @@ export function FileSpacePage() {
                 {t("fileSpace.versionNotification.acknowledge")}
               </button>
               <button className="is-primary" type="button" onClick={() => void viewVersionNotification()}>
-                {t("fileSpace.versionNotification.view")}
+                {t("fileSpace.versionNotification.viewChanges")}
               </button>
             </div>
           </div>
@@ -6106,7 +6194,7 @@ export function FileSpacePage() {
                     className={`${selectedVersionId === version.id ? "is-selected" : ""}${version.isCurrent ? " is-current" : ""}`}
                   >
                     <button type="button" disabled={timelineBusy} onClick={() => void selectTimelineVersion(version)}>
-                      <strong>v{version.versionNumber}{version.isCurrent ? ` · ${t("fileSpace.timeline.current")}` : ""}</strong>
+                      <strong><VersionName number={version.versionNumber} />{version.isCurrent ? ` · ${t("fileSpace.timeline.current")}` : ""}</strong>
                       <span>{version.origin === "task" ? version.taskTitle : t("fileSpace.timeline.userEdit")}</span>
                       {version.roundNumber ? <span>{t("fileSpace.timeline.round", { count: version.roundNumber })} · {version.cellName}</span> : null}
                       <small>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(version.producedAt)}</small>
@@ -6116,9 +6204,10 @@ export function FileSpacePage() {
                     ) : null}
                   </div>
                 ))}
+                <InitialVersionHint versions={timeline.versions} />
               </section>
               <section className="file-space-version-preview">
-                <FileVersionDiff
+                {timeline.versions.length > 1 ? <FileVersionDiff
                   versions={timeline.versions}
                   beforeVersionId={diffBeforeVersionId}
                   afterVersionId={diffAfterVersionId}
@@ -6129,7 +6218,7 @@ export function FileSpacePage() {
                   onChangeAfter={setDiffAfterVersionId}
                   onSwap={swapComparedVersions}
                   onRetry={() => setVersionDiffRetryToken((token) => token + 1)}
-                />
+                /> : null}
                 <h3>{t("fileSpace.timeline.historicalContent")}</h3>
                 {timelineBusy ? <p>{t("fileSpace.timeline.loading")}</p> : versionPreview !== null ? <pre>{versionPreview}</pre> : <p>{t("fileSpace.timeline.noTextPreview")}</p>}
                 <h3>{t("fileSpace.timeline.operations")}</h3>

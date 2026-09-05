@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import "./text-preview-overlay.css";
 
 interface TextPreviewRequest {
@@ -229,7 +230,7 @@ export function TextPreviewOverlay() {
                       <li key={version.id} className={`${selectedVersionId === version.id ? "is-selected" : ""}${version.isCurrent ? " is-current" : ""}`}>
                         <button type="button" aria-pressed={selectedVersionId === version.id} disabled={loading} onClick={() => void selectVersion(version)}>
                           <time dateTime={new Date(version.producedAt).toISOString()}>{new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(version.producedAt)}</time>
-                          <strong>v{version.versionNumber}{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
+                          <strong><VersionName number={version.versionNumber} />{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
                           <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
                           {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
                         </button>
@@ -237,6 +238,7 @@ export function TextPreviewOverlay() {
                     ))}
                   </ol>
                 ) : null}
+            {!timelineLoading && !timelineError ? <InitialVersionHint versions={timeline?.versions ?? null} /> : null}
             </aside>
           </VersionTimelineRegion>
         ) : null}
@@ -252,7 +254,7 @@ export function TextPreviewOverlay() {
         <main className="file-text-preview-body">
           {loading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={22} /><span>{copy.loading}</span></div>
             : loadError ? <div className="file-text-preview-state is-error"><AlertTriangle size={22} /><strong>{copy.loadError}</strong><span>{loadError}</span><button type="button" onClick={() => void (selectedVersion ? selectVersion(selectedVersion, true) : loadCurrent(request))}>{copy.retry}</button></div>
-              : content ? <pre>{content}</pre> : <p>{copy.empty}</p>}
+              : content ? <pre data-native-context-menu="true">{content}</pre> : <p>{copy.empty}</p>}
         </main>
       </div>
     </div>

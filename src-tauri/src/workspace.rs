@@ -1,4 +1,5 @@
 use crate::{
+    ai_service::{cloud_ai_is_configured, CLOUD_AI_API_KEY_KEY, CLOUD_AI_SETTINGS_KEY},
     database::{self, Database, DatabaseLocation},
     file_space::{
         self, configure_storage_root_record, emit_import_progress,
@@ -19,12 +20,16 @@ use uuid::Uuid;
 
 const REGISTRY_FILE_NAME: &str = "workspaces.json";
 const REGISTRY_VERSION: u32 = 1;
-const SHARED_SETTING_KEYS: [&str; 4] = [
+const SHARED_SETTING_KEYS: [&str; 6] = [
     "ai.agent_cli",
+    CLOUD_AI_SETTINGS_KEY,
+    CLOUD_AI_API_KEY_KEY,
     "ai.local_llm",
     "ai.service_mode",
     "semantic_search.model_id",
 ];
+type SharedSettingRecord = (String, String, i64);
+type CloudSettingPair = [SharedSettingRecord; 2];
 
 fn now_millis() -> i64 {
     std::time::SystemTime::now()
@@ -406,7 +411,7 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
         let mut statement = connection
             .prepare(
                 "SELECT key, value, updated_at FROM app_settings
-                 WHERE key IN (?1, ?2, ?3, ?4)",
+                 WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6)",
             )
             .map_err(|error| format!("Unable to prepare shared settings: {error}"))?;
         statement
@@ -415,7 +420,9 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
                     SHARED_SETTING_KEYS[0],
                     SHARED_SETTING_KEYS[1],
                     SHARED_SETTING_KEYS[2],
-                    SHARED_SETTING_KEYS[3]
+                    SHARED_SETTING_KEYS[3],
+                    SHARED_SETTING_KEYS[4],
+                    SHARED_SETTING_KEYS[5]
                 ],
                 |row| {
                     Ok((
@@ -437,12 +444,14 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
         .map_err(|error| format!("Unable to begin copying shared settings: {error}"))?;
     transaction
         .execute(
-            "DELETE FROM app_settings WHERE key IN (?1, ?2, ?3, ?4)",
+            "DELETE FROM app_settings WHERE key IN (?1, ?2, ?3, ?4, ?5, ?6)",
             params![
                 SHARED_SETTING_KEYS[0],
                 SHARED_SETTING_KEYS[1],
                 SHARED_SETTING_KEYS[2],
-                SHARED_SETTING_KEYS[3]
+                SHARED_SETTING_KEYS[3],
+                SHARED_SETTING_KEYS[4],
+                SHARED_SETTING_KEYS[5]
             ],
         )
         .map_err(|error| format!("Unable to synchronize shared settings: {error}"))?;
@@ -458,6 +467,91 @@ fn copy_shared_settings(source: &Database, destination: &Database) -> Result<(),
     transaction
         .commit()
         .map_err(|error| format!("Unable to finish copying shared settings: {error}"))
+}
+
+fn cloud_setting_pair(database: &Database) -> Result<Option<CloudSettingPair>, String> {
+    if !cloud_ai_is_configured(database)? {
+        return Ok(None);
+    }
+    let connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let mut statement = connection
+        .prepare(
+            "SELECT key, value, updated_at FROM app_settings
+             WHERE key IN (?1, ?2)",
+        )
+        .map_err(|error| format!("Unable to prepare cloud AI settings: {error}"))?;
+    let records = statement
+        .query_map(
+            params![CLOUD_AI_SETTINGS_KEY, CLOUD_AI_API_KEY_KEY],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, i64>(2)?,
+                ))
+            },
+        )
+        .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
+        .map_err(|error| format!("Unable to load cloud AI settings: {error}"))?;
+    if records.len() != 2 {
+        return Ok(None);
+    }
+    let cloud = records
+        .iter()
+        .find(|(key, _, _)| key == CLOUD_AI_SETTINGS_KEY)
+        .cloned();
+    let api_key = records
+        .iter()
+        .find(|(key, _, _)| key == CLOUD_AI_API_KEY_KEY)
+        .cloned();
+    Ok(cloud.zip(api_key).map(|(cloud, api_key)| [cloud, api_key]))
+}
+
+fn cloud_setting_pair_updated_at(settings: &CloudSettingPair) -> i64 {
+    settings
+        .iter()
+        .map(|(_, _, updated_at)| *updated_at)
+        .max()
+        .unwrap_or_default()
+}
+
+fn restore_cloud_settings(database: &Database, settings: CloudSettingPair) -> Result<(), String> {
+    let mut connection = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
+    let transaction = connection
+        .transaction()
+        .map_err(|error| format!("Unable to begin restoring cloud AI settings: {error}"))?;
+    for (key, value, updated_at) in settings {
+        transaction
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, ?3)
+                 ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
+                params![key, value, updated_at],
+            )
+            .map_err(|error| format!("Unable to restore a cloud AI setting: {error}"))?;
+    }
+    transaction
+        .commit()
+        .map_err(|error| format!("Unable to finish restoring cloud AI settings: {error}"))
+}
+
+fn restore_missing_cloud_settings(
+    database: &Database,
+    fallback: &Database,
+) -> Result<bool, String> {
+    if cloud_setting_pair(database)?.is_some() {
+        return Ok(false);
+    }
+    let Some(settings) = cloud_setting_pair(fallback)? else {
+        return Ok(false);
+    };
+    restore_cloud_settings(database, settings)?;
+    Ok(true)
 }
 
 fn canonical_existing_path(
@@ -675,6 +769,7 @@ pub fn initialize(app: &AppHandle) -> Result<(Database, WorkspaceRegistry), Stri
         .map_err(|error| format!("Unable to resolve application data directory: {error}"))?;
     let registry = WorkspaceRegistry::load_or_create(data_directory)?;
     let current = registry.current_workspace()?;
+    let mut newest_cloud_settings: Option<CloudSettingPair> = None;
     for workspace in registry.workspaces()? {
         if workspace.id == current.id {
             continue;
@@ -685,6 +780,17 @@ pub fn initialize(app: &AppHandle) -> Result<(Database, WorkspaceRegistry), Stri
             workspace.id,
         )?;
         database::recover_interrupted_ai_turns(&inactive_database)?;
+        if let Some(settings) = cloud_setting_pair(&inactive_database)? {
+            let is_newer = newest_cloud_settings
+                .as_ref()
+                .is_none_or(|current_settings| {
+                    cloud_setting_pair_updated_at(&settings)
+                        > cloud_setting_pair_updated_at(current_settings)
+                });
+            if is_newer {
+                newest_cloud_settings = Some(settings);
+            }
+        }
     }
     let database = database::open_workspace_database(
         current.database_path.clone(),
@@ -692,6 +798,11 @@ pub fn initialize(app: &AppHandle) -> Result<(Database, WorkspaceRegistry), Stri
         current.id.clone(),
     )?;
     database::recover_interrupted_ai_turns(&database)?;
+    if cloud_setting_pair(&database)?.is_none() {
+        if let Some(settings) = newest_cloud_settings {
+            restore_cloud_settings(&database, settings)?;
+        }
+    }
     Ok((database, registry))
 }
 
@@ -706,6 +817,7 @@ fn switch_database(
         workspace.artifact_store_path.clone(),
         workspace.id.clone(),
     )?;
+    restore_missing_cloud_settings(database, &target)?;
     copy_shared_settings(database, &target)?;
     drop(target);
     database.switch_workspace(workspace.location())?;
@@ -1221,6 +1333,8 @@ mod tests {
             let connection = source.0.lock().unwrap();
             for (key, value) in [
                 ("ai.agent_cli", "agent"),
+                ("ai.cloud", "cloud"),
+                ("ai.cloud_api_key", "cloud-key"),
                 ("ai.local_llm", "local"),
                 ("ai.service_mode", "local"),
                 ("semantic_search.model_id", "semantic"),
@@ -1254,6 +1368,8 @@ mod tests {
             copied,
             vec![
                 ("ai.agent_cli".to_owned(), "agent".to_owned()),
+                ("ai.cloud".to_owned(), "cloud".to_owned()),
+                ("ai.cloud_api_key".to_owned(), "cloud-key".to_owned()),
                 ("ai.local_llm".to_owned(), "local".to_owned()),
                 ("ai.service_mode".to_owned(), "local".to_owned()),
                 ("semantic_search.model_id".to_owned(), "semantic".to_owned()),
@@ -1261,6 +1377,60 @@ mod tests {
         );
         drop(source);
         drop(destination);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn missing_cloud_settings_are_restored_before_workspace_sync() {
+        let root = std::env::temp_dir().join(format!(
+            "lumetrace-restore-cloud-settings-{}",
+            Uuid::new_v4()
+        ));
+        let current = database::open_for_test(&root.join("current.sqlite3")).unwrap();
+        let fallback = database::open_for_test(&root.join("fallback.sqlite3")).unwrap();
+        current
+            .0
+            .lock()
+            .unwrap()
+            .execute(
+                "INSERT INTO app_settings (key, value, updated_at) VALUES ('ai.service_mode', 'cloud', 7)",
+                [],
+            )
+            .unwrap();
+        {
+            let connection = fallback.0.lock().unwrap();
+            for (key, value) in [
+                (
+                    "ai.cloud",
+                    r#"{"provider":"openai","baseUrl":"https://example.test/v1","model":"test-model"}"#,
+                ),
+                ("ai.cloud_api_key", "test-cloud-key"),
+            ] {
+                connection
+                    .execute(
+                        "INSERT INTO app_settings (key, value, updated_at) VALUES (?1, ?2, 7)",
+                        params![key, value],
+                    )
+                    .unwrap();
+            }
+        }
+
+        assert!(restore_missing_cloud_settings(&current, &fallback).unwrap());
+        copy_shared_settings(&current, &fallback).unwrap();
+
+        for database in [&current, &fallback] {
+            let connection = database.0.lock().unwrap();
+            let cloud_count: i64 = connection
+                .query_row(
+                    "SELECT COUNT(*) FROM app_settings WHERE key IN ('ai.cloud', 'ai.cloud_api_key')",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert_eq!(cloud_count, 2);
+        }
+        drop(current);
+        drop(fallback);
         fs::remove_dir_all(root).unwrap();
     }
 

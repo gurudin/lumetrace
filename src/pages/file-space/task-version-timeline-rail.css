@@ -22,7 +22,7 @@
 .file-task-version-list button > span { overflow: hidden; font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 .file-task-version-state { display: grid; min-height: 150px; padding: 16px; place-items: center; align-content: center; gap: 8px; text-align: center; }
 .file-task-version-state span { max-width: 100%; font-size: var(--font-size-xs); overflow-wrap: anywhere; }
-.file-task-version-state.is-error { color: var(--danger); }
+.file-task-version-state.is-error { color: var(--danger-ink); }
 .file-task-version-state button { min-height: 28px; padding: 0 9px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); cursor: pointer; }
 .file-task-version-rail.is-dark { border-right-color: rgba(255,255,255,.1); color: rgba(255,255,255,.62); background: rgba(255,255,255,.035); }
 .file-task-version-rail.is-dark .file-task-version-list button:hover,

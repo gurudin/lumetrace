@@ -1,6 +1,7 @@
 import { Clock3, File, FolderOpen, Info, Tag } from "lucide-react";
 import type { ReactNode } from "react";
 import { useTranslation } from "react-i18next";
+import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 
 export interface InspectorFileRecord {
   id: string;
@@ -167,7 +168,7 @@ export function FileSpaceInspector({
                   <li key={version.id}>
                     <Clock3 size={15} />
                     <span>
-                      <strong>v{version.versionNumber} · {version.origin === "task" ? (version.taskTitle ?? t("fileSpace.content.taskArtifact")) : t("fileSpace.timeline.userEdit")}</strong>
+                      <strong><VersionName number={version.versionNumber} /> · {version.origin === "task" ? (version.taskTitle ?? t("fileSpace.content.taskArtifact")) : t("fileSpace.timeline.userEdit")}</strong>
                       <small>{dateFormatter.format(version.producedAt)}</small>
                     </span>
                   </li>
@@ -176,6 +177,7 @@ export function FileSpaceInspector({
             ) : (
               <p className="file-space-inspector-muted">{t("fileSpace.inspector.noVersions")}</p>
             )}
+            {!currentTimelineLoading ? <InitialVersionHint versions={currentTimeline?.versions ?? null} /> : null}
           </section>
         </div>
       ) : null}

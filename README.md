@@ -1,91 +1,114 @@
 # Lume Trace
 
-**A local-first file workspace with automatic version history, full-text and semantic search, and source-grounded AI answers.**
+**A local-first macOS file workspace for organizing, finding, understanding, and tracing files.**
 
 [简体中文](docs/README.zh-CN.md) · [Development guide](docs/DEVELOPMENT.md) · [Import and migration boundary](docs/MIGRATION.md)
 
-Lume Trace helps individuals and small teams organize files without giving up ownership of the physical files. Files remain in a user-selected folder, while Lume Trace maintains local metadata, version snapshots, search indexes, Trash, and AI conversation history.
+Lume Trace keeps the physical files in a folder you choose. It adds local workspace metadata, version snapshots, full-text and semantic indexes, Trash, and source-grounded AI conversations without turning the folder into a cloud drive.
 
-## Available today
+The current `0.1.x` release scope is a free, single-user macOS application. Windows and Linux packages have not yet gone through release acceptance.
 
-### Local-first file workspaces
+## What is available now
+
+### File workspaces
 
 - Create an empty workspace or initialize one from an existing physical folder.
-- Keep multiple custom-named workspaces and switch between them.
-- Isolate each workspace's database, version snapshots, search index, Trash, and AI history.
-- Preserve the physical file root when removing a workspace. The user separately chooses whether Lume Trace's managed database and version data should also be deleted.
-- Export a workspace backup and restore it into the current workspace at a newly created physical root; the previous physical root remains on disk.
+- Create, rename, remove, and switch between multiple workspaces. File records, search indexes, versions, Trash, and AI history are isolated by workspace.
+- Keep the physical folder under the user's ownership. Removing a workspace never silently deletes that folder.
+- Browse large workspaces through bounded database queries and viewport rendering instead of loading every file into the interface.
+- Exclude dot-prefixed hidden directories when initializing recursively from an existing folder.
 
-### Traceable file versions
+### Files, versions, and recovery
 
-- Create an initial version for every imported file.
-- Detect file changes made by external applications and create new versions in the background.
-- Notify the user when an external edit becomes a new version and link directly to its timeline.
-- Browse version history, preview historical content, switch the current version, and compare text versions with line- and word-level diffs.
-- Resolve same-name imports explicitly by adding the incoming file as the latest version or keeping it as a separately renamed file. Identical files are skipped and can be located directly.
+- Create Markdown and plain-text files, import files and folders, rename or move items, assign Tags, multi-select, and drag files between folders or out to another application.
+- Use adaptive-grid or list layout, manual ordering, time ordering, file preview, Quick Look-style `Space` preview, and system-app opening.
+- Create an initial snapshot for imported files and detect later changes made by another application in the background.
+- Inspect a file's version timeline, preview historical versions, make an older version current, and compare supported text versions with line- and word-level Diff.
+- Handle a same-folder, same-name import explicitly: merge it as the latest version or keep it under a new name. Identical content is skipped and the existing file can be located directly.
+- Move deleted items to Trash, restore them to their recorded location, empty Trash after confirmation, and automatically purge entries after 30 days.
+- Export and restore Lume Trace backups. Backup and application-specific migration boundaries are documented in [docs/MIGRATION.md](docs/MIGRATION.md).
 
-### Search and local knowledge indexing
+### Search and local knowledge index
 
-- Open global search with `Command + K` on macOS or `Alt + K` on Windows and Linux.
-- Search indexed filenames, extracted body text, and Tags with SQLite FTS5.
-- Optionally install the bundled multilingual embedding model for local semantic ranking; embeddings and indexes stay on the device.
-- Extract readable content asynchronously after import so the file operation can finish without waiting for indexing.
-- Extract text from PDF, DOCX, XLSX, PPTX, Markdown, plain text, source code, and common structured-text formats.
-- Inspect, pause, resume, and retry content extraction and semantic-index background work.
+- Open global search with `Command + K` on macOS (`Alt + K` is implemented for Windows and Linux keyboard behavior).
+- Search indexed file names, extracted body text, and Tags with SQLite FTS5.
+- Extract readable text asynchronously after import; file registration does not wait for content extraction or semantic indexing.
+- Extract text from PDF, DOCX, XLSX, PPTX, Markdown, TXT, source code, and common structured-text formats. Image-only documents require OCR and are not currently supported.
+- Optionally download the Multilingual E5 Small model from Hugging Face and build a local semantic index. Extracted text, chunks, embeddings, and the ANN index remain on the Mac.
+- Inspect background extraction and semantic-index work, including progress, pause/resume, failure details, and retry.
 
 ### Lumie · AI File Assistant
 
-- Ask questions across the current file workspace instead of searching one file at a time.
-- Retrieve a bounded set of relevant local excerpts, send only those excerpts to the selected AI service, and show the referenced files below the answer.
-- Preserve file and version references with each answer.
-- Store conversation history per workspace and include recent context in follow-up questions, including after an application restart.
-- Run questions through an OpenAI-compatible local model service (Ollama or LM Studio), a configured cloud OpenAI-compatible API, or Claude Code, Hermes, Codex, and OpenCode with read-only file permission.
+Lumie uses retrieval-augmented generation (RAG) over the active workspace:
 
-### File management and recovery
+1. Lume Trace retrieves a bounded set of indexed passages locally.
+2. Only those passages, source metadata, and recent conversation context are sent to the configured answer service.
+3. The answer and its referenced files and versions are stored in the active workspace.
 
-- Browse files in adaptive-grid or list layouts with pagination and viewport virtualization for large workspaces.
-- Create Markdown and TXT files; rename, move, multi-select, drag between folders, drag out to other applications, Tag, preview, and open files with system applications.
-- Preview images, PDF, Markdown, and text inside Lume Trace.
-- Move deleted items to Trash, restore them to their original locations after confirmation, or empty Trash manually after a second confirmation.
-- Automatically purge Trash entries 30 days after they were deleted.
+It does not ask a model to open and scan every file. Conversation history survives application restarts and can be used for follow-up questions.
 
-### Desktop experience
+#### AI service support
 
-- Light, dark, and system-following appearances.
-- Eight interface languages: Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, and Spanish.
-- macOS-oriented desktop interaction built with Tauri 2, while retaining Windows and Linux keyboard behavior where implemented.
+| Service | Interface used by Lume Trace | Status |
+| --- | --- | --- |
+| Ollama | Native `GET /api/tags` and `POST /api/chat` | Supported |
+| LM Studio | OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` | Supported |
+| Cloud API | OpenAI-compatible model discovery and Chat Completions with a locally stored API key | Supported |
+| Hermes CLI | Non-interactive, read-only RAG prompt | Supported |
+| Codex CLI | Non-interactive, read-only sandbox with only the prepared RAG prompt | Supported |
+| Claude Code | Restricted non-interactive RAG prompt | **Experimental** |
+| OpenCode | Restricted non-interactive RAG prompt | **Experimental** |
+
+AI configuration is optional. File browsing, version tracking, full-text search, and the local semantic index do not require an answer model. A CLI connection check is not the same as an end-to-end answer guarantee; the two experimental CLI paths still require broader real-environment acceptance.
+
+### macOS experience
+
+- Use light, dark, or system-following appearance with the selected accent color applied consistently.
+- Use familiar macOS selection, keyboard, drag-and-drop, contextual-menu, sheet, and preview behavior.
+- Choose among Simplified Chinese, Traditional Chinese, English, Japanese, Korean, German, French, and Spanish.
+
+## Local data and privacy boundary
+
+- Physical files stay in the selected workspace folder.
+- Workspace metadata, versions, extracted text, indexes, Trash records, and AI history are stored locally.
+- Installing the E5 model downloads model files but does not upload workspace content.
+- When an AI service is used, retrieved excerpts are disclosed to that selected local service, cloud endpoint, or Agent CLI. The entire workspace is not sent as one request.
+- Cloud API credentials are stored in the local workspace database and excluded from exported backups. Backup archives themselves are not encrypted.
 
 ## Current boundaries
 
-The following are **not current product capabilities**:
+The first free release does not provide:
 
-- team accounts, permissions, real-time collaboration, NAS synchronization, or cloud synchronization;
-- one-click migration from Eagle or another application's private database;
-- OCR for image-only documents.
+- team accounts, member permissions, sharing, or real-time collaboration;
+- NAS synchronization, cloud synchronization, or cross-device conflict resolution;
+- Eagle-specific or other application-private database migration;
+- OCR for image-only PDFs or images;
+- release-accepted Windows or Linux installers.
 
-## How the data flow works
+Claude Code and OpenCode are visible as experimental integrations; they should not be presented as fully accepted execution paths yet.
 
-1. Lume Trace registers a physical file and returns control to the interface.
-2. Background workers extract readable text and update the local FTS5 index.
-3. If the optional semantic model is installed, the worker also creates local embeddings.
-4. Search queries use indexed candidates instead of loading or scanning every file in the interface.
-5. AI questions retrieve relevant excerpts from the current workspace before invoking the selected local, cloud, or Agent CLI service, then persist the answer and its sources locally.
+## First run
+
+1. Create a workspace and choose a new or existing physical folder.
+2. For an existing folder, let registration finish; content extraction continues as background work.
+3. Use `Command + K` for full-text search. Install the optional E5 model in Semantic Search if meaning-based recall is needed.
+4. Configure one supported AI service only if you want source-grounded questions, summaries, or analysis.
 
 ## Development
 
 Requirements:
 
-- Node.js and npm
-- Rust toolchain
-- Tauri 2 platform prerequisites
-- An OpenAI-compatible local or cloud model service, or a supported Agent CLI, when testing AI question answering
+- Node.js and npm;
+- Rust toolchain;
+- Tauri 2 prerequisites for macOS;
+- an AI service only when testing the optional AI question-answering path.
 
 ```bash
 npm install
 npm run tauri:dev
 ```
 
-Development builds must be run with `npm run tauri:dev`; do not install them into `/Applications`.
+Run development builds with `npm run tauri:dev`; do not install them into `/Applications`.
 
 Useful checks:
 
@@ -93,7 +116,10 @@ Useful checks:
 npm test
 npm run typecheck
 npm run build
-cd src-tauri && cargo test --lib && cargo check && cargo fmt --check
+cd src-tauri
+cargo fmt --check
+cargo test --lib
+cargo check
 ```
 
-See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for module boundaries, background processing, and verification guidance.
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for code boundaries, database migrations, background processing, and verification guidance.
