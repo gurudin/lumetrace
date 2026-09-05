@@ -59,6 +59,17 @@ pub(crate) struct CloudAiRuntimeSettings {
     api_key: String,
 }
 
+#[cfg(test)]
+pub(crate) fn loopback_cloud_fixture(base_url: String) -> CloudAiRuntimeSettings {
+    assert!(base_url.starts_with("http://127.0.0.1:"));
+    CloudAiRuntimeSettings {
+        provider: "openai".into(),
+        base_url,
+        model: "synthetic-model".into(),
+        api_key: "synthetic-loopback-only".into(),
+    }
+}
+
 impl std::fmt::Debug for CloudAiRuntimeSettings {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter

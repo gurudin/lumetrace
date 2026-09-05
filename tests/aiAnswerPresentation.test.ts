@@ -93,6 +93,11 @@ test("AI progress events update only their active request", () => {
 });
 
 test("AI progress phases map to distinct waiting copy", () => {
+  for (const phase of ["planning", "locating", "versions", "comparing"] as const) {
+    assert.equal(aiPendingStatusKey(phase), phase);
+    assert.equal(shouldAcceptAiProgress("current", { requestId: "current", phase, thinking: "" }), true);
+    assert.equal(shouldAcceptAiProgress("other", { requestId: "current", phase, thinking: "" }), false);
+  }
   assert.equal(aiPendingStatusKey("retrieving"), "asking");
   assert.equal(aiPendingStatusKey("generating"), "generating");
   assert.equal(aiPendingStatusKey("thinking"), "thinking");

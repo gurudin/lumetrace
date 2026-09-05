@@ -39,11 +39,11 @@ The current `0.1.x` release scope is a free, single-user macOS application. Wind
 
 ### Lumie · AI File Assistant
 
-Lumie uses retrieval-augmented generation (RAG) over the active workspace:
+Lumie routes natural-language questions over the active workspace:
 
-1. Lume Trace retrieves a bounded set of indexed passages locally.
-2. Only those passages, source metadata, and recent conversation context are sent to the configured answer service.
-3. The answer and its referenced files and versions are stored in the active workspace.
+1. The selected AI service interprets the question using bounded recent context and file identities.
+2. File/version questions use local metadata queries. Content questions use bounded RAG passages. Historical comparisons read only the requested snapshots and send their local Diff for summarization.
+3. The answer, references, and target file/version-range context are stored in the active workspace. Version counts come directly from recorded database rows.
 
 It does not ask a model to open and scan every file. Conversation history survives application restarts and can be used for follow-up questions.
 
@@ -72,7 +72,7 @@ AI configuration is optional. File browsing, version tracking, full-text search,
 - Physical files stay in the selected workspace folder.
 - Workspace metadata, versions, extracted text, indexes, Trash records, and AI history are stored locally.
 - Installing the E5 model downloads model files but does not upload workspace content.
-- When an AI service is used, retrieved excerpts are disclosed to that selected local service, cloud endpoint, or Agent CLI. The entire workspace is not sent as one request.
+- On a user-initiated AI query, the question, bounded recent context, target file identities, and relevant excerpts or requested version Diff may be sent to the selected local service, cloud endpoint, or Agent CLI. The entire workspace is not sent as one request.
 - Cloud API credentials are stored in the local workspace database and excluded from exported backups. Backup archives themselves are not encrypted.
 
 ## Current boundaries

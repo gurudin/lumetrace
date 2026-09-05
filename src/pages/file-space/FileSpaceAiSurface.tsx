@@ -110,6 +110,8 @@ const aiErrorKeys: Record<string, string> = {
   ai_service_unsupported: "serviceUnsupported",
   ai_read_only_required: "readOnlyRequired",
   ai_search_failed: "searchFailed",
+  ai_query_plan_invalid: "queryPlanInvalid",
+  ai_query_answer_empty: "queryAnswerEmpty",
   ai_no_sources: "noSources",
   ai_hermes_unavailable: "hermesUnavailable",
   ai_hermes_timeout: "hermesTimeout",
@@ -380,7 +382,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const [turns, setTurns] = useState<FileSpaceAiTurn[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [pendingErrorCode, setPendingErrorCode] = useState<string | null>(null);
-  const [pendingPhase, setPendingPhase] = useState<AiProgressPhase>("retrieving");
+  const [pendingPhase, setPendingPhase] = useState<AiProgressPhase>("planning");
   const [pendingThinking, setPendingThinking] = useState("");
   const [requestStartedAt, setRequestStartedAt] = useState<number | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -574,7 +576,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     setQuestion("");
     setRequestState("asking");
     setPendingErrorCode(null);
-    setPendingPhase("retrieving");
+    setPendingPhase("planning");
     setPendingThinking("");
     if (retryTurnId) {
       setTurns((current) => current.map((turn) => (
@@ -615,7 +617,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     } finally {
       requestInFlightRef.current = false;
       activeRequestIdRef.current = null;
-      setPendingPhase("retrieving");
+      setPendingPhase("planning");
       setPendingThinking("");
       setRequestStartedAt(null);
       setRequestState("idle");

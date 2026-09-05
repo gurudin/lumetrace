@@ -99,9 +99,13 @@ test("about and privacy surfaces describe the current local and connected data p
   assert.match(zh.fileSpace.settings.privacyDetails.localDescription, /语义向量/);
   assert.match(zh.fileSpace.settings.privacyDetails.localDescription, /应用级设置/);
   assert.match(zh.fileSpace.settings.privacyDetails.network.cloud.description, /相关文件片段/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.cloud.description, /主动查询/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.cloud.description, /文件名\/ID/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.cloud.description, /指定版本 Diff/);
   assert.match(zh.fileSpace.settings.privacyDetails.network.localModel.description, /局域网/);
   assert.match(zh.fileSpace.settings.privacyDetails.network.localModel.description, /公网/);
   assert.match(zh.fileSpace.settings.privacyDetails.network.agentCli.description, /自身配置/);
+  assert.match(zh.fileSpace.settings.privacyDetails.network.agentCli.description, /指定版本 Diff/);
   assert.match(zh.fileSpace.settings.privacyDetails.network.modelDownload.description, /Hugging Face/);
   assert.doesNotMatch(zh.fileSpace.settings.privacyDetails.network.modelDownload.description, /镜像|回退/);
   assert.match(zh.fileSpace.settings.privacyDetails.credentialsDescription, /未加密/);

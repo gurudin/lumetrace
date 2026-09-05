@@ -30,6 +30,9 @@ use std::{
 use tauri::{Emitter, Manager};
 use uuid::Uuid;
 
+#[path = "ai_query.rs"]
+mod query;
+
 const QUESTION_MAX_CHARACTERS: usize = 2_000;
 const REQUEST_ID_MAX_CHARACTERS: usize = 128;
 const SOURCE_EXCERPT_MAX_CHARACTERS: usize = 1_100;
@@ -156,6 +159,9 @@ pub struct FileSpaceAiTurn {
     question: String,
     answer: String,
     sources: Vec<FileSpaceAiSource>,
+    // Persist structured identity/range locally; it is not a rendered answer.
+    #[serde(skip)]
+    context: Option<query::TurnContext>,
     status: String,
     error_code: Option<String>,
     duration_ms: Option<i64>,
@@ -291,7 +297,7 @@ fn load_ai_history_record(
     let mut statement = connection
         .prepare(
             "SELECT id, question, answer, sources_json, status, error_code,
-                    duration_ms, created_at, updated_at
+                    duration_ms, created_at, updated_at, context_json
              FROM file_space_ai_turns
              ORDER BY sequence DESC
              LIMIT ?1",
@@ -309,6 +315,7 @@ fn load_ai_history_record(
                 row.get::<_, Option<i64>>(6)?,
                 row.get::<_, i64>(7)?,
                 row.get::<_, i64>(8)?,
+                row.get::<_, String>(9)?,
             ))
         })
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
@@ -326,6 +333,7 @@ fn load_ai_history_record(
                 duration_ms,
                 created_at,
                 updated_at,
+                context_json,
             )| {
                 let sources = serde_json::from_str::<Vec<FileSpaceAiSource>>(&sources_json)
                     .map_err(|error| format!("Unable to read AI conversation sources: {error}"))?;
@@ -335,6 +343,7 @@ fn load_ai_history_record(
                     question,
                     answer,
                     sources,
+                    context: serde_json::from_str(&context_json).unwrap_or(None),
                     status,
                     error_code,
                     duration_ms,
@@ -385,7 +394,7 @@ fn begin_ai_turn_record(
             .execute(
                 "UPDATE file_space_ai_turns
                  SET answer = '', sources_json = '[]', status = 'pending',
-                     error_code = NULL, duration_ms = NULL, updated_at = ?2
+                     error_code = NULL, duration_ms = NULL, context_json = 'null', updated_at = ?2
                  WHERE id = ?1",
                 params![turn_id, now],
             )
@@ -411,6 +420,7 @@ fn begin_ai_turn_record(
         question: question.to_owned(),
         answer: String::new(),
         sources: Vec::new(),
+        context: None,
         status: "pending".to_owned(),
         error_code: None,
         duration_ms: None,
@@ -427,6 +437,8 @@ fn complete_ai_turn_record(
 ) -> Result<FileSpaceAiTurn, String> {
     let sources_json = serde_json::to_string(&sources)
         .map_err(|error| format!("Unable to serialize AI answer sources: {error}"))?;
+    let context_json = serde_json::to_string(&turn.context)
+        .map_err(|error| format!("Unable to serialize AI file context: {error}"))?;
     let updated_at = now_millis();
     let duration_ms = updated_at.saturating_sub(turn.updated_at).max(0);
     let connection = database
@@ -437,9 +449,16 @@ fn complete_ai_turn_record(
         .execute(
             "UPDATE file_space_ai_turns
              SET answer = ?2, sources_json = ?3, status = 'completed',
-                 error_code = NULL, duration_ms = ?4, updated_at = ?5
+                 error_code = NULL, duration_ms = ?4, updated_at = ?5, context_json = ?6
              WHERE id = ?1 AND status = 'pending'",
-            params![turn.id, answer, sources_json, duration_ms, updated_at],
+            params![
+                turn.id,
+                answer,
+                sources_json,
+                duration_ms,
+                updated_at,
+                context_json
+            ],
         )
         .map_err(|error| format!("Unable to save the AI answer: {error}"))?;
     if changed != 1 {
@@ -468,13 +487,14 @@ fn fail_ai_turn_record(
         .execute(
             "UPDATE file_space_ai_turns
              SET answer = '', sources_json = '[]', status = 'failed',
-                 error_code = ?2, updated_at = ?3
+                 error_code = ?2, updated_at = ?3, context_json = 'null'
              WHERE id = ?1 AND status = 'pending'",
             params![turn.id, error_code, updated_at],
         )
         .map_err(|error| format!("Unable to save the failed AI turn: {error}"))?;
     turn.answer.clear();
     turn.sources.clear();
+    turn.context = None;
     turn.status = "failed".to_owned();
     turn.error_code = Some(error_code.to_owned());
     turn.updated_at = updated_at;
@@ -1533,8 +1553,52 @@ fn run_opencode(
     }
 }
 
+fn run_executor(
+    executor: &AiExecutor,
+    prompt: &str,
+    cancellation: &AtomicBool,
+    on_thinking: &mut dyn FnMut(&str),
+) -> Result<String, String> {
+    ensure_ai_request_active(cancellation)?;
+    match executor {
+        AiExecutor::Claude(executable) => run_claude(executable, prompt, cancellation, on_thinking),
+        AiExecutor::Hermes(executable) => run_hermes(executable, prompt, cancellation, on_thinking),
+        AiExecutor::Codex(executable) => run_codex(executable, prompt, cancellation, on_thinking),
+        AiExecutor::OpenCode(executable) => {
+            run_opencode(executable, prompt, cancellation, on_thinking)
+        }
+        AiExecutor::Cloud(settings) => run_cloud_ai(
+            settings,
+            prompt,
+            &|| cancellation.load(Ordering::Acquire),
+            on_thinking,
+        ),
+        AiExecutor::Local(settings) => run_local_llm(
+            settings,
+            prompt,
+            &|| cancellation.load(Ordering::Acquire),
+            on_thinking,
+        ),
+    }
+}
+
+fn history_before_retry(
+    mut history: Vec<FileSpaceAiTurn>,
+    retry_turn_id: Option<&str>,
+) -> Vec<FileSpaceAiTurn> {
+    if let Some(index) = retry_turn_id.and_then(|id| history.iter().position(|turn| turn.id == id))
+    {
+        history.truncate(index);
+    } else if retry_turn_id.is_some() {
+        // A retry older than the loaded window must not inherit newer targets.
+        history.clear();
+    }
+    history
+}
+
 fn ask_file_space_ai_blocking(
     app: tauri::AppHandle,
+    location: database::DatabaseLocation,
     question: String,
     retry_turn_id: Option<String>,
     request_id: String,
@@ -1545,11 +1609,10 @@ fn ask_file_space_ai_blocking(
     let database = {
         let _operation =
             lock_file_space_operations().map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
-        let current = app.state::<Database>().location()?;
         database::open_workspace_database(
-            current.database_path,
-            current.artifact_store_path,
-            current.workspace_id,
+            location.database_path,
+            location.artifact_store_path,
+            location.workspace_id,
         )?
     };
     let executor = match load_active_ai_service_record(&database)? {
@@ -1563,141 +1626,51 @@ fn ask_file_space_ai_blocking(
         Some(ActiveAiService::Local(settings)) => AiExecutor::Local(settings),
         None => return Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned()),
     };
-    let history = load_ai_history_record(&database, HISTORY_RETURN_LIMIT)
+    let history = history_before_retry(
+        load_ai_history_record(&database, HISTORY_RETURN_LIMIT)
+            .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?,
+        retry_turn_id.as_deref(),
+    );
+    let mut turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
-    let turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
-        .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
-    let answer_result = (|| {
-        ensure_ai_request_active(&cancellation)?;
-        emit_file_space_ai_progress(&app, &request_id, "retrieving", "");
-        let retrieval_plan = build_retrieval_plan(&question, &history);
-        let semantic_runtime = app.state::<SemanticSearchRuntime>();
-        let (prompt, sources) = {
+    let result = query::answer_question(
+        &database,
+        &question,
+        &history,
+        &cancellation,
+        &mut |prompt| {
+            run_executor(&executor, prompt, &cancellation, &mut |thinking| {
+                emit_file_space_ai_progress(&app, &request_id, "thinking", thinking);
+            })
+        },
+        &mut |query, target| {
+            // Only the content route can reach RAG. A named-file scope is
+            // restrictive, not merely a ranking hint for unrelated files.
+            let plan = build_retrieval_plan(query, &[]);
+            let preferred = target.map(|f| vec![f.file_id.clone()]).unwrap_or_default();
+            let runtime = app.state::<SemanticSearchRuntime>();
             let chunks = retrieve_ai_context_chunks(
                 &database,
-                semantic_runtime.inner(),
-                &retrieval_plan.query,
-                &retrieval_plan.search_queries,
-                &retrieval_plan.preferred_file_ids,
+                runtime.inner(),
+                &plan.query,
+                &plan.search_queries,
+                &preferred,
             )
             .map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
-            ensure_ai_request_active(&cancellation)?;
-            let sources = prepare_sources(chunks);
-            if sources.is_empty() {
-                return Err(ERROR_NO_SOURCES.to_owned());
-            }
-            (build_prompt(&question, &sources, &history), sources)
-        };
-        emit_file_space_ai_progress(&app, &request_id, "generating", "");
-        let generated_answer = match &executor {
-            AiExecutor::Claude(executable) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_claude(executable, &prompt, &cancellation, &mut emit_thinking)?
-            }
-            AiExecutor::Hermes(executable) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_hermes(executable, &prompt, &cancellation, &mut emit_thinking)?
-            }
-            AiExecutor::Codex(executable) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_codex(executable, &prompt, &cancellation, &mut emit_thinking)?
-            }
-            AiExecutor::OpenCode(executable) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_opencode(executable, &prompt, &cancellation, &mut emit_thinking)?
-            }
-            AiExecutor::Cloud(settings) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_cloud_ai(
-                    settings,
-                    &prompt,
-                    &|| cancellation.load(Ordering::Acquire),
-                    &mut emit_thinking,
-                )?
-            }
-            AiExecutor::Local(settings) => {
-                let progress_app = app.clone();
-                let progress_request_id = request_id.clone();
-                let mut emit_thinking = move |thinking: &str| {
-                    emit_file_space_ai_progress(
-                        &progress_app,
-                        &progress_request_id,
-                        "thinking",
-                        thinking,
-                    );
-                };
-                run_local_llm(
-                    settings,
-                    &prompt,
-                    &|| cancellation.load(Ordering::Acquire),
-                    &mut emit_thinking,
-                )?
-            }
-        };
-        ensure_ai_request_active(&cancellation)?;
-        let (generated_answer, evidence_roles) = parse_generated_answer(&generated_answer);
-        let answer = sanitize_citations(&generated_answer, sources.len());
-        if answer.trim().is_empty() {
-            return Err(match executor {
-                AiExecutor::Claude(_) => ERROR_CLAUDE_EMPTY.to_owned(),
-                AiExecutor::Hermes(_) => ERROR_HERMES_EMPTY.to_owned(),
-                AiExecutor::Codex(_) => ERROR_CODEX_EMPTY.to_owned(),
-                AiExecutor::OpenCode(_) => ERROR_OPENCODE_EMPTY.to_owned(),
-                AiExecutor::Cloud(_) => crate::ai_service::ERROR_CLOUD_AI_EMPTY.to_owned(),
-                AiExecutor::Local(_) => crate::ai_service::ERROR_LOCAL_LLM_EMPTY.to_owned(),
-            });
+            let chunks = chunks
+                .into_iter()
+                .filter(|chunk| target.is_none_or(|f| chunk.file_id == f.file_id))
+                .collect();
+            Ok(prepare_sources(chunks))
+        },
+        &mut |phase| emit_file_space_ai_progress(&app, &request_id, phase, ""),
+    );
+    match result {
+        Ok(result) => {
+            turn.context = Some(result.context);
+            complete_ai_turn_record(&database, turn, result.answer, result.sources)
+                .map_err(|_| ERROR_HISTORY_FAILED.to_owned())
         }
-        let sources = finalize_sources(&answer, sources, evidence_roles.as_ref());
-        Ok((answer, sources))
-    })();
-    match answer_result {
-        Ok((answer, sources)) => complete_ai_turn_record(&database, turn, answer, sources)
-            .map_err(|_| ERROR_HISTORY_FAILED.to_owned()),
         Err(error_code) => fail_ai_turn_record(&database, turn, &error_code)
             .map_err(|_| ERROR_HISTORY_FAILED.to_owned()),
     }
@@ -1711,12 +1684,20 @@ pub async fn ask_file_space_ai(
     request_id: String,
 ) -> Result<FileSpaceAiTurn, String> {
     let request_id = validated_request_id(request_id)?;
+    // Pin the workspace when accepting the request, before queueing the worker.
+    let location = app.state::<Database>().location()?;
     let cancellation = app.state::<FileSpaceAiRuntime>().register(&request_id)?;
     let cleanup_app = app.clone();
     let cleanup_request_id = request_id.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        let result =
-            ask_file_space_ai_blocking(app, question, retry_turn_id, request_id, cancellation);
+        let result = ask_file_space_ai_blocking(
+            app,
+            location,
+            question,
+            retry_turn_id,
+            request_id,
+            cancellation,
+        );
         cleanup_app
             .state::<FileSpaceAiRuntime>()
             .finish(&cleanup_request_id);
@@ -1769,6 +1750,7 @@ mod tests {
             question: question.to_owned(),
             answer: answer.to_owned(),
             sources: vec![source(1, "evidence")],
+            context: None,
             status: status.to_owned(),
             error_code: None,
             duration_ms: None,

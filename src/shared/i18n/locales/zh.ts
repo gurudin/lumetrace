@@ -260,7 +260,7 @@ export const zh = {
         modelPlaceholder: "请先测试连接",
         cloudModelPlaceholder: "后端接入后可选择",
         cloudPrivacy: "API Key 仅保存在本机设置中，不会写入导出的备份。当前页面只验证连接，不会发送文件内容。",
-        localPrivacy: "仅将本地检索命中的原文片段发送给所选本地模型服务，不会发送整个文件空间；数据是否离开设备取决于该服务的部署位置。",
+        localPrivacy: "主动查询时，按需发送问题、有限上下文、文件信息、相关片段或指定版本 Diff，不发送整个文件空间；数据是否离开本机取决于服务地址。",
         agentCliPrivacy: "所选 CLI 使用自身的登录与模型设置。Lume Trace 不读取 CLI 凭证；保存的只是 CLI 类型和文件权限。",
         uiOnlyTitle: "当前仅提供配置界面",
         uiOnlyDescription: "连接、密钥安全存储与模型调用将在后端接入后启用。",
@@ -301,7 +301,7 @@ export const zh = {
         network: {
           cloud: {
             title: "云端 API",
-            description: "发送当前问题、检索到的相关文件片段和必要的对话上下文到你配置的 API 地址。",
+            description: "主动查询时，将问题、有限近期上下文、文件名/ID、相关文件片段或指定版本 Diff 发送到你配置的 API 地址。",
           },
           localModel: {
             title: "本地模型",
@@ -309,7 +309,7 @@ export const zh = {
           },
           agentCli: {
             title: "Agent CLI",
-            description: "将问题和检索上下文交给所选 CLI；CLI 是否访问网络由其自身配置和服务商决定。",
+            description: "主动查询时，将问题、有限上下文、文件信息、相关片段或指定版本 Diff 交给所选 CLI；是否访问网络由其自身配置和服务商决定。",
           },
           modelDownload: {
             title: "模型下载",
@@ -502,7 +502,7 @@ export const zh = {
       configurationLoading: "正在读取 AI 服务配置…",
       configurationLoadingShort: "读取中",
       configuredTitle: "{{provider}} 已配置",
-      configuredDescription: "本地检索后，仅将命中的相关片段交给当前 AI 服务回答。",
+      configuredDescription: "按问题查询文件信息、版本记录或正文，并提供来源。",
       configuredComposerPlaceholder: "向 Lumie 提问…",
       configurationErrorTitle: "无法读取 AI 服务配置",
       configurationErrorDescription: "本地数据库暂时无法读取，请重试。",
@@ -515,6 +515,10 @@ export const zh = {
       unsupportedConfigurationDescription: "Agent CLI 方式支持 Claude Code、Hermes、Codex 与 OpenCode，并且必须选择只读访问。",
       questionLabel: "你的问题",
       answerLabel: "Lumie 回答",
+      planning: "正在理解问题…",
+      locating: "正在定位文件…",
+      versions: "正在查询版本记录…",
+      comparing: "正在比较历史版本…",
       asking: "正在检索相关文件…",
       generating: "正在等待 AI 响应…",
       thinking: "正在思考…",
@@ -539,6 +543,8 @@ export const zh = {
       sourceCitationCount: "引用 {{count}} 处",
       composerLabel: "向 Lumie 提问",
       errors: {
+        queryPlanInvalid: "AI 未返回有效的查询方案，请重新提问或更换模型。",
+        queryAnswerEmpty: "AI 未返回有效答案，请重试。",
         questionEmpty: "请输入问题。",
         questionTooLong: "问题过长，请缩短后重试。",
         requestInvalid: "本次请求无效，请重新发送。",
@@ -587,7 +593,7 @@ export const zh = {
         projectDecisions: "查找项目决策",
         compareVersions: "对比两个版本",
       },
-      workspaceNotice: "仅将本地检索命中的相关片段发送给当前 AI 服务，并提供文件与版本引用",
+      workspaceNotice: "主动查询时，按需提供问题、上下文、文件信息、相关片段或指定版本 Diff。",
       open: "打开 AI 操作",
       selectFile: "请先选择一个文件",
       closePanel: "关闭 AI 面板",

@@ -260,7 +260,7 @@ export const en = {
         modelPlaceholder: "Test the connection first",
         cloudModelPlaceholder: "Available after backend integration",
         cloudPrivacy: "The API key is stored only in local settings and is excluded from exported backups. This screen only verifies the connection and does not send file content.",
-        localPrivacy: "Only locally retrieved source excerpts are sent to the selected local model service, never the entire file space. Whether data leaves this device depends on where that service is hosted.",
+        localPrivacy: "On your query, sends the question, bounded context, file metadata, relevant excerpts or selected version Diff as needed, not the whole workspace. Whether data leaves this device depends on the service address.",
         agentCliPrivacy: "The selected CLI uses its own account and model settings. Lume Trace does not read CLI credentials; only the CLI type and file permission are saved.",
         uiOnlyTitle: "Configuration interface only",
         uiOnlyDescription: "Connections, secure key storage, and model calls will be enabled with the backend integration.",
@@ -301,7 +301,7 @@ export const en = {
         network: {
           cloud: {
             title: "Cloud API",
-            description: "Sends your question, relevant retrieved file excerpts, and necessary conversation context to the API address you configure.",
+            description: "On your query, sends the question, bounded recent context, file names/IDs, relevant file excerpts or selected version Diff to your configured API address.",
           },
           localModel: {
             title: "Local model",
@@ -309,7 +309,7 @@ export const en = {
           },
           agentCli: {
             title: "Agent CLI",
-            description: "Passes the question and retrieved context to the selected CLI. Its own configuration and provider determine whether it accesses the network.",
+            description: "On your query, passes the question, bounded context, file metadata, excerpts or selected version Diff to the selected CLI. Its own configuration and provider determine network access.",
           },
           modelDownload: {
             title: "Model download",
@@ -502,7 +502,7 @@ export const en = {
       configurationLoading: "Loading AI service settings…",
       configurationLoadingShort: "Loading",
       configuredTitle: "{{provider}} is configured",
-      configuredDescription: "After local retrieval, only matching excerpts are sent to the active AI service for the answer.",
+      configuredDescription: "Queries file metadata, version records, or content according to your question, with sources.",
       configuredComposerPlaceholder: "Ask Lumie…",
       configurationErrorTitle: "Couldn’t load AI service settings",
       configurationErrorDescription: "The local database is temporarily unavailable. Please try again.",
@@ -515,6 +515,10 @@ export const en = {
       unsupportedConfigurationDescription: "Agent CLI mode supports Claude Code, Hermes, Codex, and OpenCode with read-only access.",
       questionLabel: "Your question",
       answerLabel: "Lumie answer",
+      planning: "Understanding the question…",
+      locating: "Locating the file…",
+      versions: "Querying version records…",
+      comparing: "Comparing historical versions…",
       asking: "Searching relevant files…",
       generating: "Waiting for AI response…",
       thinking: "Thinking…",
@@ -539,6 +543,8 @@ export const en = {
       sourceCitationCount: "Cited {{count}}×",
       composerLabel: "Ask Lumie",
       errors: {
+        queryPlanInvalid: "AI returned an invalid query plan. Rephrase the question or choose another model.",
+        queryAnswerEmpty: "AI returned no valid answer. Please try again.",
         questionEmpty: "Enter a question.",
         questionTooLong: "The question is too long. Shorten it and try again.",
         requestInvalid: "This request is invalid. Please send it again.",
@@ -587,7 +593,7 @@ export const en = {
         projectDecisions: "Find project decisions",
         compareVersions: "Compare two versions",
       },
-      workspaceNotice: "Only locally retrieved excerpts are sent to the active AI service, with file and version citations",
+      workspaceNotice: "Queries share only the needed question, context, file metadata, excerpts or selected version Diff.",
       open: "Open AI actions",
       selectFile: "Select a file first",
       closePanel: "Close AI panel",

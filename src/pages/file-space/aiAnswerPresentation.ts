@@ -15,7 +15,7 @@ export interface FileSpaceAiSourceReference extends AiCitationSource {
   semanticSimilarity: number | null;
 }
 
-export type AiProgressPhase = "retrieving" | "generating" | "thinking";
+export type AiProgressPhase = "planning" | "locating" | "versions" | "comparing" | "retrieving" | "generating" | "thinking";
 
 export interface AiProgress {
   requestId: string;
@@ -29,10 +29,11 @@ export function shouldAcceptAiProgress(
 ) {
   return Boolean(activeRequestId)
     && progress.requestId === activeRequestId
-    && ["retrieving", "generating", "thinking"].includes(progress.phase);
+    && ["planning", "locating", "versions", "comparing", "retrieving", "generating", "thinking"].includes(progress.phase);
 }
 
 export function aiPendingStatusKey(phase: AiProgressPhase) {
+  if (phase === "planning" || phase === "locating" || phase === "versions" || phase === "comparing") return phase;
   if (phase === "generating") return "generating";
   if (phase === "thinking") return "thinking";
   return "asking";

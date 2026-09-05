@@ -27,7 +27,7 @@ The selected AI service settings and installed semantic-model setting are copied
 | Semantic indexing | `src-tauri/src/semantic_search.rs` | Optional model installation, embedding queue, semantic ranking, status, pause, and retry. |
 | Agent CLI configuration | `src-tauri/src/agent_cli.rs` | CLI discovery, health checks, status classification, and persisted service settings. |
 | AI service adapters | `src-tauri/src/ai_service.rs` | Native Ollama, OpenAI-compatible LM Studio/cloud requests, model discovery, streaming responses, and persisted settings. |
-| AI question answering | `src-tauri/src/ai_qa.rs` | Workspace retrieval, bounded prompt construction, AI-service execution, history, follow-up context, cancellation, and citations. |
+| AI question answering | `src-tauri/src/ai_qa.rs`, `src-tauri/src/ai_query.rs` | Semantic query planning, read-only file/version routing, bounded RAG, shared AI-service execution, persisted file/range context, cancellation, and citations. |
 | Local file metadata queries | `src-tauri/src/file_query.rs` | Indexed name/path lookup, bounded background catalog backfill, and recorded-version counts without reading document bodies. |
 | File-space interface | `src/pages/file-space/` | Browser, previews, selection, drag/drop, search, settings, background status, version Diff, Trash, workspaces, and AI panel. |
 | Localization | `src/shared/i18n/locales/` | Eight synchronized language dictionaries. |
@@ -85,32 +85,36 @@ When changing file-card click, double-click, selection, or drag behavior, preser
 
 ## AI File Assistant
 
-The local `lookup_file_space_file_names` and `get_file_space_file_version_summary` commands expose file identity and recorded-version metadata independently of full-text or semantic extraction. Lookup reports an updating catalog until the initial background backfill is complete, preserves same-name candidates, and bounds returned results. Version counts come from actual records, not the highest version number or text inside the file. These local commands and the local historical-Diff backend are not yet connected to the AI query router; chat still uses the retrieval path below.
+The local `lookup_file_space_file_names` and `get_file_space_file_version_summary` commands expose file identity and recorded-version metadata independently of full-text or semantic extraction. AI queries use the same local lookup and metadata helpers. Lookup reports an updating catalog until the initial background backfill is complete, preserves same-name candidates, and bounds returned results. Version counts come from actual records, not the highest version number or text inside the file.
 
 The current supported execution path is:
 
 ```text
-question + recent workspace history
-  -> indexed lexical candidate retrieval
-  -> optional local semantic chunk ranking
-  -> bounded source excerpts with file/version IDs
-  -> selected Ollama, OpenAI-compatible LM Studio/cloud, or read-only Agent CLI invocation
-  -> persisted answer, duration, and source references
+question + bounded recent questions + persisted file/range context
+  -> selected AI service produces a validated, read-only JSON query plan
+  -> name/path/context ID resolves the target (ambiguity asks for clarification)
+     -> file/version metadata: indexed SQL, deterministic answer, no body or vector lookup
+     -> historical comparison: read selected snapshots, compute bounded local Diff, summarize
+     -> content question: bounded lexical/semantic passage retrieval, summarize
+  -> persist answer, duration, sources, workspace/file IDs and version range
 ```
 
 Important boundaries:
 
 - Ollama uses its native API: `GET /api/tags` for model discovery and `POST /api/chat` for streamed answers. Do not route it through the OpenAI-compatible adapter.
 - LM Studio uses the OpenAI-compatible `GET /v1/models` and `POST /v1/chat/completions` endpoints.
-- Cloud APIs use OpenAI-compatible model discovery and Chat Completions with Bearer authentication before saving, then execute through the same bounded RAG prompt path.
+- Cloud APIs use OpenAI-compatible model discovery and Chat Completions with Bearer authentication before saving, then use the same query router as local models and Agent CLIs.
 - Hermes and Codex are the currently supported Agent CLI answer paths. Claude Code and OpenCode have detection, configuration, and restricted invocation code, but remain **experimental** until their real end-to-end question-answering paths complete release acceptance.
 - An exact-marker CLI connection check verifies the probe process only. It must not be treated as proof that retrieval, prompt delivery, streaming output, persistence, and citations all work together.
-- Only retrieved excerpts are included in the selected AI-service prompt; the entire workspace is not sent.
-- Follow-up questions use persisted recent turns and preferred source files. AI history is scoped to the active workspace and survives restart.
+- Only user-initiated queries invoke the selected service. Planning sends the current question, up to six bounded recent questions, and up to eight target identities/ranges, not the full catalog or document bodies. Content answers send retrieved excerpts; requested version comparisons send only the selected Diff, with bounded recent conversation context. The entire workspace and all historical snapshots are never sent as one request.
+- Follow-up file IDs and version ranges are stored with the completed turn in `context_json`. IDs are revalidated against the pinned workspace; renamed files retain identity, deleted files are not substituted, and new explicit targets replace previous ones. Actual counts are re-queried each time. Retrying an older turn does not inherit later context.
+- Invalid plans fail explicitly without silently falling back to RAG. Counts need one model planning call and a local database query; content and Diff answers use an additional model call. Historical versions are not re-embedded. Snapshot/resource failures do not fall back to another file.
 - Every Agent CLI execution requires the stored permission to be `readOnly`.
-- Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the prompt built from retrieved RAG excerpts, recent conversation context, and source metadata. Host-only `CODEX_*` session and sandbox variables are removed from the child process while the user's Codex authentication directory remains available.
+- Codex runs non-interactively in an ephemeral neutral directory with a read-only sandbox. Shell tools, web search, apps, and multi-agent execution are disabled, so it receives only the application's bounded planning or answer prompt. Host-only `CODEX_*` session and sandbox variables are removed from the child process while the user's Codex authentication directory remains available.
 - Claude Code runs in print/stream-JSON mode with safe mode enabled and its tool list empty. OpenCode runs in JSON mode in a neutral directory with project instructions, external skills, default plugins, sharing, auto-update, and all tool permissions disabled. Both receive the RAG prompt through stdin rather than process arguments.
 - Local-model settings and the active AI-service mode are persisted in SQLite and copied when creating or switching workspaces.
+
+Query-route regression tests use synthetic snapshots and isolated databases. Loopback fixtures exercise the real cloud, LM Studio, and native Ollama stream adapters without reading saved service configuration or contacting a real provider. Real-model intent recognition and the native chat interaction still require manual acceptance. Keep the existing request timer and cancellation control across planning, locating, version queries, comparisons, retrieval, and generation; report only the phase actually running.
 
 ## Workspace removal safety
 
