@@ -1,8 +1,10 @@
 import { invoke, isTauri } from "@tauri-apps/api/core";
-import { ExternalLink, Github, LoaderCircle, MessagesSquare } from "lucide-react";
+import { ExternalLink, LoaderCircle } from "lucide-react";
 import { useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import channels from "../../shared/feedbackChannels.json";
+import githubMark from "../../assets/brands/github-mark.svg";
+import discordMark from "../../assets/brands/discord-mark.svg";
 import "./file-space-feedback.css";
 
 type FeedbackChannel = keyof typeof channels;
@@ -40,9 +42,17 @@ export function FileSpaceFeedback() {
       <div className="file-space-feedback-channels">
         {(["github", "discord"] as const).map((channel) => {
           const url = channels[channel];
-          const Icon = channel === "github" ? Github : MessagesSquare;
           const content = <>
-            <span className="file-space-feedback-icon" aria-hidden="true"><Icon size={21} /></span>
+            <span className="file-space-feedback-icon" aria-hidden="true">
+              <img
+                className="file-space-feedback-logo"
+                src={channel === "github" ? githubMark : discordMark}
+                alt=""
+                width={24}
+                height={24}
+                draggable={false}
+              />
+            </span>
             <span className="file-space-feedback-copy">
               <strong>{channel === "github" ? "GitHub Issues" : "Discord"}</strong>
               <span>{t(`fileSpace.settings.feedbackDetails.${channel}Description`)}</span>

@@ -71,8 +71,11 @@ mod tests {
     }
 
     #[test]
-    fn unconfigured_discord_is_unavailable() {
-        assert!(channel_url(FeedbackChannel::Discord).is_err());
+    fn discord_opens_the_configured_community_without_attaching_data() {
+        let url = channel_url(FeedbackChannel::Discord).unwrap();
+        assert_eq!(url, "https://discord.gg/6pJVMTJ5UG");
+        let command = browser_command(&url);
+        assert_eq!(command.get_args().collect::<Vec<_>>(), vec![url.as_str()]);
     }
 
     #[test]

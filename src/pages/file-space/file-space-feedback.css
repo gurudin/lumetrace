@@ -72,6 +72,17 @@
   width: 28px;
 }
 
+.file-space-feedback-logo {
+  display: block;
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+:root[data-theme="dark"] .file-space-feedback-logo {
+  filter: brightness(0) invert(1);
+}
+
 .file-space-feedback-copy {
   display: grid;
   flex: 1;
