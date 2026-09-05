@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src-tauri/icons/icon.png" width="80" height="80" alt="Lume Trace logo">
+  <img src="https://i.ibb.co/KxH6pYFd/logo.png" width="80" height="80" alt="Lume Trace logo">
 </p>
 
 <h1 align="center">Every file has a timeline.</h1>
@@ -7,14 +7,14 @@
 <p align="center">Automatically record every save. Visually compare every change.</p>
 
 <p align="center">
-  <a href="docs/media/timeline-demo.png">
-    <img src="docs/media/timeline-demo.gif" width="960" alt="Lume Trace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">
+    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="Lume Trace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
   </a>
 </p>
 
 <p align="center">
   <a href="docs/README.zh-CN.md">简体中文</a> ·
-  <a href="docs/media/timeline-demo.png">View still image</a> ·
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">View full-size demo</a> ·
   <a href="docs/DEVELOPMENT.md">Development guide</a>
 </p>
 
