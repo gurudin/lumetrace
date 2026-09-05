@@ -2,7 +2,7 @@
   <img src="src-tauri/icons/icon.png" width="80" height="80" alt="Lume Trace logo">
 </p>
 
-<h3 align="center">Every file has a timeline.</h3>
+<h1 align="center">Every file has a timeline.</h1>
 
 <p align="center">
   <a href="docs/media/timeline-demo.png">
@@ -10,11 +10,15 @@
   </a>
 </p>
 
-<p align="center"><a href="docs/media/timeline-demo.png">View a still image</a> · 10-second demo recorded in Lume Trace</p>
+<p align="center">
+  <a href="docs/README.zh-CN.md">简体中文</a> ·
+  <a href="docs/media/timeline-demo.png">View still image</a> ·
+  <a href="docs/DEVELOPMENT.md">Development guide</a>
+</p>
 
-[简体中文](docs/README.zh-CN.md) · [Development guide](docs/DEVELOPMENT.md) · [Import and migration boundary](docs/MIGRATION.md)
+## A timeline for your files
 
-Lume Trace is a local-first macOS file workspace built around version timelines, text Diff, and recovery.
+Lume Trace gives your local files a history you can see and use. Follow a file's timeline, compare text changes with Diff, and bring back an earlier version — without changing where your files live.
 
 Lume Trace keeps the physical files in a folder you choose. It adds local workspace metadata, version snapshots, full-text and semantic indexes, Trash, and source-grounded AI conversations without turning the folder into a cloud drive.
 

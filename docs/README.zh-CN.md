@@ -1,8 +1,24 @@
-# Lume Trace
+<p align="center">
+  <img src="../src-tauri/icons/icon.png" width="80" height="80" alt="Lume Trace 标志">
+</p>
 
-**一款本地优先的 macOS 文件空间，用于整理、查找、理解和追踪文件。**
+<h1 align="center">Every file has a timeline.</h1>
 
-[English](../README.md) · [开发说明](DEVELOPMENT.md) · [导入与迁移边界](MIGRATION.md)
+<p align="center">
+  <a href="media/timeline-demo.png">
+    <img src="media/timeline-demo.gif" width="960" alt="Lume Trace 操作演示：将 Markdown 文件从 V1 修改为 V2，在时间线中查看两个版本，再通过行内和并排 Diff 比较变化。">
+  </a>
+</p>
+
+<p align="center">
+  <a href="../README.md">English</a> ·
+  <a href="media/timeline-demo.png">查看静态图</a> ·
+  <a href="DEVELOPMENT.md">开发说明</a>
+</p>
+
+## 每个文件，都有自己的时间线
+
+Lume Trace 让本地文件的历史看得见、用得上。沿着时间线查看版本，用 Diff 对比文本变化，随时找回早期版本，而不必改变文件原本的存放位置。
 
 Lume Trace 不会把文件夹变成云盘。实体文件始终保存在你选择的目录中；应用在本地增加文件空间信息、版本快照、全文与语义索引、废纸篓，以及带来源引用的 AI 对话。
 
