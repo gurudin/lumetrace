@@ -80,6 +80,7 @@ import {
   type FileKeyboardDirection,
 } from "./fileKeyboardNavigation";
 import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
+import { FileRevealNavigation } from "./fileRevealNavigation";
 import {
   fileCardMetadataText,
   fileDocumentArtworkFormat,
@@ -1327,9 +1328,9 @@ export function FileSpacePage() {
   const searchSequenceRef = useRef(0);
   const filePageSequenceRef = useRef(0);
   const filePageLoadingRef = useRef(false);
+  const measuredFileLayoutRef = useRef<JustifiedFileLayout | null>(null);
   const fileVirtualViewportFrameRef = useRef<number | null>(null);
-  const pendingFileRevealRef = useRef<FileSpaceSearchFile | null>(null);
-  const pendingFileOpenRef = useRef<string | null>(null);
+  const fileRevealNavigationRef = useRef(new FileRevealNavigation<FileSpaceSearchFile>());
   const aiSourceNavigationSequenceRef = useRef(0);
   const importRequestRef = useRef<string | null>(null);
   const autoTrashCleanupRetryAtRef = useRef(0);
@@ -1623,8 +1624,7 @@ export function FileSpacePage() {
   };
 
   const revealFileInWorkspace = (file: FileSpaceSearchFile, openAfterReveal = false) => {
-    pendingFileRevealRef.current = file;
-    pendingFileOpenRef.current = openAfterReveal ? file.id : null;
+    fileRevealNavigationRef.current.start(file, openAfterReveal, !isTauri());
     setGlobalSearchOpen(false);
     setActiveCollection("files");
     setCurrentFolderId(file.folderId);
@@ -1659,8 +1659,10 @@ export function FileSpacePage() {
     source: FileSpaceAiSourceReference,
     action: "select" | "open",
   ) => {
+    const generation = lifecycleRef.current.generation;
     const sequence = aiSourceNavigationSequenceRef.current + 1;
     aiSourceNavigationSequenceRef.current = sequence;
+    fileRevealNavigationRef.current.cancel();
     let file = snapshot.files.find((candidate) => candidate.id === source.fileId);
     if (!file && isTauri()) {
       try {
@@ -1681,7 +1683,11 @@ export function FileSpacePage() {
         file = undefined;
       }
     }
-    if (sequence !== aiSourceNavigationSequenceRef.current) return;
+    if (
+      sequence !== aiSourceNavigationSequenceRef.current
+      || !lifecycleRef.current.mounted
+      || generation !== lifecycleRef.current.generation
+    ) return;
     if (file) revealFileInWorkspace(file, action === "open");
     else setError(t("fileSpace.ai.errors.sourceUnavailable"));
   };
@@ -1769,6 +1775,8 @@ export function FileSpacePage() {
       if (lifecycleRef.current.generation === generation) {
         lifecycleRef.current = { mounted: false, generation: generation + 1 };
       }
+      aiSourceNavigationSequenceRef.current += 1;
+      fileRevealNavigationRef.current.cancel();
       if (fileDragReleaseTimerRef.current !== null) {
         window.clearTimeout(fileDragReleaseTimerRef.current);
         fileDragReleaseTimerRef.current = null;
@@ -2494,6 +2502,8 @@ export function FileSpacePage() {
     }
     const sequence = filePageSequenceRef.current + 1;
     filePageSequenceRef.current = sequence;
+    const revealRequest = fileRevealNavigationRef.current.pending;
+    if (revealRequest) revealRequest.pageReady = false;
     filePageLoadingRef.current = true;
     setFilePageLoading(true);
     setFilePageCursor(null);
@@ -2503,19 +2513,18 @@ export function FileSpacePage() {
       request: createFilePageRequest(null),
     }).then((page) => {
       if (sequence !== filePageSequenceRef.current || !lifecycleRef.current.mounted) return;
-      const pendingReveal = pendingFileRevealRef.current;
-      const revealFile = pendingReveal?.folderId === (currentFolder?.id ?? null)
-        ? pendingReveal
-        : null;
-      const files = revealFile && !page.files.some((file) => file.id === revealFile.id)
-        ? [revealFile, ...page.files]
-        : page.files;
+      const files = fileRevealNavigationRef.current.acceptPage(
+        revealRequest, currentFolder?.id ?? null, page.files,
+      );
       setSnapshot((current) => ({ ...current, files }));
       setFilePageTotal(page.totalCount);
       setFilePageCursor(page.nextCursor);
       setFileVirtualViewport({ top: 0, bottom: 2_000 });
     }).catch((pageError) => {
       if (sequence === filePageSequenceRef.current && lifecycleRef.current.mounted) {
+        if (fileRevealNavigationRef.current.pending === revealRequest) {
+          fileRevealNavigationRef.current.cancel();
+        }
         setError(`${t("fileSpace.errors.load")} ${errorText(pageError)}`);
       }
     }).finally(() => {
@@ -2671,6 +2680,7 @@ export function FileSpacePage() {
             detailsHeight: fileDetailsHeight,
             items: fileLayoutItems,
           });
+      measuredFileLayoutRef.current = nextLayout;
       setFileJustifiedLayout((current) => (
         justifiedFileLayoutsEqual(current, nextLayout) ? current : nextLayout
       ));
@@ -2742,38 +2752,44 @@ export function FileSpacePage() {
   }, [fileJustifiedLayout, fileVirtualViewport, visibleFileById, visibleFileIds]);
 
   useLayoutEffect(() => {
-    const revealFile = pendingFileRevealRef.current;
+    const navigation = fileRevealNavigationRef.current;
+    const request = navigation.readyForLayout(currentFolderId);
+    const revealFile = request?.file;
     const scroll = contentDropZoneRef.current;
     const grid = fileGridRef.current;
     const placement = revealFile ? fileJustifiedLayout?.placements[revealFile.id] : null;
-    if (!revealFile || !scroll || !grid || !placement || !fileJustifiedLayout) return;
+    if (!request || !revealFile || !scroll || !grid || !placement || !fileJustifiedLayout) return;
+    // Layout measurement can enqueue another React commit. Do not complete on
+    // placements from the previous page, sort order, or inspector width.
+    if (!measuredFileLayoutRef.current
+      || !justifiedFileLayoutsEqual(fileJustifiedLayout, measuredFileLayoutRef.current)) return;
     const scrollRect = scroll.getBoundingClientRect();
     const gridRect = grid.getBoundingClientRect();
     const targetTop = gridRect.top - scrollRect.top + scroll.scrollTop + placement.y;
     scroll.scrollTop = Math.max(0, targetTop - Math.max(24, (scroll.clientHeight - fileJustifiedLayout.cardHeight) / 2));
-    pendingFileRevealRef.current = null;
     updateFileVirtualViewport();
-    window.requestAnimationFrame(() => window.requestAnimationFrame(() => {
-      const cardButton = document.querySelector<HTMLButtonElement>(
-        `.file-space-file-card[data-file-id="${CSS.escape(revealFile.id)}"] > button:first-child`,
-      );
-      cardButton?.focus({ preventScroll: true });
-      if (cardButton && pendingFileOpenRef.current === revealFile.id) {
-        pendingFileOpenRef.current = null;
-        cardButton.dispatchEvent(new MouseEvent("dblclick", {
+    const cardButton = grid.querySelector<HTMLButtonElement>(
+      `.file-space-file-card[data-file-id="${CSS.escape(revealFile.id)}"] > button:first-child`,
+    );
+    navigation.completeWithTarget(
+      request,
+      cardButton,
+      (button) => button.focus({ preventScroll: true }),
+      (button) => {
+        button.dispatchEvent(new MouseEvent("dblclick", {
           bubbles: true,
           cancelable: true,
           button: 0,
           view: window,
         }));
-      }
-    }));
-  }, [fileJustifiedLayout, fileRevealRevision, updateFileVirtualViewport]);
+      },
+    );
+  }, [currentFolderId, fileJustifiedLayout, fileRevealRevision, renderedFiles, updateFileVirtualViewport]);
 
   useEffect(() => {
     const visibleIds = selectionVisibilityWithPendingReveal(
       sortedVisibleFiles.map((file) => file.id),
-      pendingFileRevealRef.current?.id,
+      fileRevealNavigationRef.current.pending?.file.id,
     );
     const nextSelection = pruneSelection(selectedFileIdsRef.current, visibleIds);
     if (!setsEqual(nextSelection, selectedFileIdsRef.current)) {
@@ -3089,6 +3105,8 @@ export function FileSpacePage() {
     : currentFolder?.name ?? snapshot.rootName ?? t("fileSpace.title");
 
   const applyWorkspaceMutation = useCallback((mutation: FileSpaceWorkspaceMutation<FileSpaceSnapshot>) => {
+    aiSourceNavigationSequenceRef.current += 1;
+    fileRevealNavigationRef.current.cancel();
     setWorkspaceDirectory(mutation.directory);
     setSnapshot(mutation.snapshot);
     setFilePageTotal(mutation.snapshot.fileCount);
@@ -3255,7 +3273,7 @@ export function FileSpacePage() {
         format: createFileFormat,
       });
       if (!canCommitOperation(operation)) return;
-      pendingFileRevealRef.current = result.file;
+      fileRevealNavigationRef.current.start(result.file);
       setSnapshot(result.snapshot);
       setFilePageTotal(result.snapshot.fileCount);
       setFilePageCursor(null);
@@ -5165,6 +5183,8 @@ export function FileSpacePage() {
   });
 
   const chooseFolder = (folderId: string | null) => {
+    aiSourceNavigationSequenceRef.current += 1;
+    fileRevealNavigationRef.current.cancel();
     setActiveCollection("files");
     setCurrentFolderId(folderId);
     clearSelectedFiles();
@@ -5173,6 +5193,8 @@ export function FileSpacePage() {
   };
 
   const chooseTrash = () => {
+    aiSourceNavigationSequenceRef.current += 1;
+    fileRevealNavigationRef.current.cancel();
     setActiveCollection("trash");
     clearSelectedFiles();
     setQuery("");
