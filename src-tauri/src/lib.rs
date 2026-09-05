@@ -3,6 +3,7 @@ mod ai_qa;
 mod ai_service;
 mod content_extractor;
 mod database;
+mod feedback;
 mod file_query;
 mod file_space;
 mod pdf_preview;
@@ -81,6 +82,7 @@ pub fn run() {
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
+            feedback::open_feedback_channel,
             ai_qa::ask_file_space_ai,
             ai_qa::cancel_file_space_ai,
             ai_qa::get_file_space_ai_history,

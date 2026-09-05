@@ -1,0 +1,107 @@
+.file-space-settings-dialog.is-feedback {
+  width: min(460px, 100%);
+  max-height: calc(100dvh - 48px);
+  display: flex;
+  flex-direction: column;
+}
+
+.file-space-feedback {
+  min-height: 0;
+  overflow-y: auto;
+  padding: 0 20px 20px;
+}
+
+.file-space-feedback > p {
+  margin: 0 0 14px;
+  color: var(--text-muted);
+  font-size: var(--font-size-small);
+  line-height: 1.5;
+}
+
+.file-space-feedback-channels {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.file-space-feedback-channel {
+  display: flex;
+  width: 100%;
+  min-height: 76px;
+  align-items: center;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--separator);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.file-space-feedback-channel:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--highlight) 45%, var(--separator));
+  background: var(--highlight-soft);
+}
+
+.file-space-feedback-channel:focus-visible {
+  outline: 2px solid var(--highlight);
+  outline-offset: 2px;
+}
+
+.file-space-feedback-channel:disabled {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.file-space-feedback-channel[aria-disabled="true"] {
+  cursor: progress;
+}
+
+.file-space-feedback-icon,
+.file-space-feedback-channel > svg {
+  flex-shrink: 0;
+  color: var(--text-muted);
+}
+
+.file-space-feedback-icon {
+  display: grid;
+  place-items: center;
+  width: 28px;
+}
+
+.file-space-feedback-copy {
+  display: grid;
+  flex: 1;
+  min-width: 0;
+  gap: 4px;
+}
+
+.file-space-feedback-copy strong {
+  font-size: var(--font-size-body);
+  font-weight: 600;
+}
+
+.file-space-feedback-copy > span,
+.file-space-feedback-notice {
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
+.file-space-feedback-channel > small {
+  flex-shrink: 0;
+  max-width: 90px;
+  padding: 3px 6px;
+  border-radius: 5px;
+  background: var(--separator);
+  color: var(--text-muted);
+  font-size: var(--font-size-caption);
+}
+
+.file-space-feedback > .file-space-feedback-error {
+  color: var(--danger);
+}

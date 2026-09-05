@@ -10,6 +10,7 @@ import {
   HardDriveDownload,
   Info,
   LoaderCircle,
+  MessageSquare,
   RotateCcw,
   Settings,
   ShieldCheck,
@@ -32,6 +33,7 @@ import appPackage from "../../../package.json";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
 import { FileSpacePreferences } from "./FileSpacePreferences";
+import { FileSpaceFeedback } from "./FileSpaceFeedback";
 import {
   FileSpaceWorkspaceSettings,
   type FileSpaceWorkspaceDirectory,
@@ -49,7 +51,7 @@ import {
   type PreferencesSection,
 } from "./preferencesNavigation";
 
-type SettingsPanel = "workspace" | "about" | "preferences" | "semantic" | "backup" | "restore" | "privacy";
+type SettingsPanel = "workspace" | "about" | "preferences" | "semantic" | "backup" | "restore" | "feedback" | "privacy";
 type BackupStatus = "idle" | "exporting" | "success" | "error";
 type RestoreStatus = "idle" | "ready" | "restoring" | "success" | "error";
 
@@ -105,6 +107,7 @@ const menuItems: readonly SettingsPanel[] = [
   "semantic",
   "backup",
   "restore",
+  "feedback",
   "privacy",
   "about",
 ];
@@ -417,7 +420,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   }, [closeMenu, isMenuOpen]);
 
   useEffect(() => {
-    if (!activePanel) return undefined;
+    if (!activePanel || !dialogPresence.mounted) return undefined;
     const frame = window.requestAnimationFrame(() => dialogCloseRef.current?.focus());
     const handleKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -429,12 +432,15 @@ export function FileSpaceSettingsMenu<TSnapshot>({
       }
       if (event.key !== "Tab" || !dialogRef.current) return;
       const focusable = Array.from(dialogRef.current.querySelectorAll<HTMLElement>(
-        'button:not(:disabled), input:not(:disabled), [tabindex]:not([tabindex="-1"])',
+        'button:not(:disabled), input:not(:disabled), a[href], [tabindex]:not([tabindex="-1"])',
       )).filter((element) => element.getClientRects().length > 0);
       if (focusable.length === 0) return;
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (event.shiftKey && document.activeElement === first) {
+      if (!dialogRef.current.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
         event.preventDefault();
         last.focus();
       } else if (!event.shiftKey && document.activeElement === last) {
@@ -447,7 +453,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
       window.cancelAnimationFrame(frame);
       window.removeEventListener("keydown", handleKeyDown, true);
     };
-  }, [activePanel, closeDialog]);
+  }, [activePanel, closeDialog, dialogPresence.mounted]);
 
   useEffect(() => {
     if (activePanel !== "semantic") {
@@ -557,11 +563,13 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                   ? Download
                   : item === "restore"
                     ? ArchiveRestore
+                  : item === "feedback"
+                    ? MessageSquare
                   : ShieldCheck;
             return (
               <button
                 key={item}
-                className={item === "semantic" || item === "backup" || item === "privacy"
+                className={item === "semantic" || item === "backup" || item === "feedback"
                   ? "is-separated"
                   : undefined}
                 type="button"
@@ -789,6 +797,8 @@ export function FileSpaceSettingsMenu<TSnapshot>({
               </div>
             ) : null}
 
+            {activePanel === "feedback" ? <FileSpaceFeedback /> : null}
+
             {activePanel === "privacy" ? (
               <article className="file-space-settings-privacy">
                 <header className="file-space-settings-privacy-intro">
@@ -919,7 +929,9 @@ export function FileSpaceSettingsMenu<TSnapshot>({
             ) : null}
 
             {activePanel !== "workspace" && activePanel !== "preferences" ? <footer>
-              {activePanel === "semantic" && confirmingModelRemoval ? (
+              {activePanel === "feedback" ? (
+                <button type="button" onClick={closeDialog}>{t("fileSpace.settings.close")}</button>
+              ) : activePanel === "semantic" && confirmingModelRemoval ? (
                 <>
                   <button type="button" disabled={semanticBusy} onClick={() => setConfirmingModelRemoval(false)}>
                     {t("fileSpace.settings.cancel")}
