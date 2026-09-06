@@ -42,7 +42,9 @@ test("the entry has per-file loading feedback, keyboard focus, and reduced motio
   assert.match(entry, /aria-label=\{[^\n]*file.name/);
   assert.match(entry, /timelineBadgeReturnFocusRef.current = event.currentTarget/);
   assert.match(page, /trigger.focus\(\{ preventScroll: true \}\)/);
-  assert.match(page, /timelineBadgeReturnFocusRef.current = null;\s*closeTimelinePanel\(\)/);
+  // A full-window dialog no longer has a clickable outside region.
+  assert.match(page, /window\.addEventListener\("focusin", keepTimelineFocus\)/);
+  assert.doesNotMatch(page, /const closeOnOutsidePointerDown =/);
   assert.match(css, /\.file-space-file-version-count.is-history-action:focus-visible\s*\{[^}]*outline:/);
   assert.match(css, /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.file-space-file-version-count.is-history-action \.is-spinning \{ animation: none/);
 });

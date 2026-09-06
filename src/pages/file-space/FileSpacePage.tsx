@@ -1328,7 +1328,7 @@ export function FileSpacePage() {
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const folderTreeRef = useRef<HTMLDivElement>(null);
   const timelinePanelRef = useRef<HTMLElement>(null);
-  const timelineBadgeReturnFocusRef = useRef<HTMLButtonElement | null>(null);
+  const timelineBadgeReturnFocusRef = useRef<HTMLElement | null>(null);
   const importExistingTriggerRef = useRef<HTMLElement | null>(null);
   const operationRef = useRef<FileSpaceOperation | null>(null);
   const lifecycleRef = useRef({ mounted: false, generation: 0 });
@@ -1437,19 +1437,53 @@ export function FileSpacePage() {
   }, []);
 
   useEffect(() => {
-    if (!isTimelinePanelOpen) return undefined;
-    const closeOnOutsidePointerDown = (event: PointerEvent) => {
-      const target = event.target;
-      if (target instanceof Element && target.closest(".mac-select-menu")) return;
-      if (!timelinePanelRef.current?.contains(target as Node)) {
-        // A click outside should keep focus on the newly clicked control.
-        timelineBadgeReturnFocusRef.current = null;
+    if (!isTimelinePanelOpen || !timelinePanelPresence.mounted) return undefined;
+    const panel = timelinePanelRef.current;
+    if (!panel) return undefined;
+    const focusCloseButton = () => panel.querySelector<HTMLButtonElement>("header > button")?.focus({ preventScroll: true });
+    const frame = window.requestAnimationFrame(focusCloseButton);
+    const handleTimelineKeyDown = (event: KeyboardEvent) => {
+      // Portalled version menus handle their own Escape, arrows and Tab first.
+      if (event.defaultPrevented) return;
+      if (event.target instanceof Element && event.target.closest(".mac-select-menu")) return;
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        // The menu can be open before its next-frame focus transfer finishes.
+        const expandedSelect = panel.querySelector<HTMLButtonElement>('.mac-select-trigger[aria-expanded="true"]');
+        if (expandedSelect) {
+          expandedSelect.click();
+          expandedSelect.focus({ preventScroll: true });
+          return;
+        }
         closeTimelinePanel();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(panel.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])',
+      )).filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0] ?? panel;
+      const last = focusable[focusable.length - 1] ?? panel;
+      const active = document.activeElement;
+      if (!panel.contains(active) || (event.shiftKey ? active === first : active === last)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
       }
     };
-    window.addEventListener("pointerdown", closeOnOutsidePointerDown, true);
-    return () => window.removeEventListener("pointerdown", closeOnOutsidePointerDown, true);
-  }, [closeTimelinePanel, isTimelinePanelOpen]);
+    const keepTimelineFocus = (event: FocusEvent) => {
+      const target = event.target;
+      if (target instanceof Element && target.closest(".mac-select-menu")) return;
+      if (!panel.contains(target as Node)) focusCloseButton();
+    };
+    window.addEventListener("keydown", handleTimelineKeyDown);
+    window.addEventListener("focusin", keepTimelineFocus);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      window.removeEventListener("keydown", handleTimelineKeyDown);
+      window.removeEventListener("focusin", keepTimelineFocus);
+    };
+  }, [closeTimelinePanel, isTimelinePanelOpen, timelinePanelPresence.mounted]);
 
   useEffect(() => {
     if (timelinePanelPresence.mounted) return;
@@ -2897,6 +2931,10 @@ export function FileSpacePage() {
 
   const openTimeline = async (file: FileSpaceFileRecord, targetVersionId?: string) => {
     if (file.versionCount < 1 && inspectorTimeline?.fileId !== file.id) return;
+    if (!isTimelinePanelOpen && !timelineBadgeReturnFocusRef.current) {
+      timelineBadgeReturnFocusRef.current = document.activeElement instanceof HTMLElement
+        ? document.activeElement : null;
+    }
     const requestId = timelineRequestRef.current + 1;
     timelineRequestRef.current = requestId;
     versionPreviewRequestRef.current += 1;
@@ -6289,7 +6327,8 @@ export function FileSpacePage() {
           aria-hidden={!isTimelinePanelOpen}
           inert={!isTimelinePanelOpen}
         >
-          <aside ref={timelinePanelRef} className="file-space-timeline-panel" aria-label={t("fileSpace.timeline.ariaLabel")}>
+          <aside ref={timelinePanelRef} className="file-space-timeline-panel" role="dialog" aria-modal="true" aria-label={t("fileSpace.timeline.ariaLabel")} tabIndex={-1}>
+            <div className="file-space-timeline-drag-region" data-tauri-drag-region aria-hidden="true" />
             <header>
               <div>
                 <span>{t("fileSpace.timeline.taskArtifact")} · {timeline.logicalKey}</span>

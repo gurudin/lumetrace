@@ -12,6 +12,29 @@ function rule(source: string, selector: string) {
   return source.slice(start, source.indexOf("}", start));
 }
 
+test("timeline fills the app window and reserves the extra width for comparison", () => {
+  assert.match(rule(css, ".file-space-timeline-backdrop"), /position: fixed/);
+  assert.match(rule(css, ".file-space-timeline-backdrop"), /inset: 0/);
+  const panel = rule(css, ".file-space-timeline-panel");
+  assert.match(panel, /width: 100%/);
+  assert.match(panel, /height: 100%/);
+  assert.doesNotMatch(panel, /width: min\(/);
+  assert.match(rule(css, ".file-space-timeline-body"), /grid-template-columns: clamp\(240px, 24vw, 320px\) minmax\(0, 1fr\)/);
+  assert.match(rule(css, ".file-space-timeline-panel > header"), /padding-left: 64px/);
+  assert.match(page, /className="file-space-timeline-drag-region" data-tauri-drag-region/);
+});
+
+test("full-window timeline owns keyboard focus while preserving portalled version menus", () => {
+  assert.match(page, /className="file-space-timeline-panel" role="dialog" aria-modal="true"/);
+  assert.match(page, /window\.addEventListener\("keydown", handleTimelineKeyDown\)/);
+  assert.match(page, /window\.removeEventListener\("keydown", handleTimelineKeyDown\)/);
+  assert.match(page, /window\.addEventListener\("focusin", keepTimelineFocus\)/);
+  assert.match(page, /window\.removeEventListener\("focusin", keepTimelineFocus\)/);
+  assert.match(page, /event\.target\.closest\("\.mac-select-menu"\)/);
+  assert.match(page, /if \(expandedSelect\) \{\s*expandedSelect\.click\(\);\s*expandedSelect\.focus\(\{ preventScroll: true \}\);\s*return;/);
+  assert.match(page, /trigger\.focus\(\{ preventScroll: true \}\)/);
+});
+
 test("timeline header stays outside the two bounded scroll panes", () => {
   const panel = rule(css, ".file-space-timeline-panel");
   assert.match(panel, /display: flex/);
@@ -40,6 +63,10 @@ test("timeline content does not introduce nested vertical scroll traps", () => {
   const scopedDiff = rule(css, ".file-space-version-preview .file-version-diff-table");
   assert.match(scopedDiff, /max-height: none/);
   assert.match(scopedDiff, /overscroll-behavior-y: auto/);
+  const splitCode = rule(css, ".file-space-version-preview .file-version-diff-split-side > code");
+  assert.match(splitCode, /min-width: 0/);
+  assert.match(splitCode, /white-space: pre-wrap/);
+  assert.match(splitCode, /overflow-wrap: anywhere/);
   // Other preview surfaces retain the shared Diff's bounded, horizontal-capable scroller.
   const sharedDiff = rule(diffCss, ".file-version-diff-table");
   assert.match(sharedDiff, /max-height: 52vh/);
