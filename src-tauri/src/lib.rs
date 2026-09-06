@@ -148,6 +148,7 @@ pub fn run_with_plugins(
             file_space::choose_application_for_file_space_file,
             file_space::get_task_file_timeline,
             version_annotation::update_file_version_annotation,
+            version_annotation::get_file_version_summary,
             file_space::set_current_task_file_version,
             file_space::read_task_file_version,
             version_comparison::get_task_file_text_diff,

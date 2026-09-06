@@ -1,6 +1,15 @@
 export const en = {
   fileSpace: {
+    versionSummary: {
+      title: "Recent versions",
+      viewAll: "View full timeline",
+      loadError: "Couldn’t load versions.",
+      retry: "Retry",
+      empty: "No recorded versions yet.",
+      milestone: "Milestone",
+    },
     versionAnnotation: {
+      tooLong: "Keep the note within {{count}} characters.",
       star: "Mark v{{version}} as a milestone",
       unstar: "Unmark v{{version}} as a milestone",
       add: "Add a note to v{{version}}",

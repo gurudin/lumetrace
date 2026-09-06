@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { readFileSync } from "node:fs";
-import { applyVersionAnnotation } from "../src/pages/file-space/versionAnnotationState.ts";
+import { applyVersionAnnotation, versionNoteLimit, versionNoteLength } from "../src/pages/file-space/versionAnnotationState.ts";
 
 const timeline = { workspaceId: "space-a", fileId: "file", currentVersionId: "v3", versions: [
   { id: "v3", versionNumber: 3, note: "", isMilestone: false },
@@ -47,7 +47,19 @@ test("each timeline entry shares the annotation controls and keyboard-safe edito
   assert.match(editor, /showModal\(\)/);
   assert.match(editor, /aria-pressed=/);
   assert.match(editor, /event\.stopPropagation\(\)/);
-  assert.match(editor, /maxLength=\{1000\}/);
+  assert.match(editor, /if \(noteTooLong\) return/);
+  assert.match(editor, /disabled=\{busy \|\| noteTooLong\}/);
   assert.match(editor, /data-native-context-menu="true"/);
   assert.match(editor, /request: \{ workspaceId, fileId, versionId: version.id, \.\.\.patch \}/);
+});
+
+test("notes allow 50 Unicode scalars and preserve over-limit drafts for correction", () => {
+  assert.equal(versionNoteLimit, 50);
+  for (const character of ["a", "版", "🌟"]) {
+    assert.equal(versionNoteLength(character.repeat(50)), 50);
+    assert.equal(versionNoteLength(character.repeat(51)), 51);
+  }
+  const editor = readFileSync(new URL("../src/pages/file-space/VersionAnnotation.tsx", import.meta.url), "utf8");
+  assert.match(editor, /setDraft\(version.note \?\? ""\)/);
+  assert.doesNotMatch(editor, /draft\.slice|maxLength=|1000/);
 });

@@ -1,6 +1,15 @@
 export const ja = {
   fileSpace: {
+    versionSummary: {
+      title: "最近のバージョン",
+      viewAll: "タイムラインをすべて表示",
+      loadError: "バージョンを読み込めませんでした。",
+      retry: "再試行",
+      empty: "バージョンはまだありません。",
+      milestone: "マイルストーン",
+    },
     versionAnnotation: {
+      tooLong: "メモは {{count}} 文字以内にしてください。",
       star: "v{{version}} をマイルストーンに設定",
       unstar: "v{{version}} のマイルストーンを解除",
       add: "v{{version}} にメモを追加",

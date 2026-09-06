@@ -1,6 +1,15 @@
 export const fr = {
   fileSpace: {
+    versionSummary: {
+      title: "Versions récentes",
+      viewAll: "Voir toute la chronologie",
+      loadError: "Impossible de charger les versions.",
+      retry: "Réessayer",
+      empty: "Aucune version enregistrée.",
+      milestone: "Jalon",
+    },
     versionAnnotation: {
+      tooLong: "La note est limitée à {{count}} caractères.",
       star: "Marquer v{{version}} comme jalon",
       unstar: "Retirer le jalon de v{{version}}",
       add: "Ajouter une note à v{{version}}",

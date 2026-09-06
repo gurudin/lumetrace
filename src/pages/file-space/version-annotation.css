@@ -12,7 +12,7 @@
 .file-markdown-version-list > li.is-selected > button:first-child { background: transparent; }
 .file-version-annotation > button { border: 0; background: transparent; color: inherit; cursor: pointer; font: inherit; }
 .file-version-annotation > .file-version-star { position: absolute; top: 8px; right: 6px; z-index: 2; display: grid; place-items: center; width: 28px; height: 28px; padding: 0; border-radius: 6px; }
-.file-version-annotation > .file-version-star[aria-pressed="true"] { color: var(--highlight); }
+.file-version-annotation > .file-version-star[aria-pressed="true"] { color: #bc8a00; }
 .file-version-annotation > .file-version-note { display: flex; align-items: flex-start; gap: 6px; width: 100%; min-width: 0; padding: 3px 0; text-align: left; font-size: var(--font-size-xs); line-height: 1.5; }
 .file-version-note > svg { flex: 0 0 auto; margin-top: 3px; }
 .file-version-note .file-version-note-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -23,16 +23,20 @@
 .file-version-annotation-error { margin: 8px 0 0; color: var(--danger-ink); font-size: var(--font-size-xs); overflow-wrap: anywhere; }
 .file-task-version-rail.is-dark .file-version-annotation { color: rgba(255,255,255,.64); }
 .file-task-version-rail.is-dark .file-version-note.has-note { color: rgba(255,255,255,.9); }
-.file-task-version-rail.is-dark .file-version-star[aria-pressed="true"] { color: #7ebaff; }
 .file-task-version-rail.is-dark .file-version-annotation > button:hover:not(:disabled) { color: rgba(255,255,255,.9); background: rgba(255,255,255,.08); }
+.file-version-annotation > .file-version-star[aria-pressed="true"]:hover:not(:disabled) { color: #a97c00; }
+[data-theme="dark"] .file-version-annotation > .file-version-star[aria-pressed="true"],
+.file-task-version-rail.is-dark .file-version-annotation > .file-version-star[aria-pressed="true"] { color: #ffd45c; }
+.file-version-star[aria-pressed="true"] > svg:not(.is-spinning) { fill: #f5c542; }
 .file-version-note-dialog { width: min(420px, calc(100vw - 40px)); max-height: calc(100vh - 48px); box-sizing: border-box; padding: 22px; overflow: auto; border: 1px solid var(--border); border-radius: 14px; color: var(--text); background: var(--background); box-shadow: 0 20px 70px #0003; font-family: inherit; }
 .file-version-note-dialog { position: fixed; inset: 0; margin: auto; }
 .file-version-note-dialog::backdrop { background: #0003; }
 .file-version-note-dialog h2 { margin: 0; font-size: var(--font-size-body); font-weight: 650; }
 .file-version-note-dialog form > p { margin: 8px 0 14px; font-size: var(--font-size-xs); color: var(--text-muted); }
-.file-version-note-dialog textarea { display: block; width: 100%; box-sizing: border-box; min-height: 115px; max-height: 40vh; padding: 10px; border: 1px solid var(--border); border-radius: 7px; resize: vertical; color: var(--text); background: var(--surface); font: inherit; font-size: var(--font-size-secondary); line-height: 1.6; }
+.file-version-note-dialog textarea { display: block; width: 100%; box-sizing: border-box; min-height: 76px; max-height: 40vh; padding: 10px; border: 1px solid var(--border); border-radius: 7px; resize: vertical; color: var(--text); background: var(--surface); font: inherit; font-size: var(--font-size-secondary); line-height: 1.6; }
 .file-version-note-dialog textarea:focus-visible { outline: 2px solid var(--highlight); outline-offset: 1px; }
 .file-version-note-dialog .file-version-note-count { display: block; margin-top: 6px; text-align: right; color: var(--text-muted); font-size: var(--font-size-2xs); }
+.file-version-note-dialog .file-version-note-count.is-over-limit { color: var(--danger-ink); }
 .file-version-note-dialog footer { display: flex; justify-content: flex-end; gap: 8px; margin-top: 18px; }
 .file-version-note-dialog footer button { min-width: 66px; min-height: 30px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 7px; color: var(--text); background: var(--surface); font: inherit; font-size: var(--font-size-secondary); cursor: pointer; }
 .file-version-note-dialog footer button.is-primary { background: var(--highlight); border-color: var(--highlight); color: #fff; }

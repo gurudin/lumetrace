@@ -1,6 +1,15 @@
 export const zhTW = {
   fileSpace: {
+    versionSummary: {
+      title: "最近版本",
+      viewAll: "查看完整時間線",
+      loadError: "版本載入失敗。",
+      retry: "重試",
+      empty: "暫無版本記錄。",
+      milestone: "里程碑",
+    },
     versionAnnotation: {
+      tooLong: "備註最多 {{count}} 個字。",
       star: "將 v{{version}} 標為里程碑",
       unstar: "取消 v{{version}} 的里程碑星標",
       add: "為 v{{version}} 新增備註",

@@ -1,6 +1,15 @@
 export const de = {
   fileSpace: {
+    versionSummary: {
+      title: "Letzte Versionen",
+      viewAll: "Vollständige Zeitleiste",
+      loadError: "Versionen konnten nicht geladen werden.",
+      retry: "Erneut versuchen",
+      empty: "Noch keine Versionen vorhanden.",
+      milestone: "Meilenstein",
+    },
     versionAnnotation: {
+      tooLong: "Maximal {{count}} Zeichen pro Notiz.",
       star: "v{{version}} als Meilenstein markieren",
       unstar: "Meilenstein für v{{version}} entfernen",
       add: "Notiz zu v{{version}} hinzufügen",

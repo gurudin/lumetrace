@@ -3,7 +3,7 @@ import { LoaderCircle, Pencil, Star } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
-import { applyVersionAnnotation, versionAnnotationUpdatedEvent, type AnnotatedTimeline, type AnnotatedVersion, type VersionAnnotationUpdate } from "./versionAnnotationState";
+import { applyVersionAnnotation, versionAnnotationUpdatedEvent, versionNoteLength, versionNoteLimit, type AnnotatedTimeline, type AnnotatedVersion, type VersionAnnotationUpdate } from "./versionAnnotationState";
 import "./version-annotation.css";
 
 export function useVersionAnnotationUpdates<T extends AnnotatedTimeline>(setTimeline: Dispatch<SetStateAction<T | null>>) {
@@ -41,6 +41,8 @@ export function VersionAnnotation({ workspaceId, fileId, version, disabled = fal
   const mounted = useRef(true);
   const key = "fileSpace.versionAnnotation.";
   const unavailable = disabled || !workspaceId || busy;
+  const noteLength = versionNoteLength(draft);
+  const noteTooLong = noteLength > versionNoteLimit;
 
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
   useEffect(() => {
@@ -84,6 +86,7 @@ export function VersionAnnotation({ workspaceId, fileId, version, disabled = fal
     }
   };
   const saveNote = async () => {
+    if (noteTooLong) return;
     if (await save({ note: draft })) {
       if (mounted.current) closeEditor();
     }
@@ -123,13 +126,16 @@ export function VersionAnnotation({ workspaceId, fileId, version, disabled = fal
         <form onSubmit={(event) => { event.preventDefault(); void saveNote(); }}>
           <h2 id={labelId}>{t(key + "title", { version: version.versionNumber })}</h2>
           <p id={helpId}>{t(key + "hint")}</p>
-          <textarea ref={fieldRef} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={1000} rows={5}
+          <textarea ref={fieldRef} value={draft} onChange={(event) => setDraft(event.target.value)} rows={3}
+            aria-invalid={noteTooLong} aria-describedby={`${labelId}-count`}
             disabled={busy} aria-label={t(key + "field")} placeholder={t(key + "placeholder")} data-native-context-menu="true" />
-          <small className="file-version-note-count">{draft.length} / 1000</small>
+          <small id={`${labelId}-count`} className={`file-version-note-count${noteTooLong ? " is-over-limit" : ""}`}>
+            {noteLength} / {versionNoteLimit}{noteTooLong ? ` · ${t(key + "tooLong", { count: versionNoteLimit })}` : ""}
+          </small>
           {error ? <p className="file-version-annotation-error" role="alert">{t(key + "saveError")} {error}</p> : null}
           <footer>
             <button type="button" disabled={busy} onClick={closeEditor}>{t(key + "cancel")}</button>
-            <button type="submit" className="is-primary" disabled={busy}>{busy ? t(key + "saving") : t(key + "save")}</button>
+            <button type="submit" className="is-primary" disabled={busy || noteTooLong}>{busy ? t(key + "saving") : t(key + "save")}</button>
           </footer>
         </form>
       </dialog>, document.body) : null}

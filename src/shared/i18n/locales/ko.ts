@@ -1,6 +1,15 @@
 export const ko = {
   fileSpace: {
+    versionSummary: {
+      title: "최근 버전",
+      viewAll: "전체 타임라인 보기",
+      loadError: "버전을 불러오지 못했습니다.",
+      retry: "다시 시도",
+      empty: "아직 기록된 버전이 없습니다.",
+      milestone: "마일스톤",
+    },
     versionAnnotation: {
+      tooLong: "메모는 {{count}}자 이내로 입력하세요.",
       star: "v{{version}}을 마일스톤으로 표시",
       unstar: "v{{version}}의 마일스톤 해제",
       add: "v{{version}}에 메모 추가",

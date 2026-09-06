@@ -64,6 +64,7 @@ import {
 } from "./FileSpaceWorkspaceMenu";
 import { FileVersionDiff, type VersionDiffStatus } from "./FileVersionDiff";
 import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
+import { VersionHistoryBadge, type VersionSummary } from "./VersionHistoryBadge";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
 import { globalSearchShortcutLabel } from "./globalSearchShortcut";
@@ -6051,35 +6052,32 @@ export function FileSpacePage() {
                         )}
                       </button>
                       {fileLayoutMode !== "list" && shouldShowFileVersionBadge(file.versionCount) ? (
-                        <button
-                          className="file-space-file-version-count is-history-action"
-                          type="button"
-                          title={t("fileSpace.fileMenu.versionHistory")}
-                          aria-label={`${t("fileSpace.fileMenu.versionHistory")} · ${file.name} · ${t("fileSpace.content.versionCount", { count: file.versionCount })}`}
-                          aria-busy={openingTimelineFileId === file.id}
-                          disabled={Boolean(busyAction) || openingTimelineFileId === file.id}
-                          onPointerDown={(event) => event.stopPropagation()}
-                          onDoubleClick={(event) => event.stopPropagation()}
-                          onKeyDown={(event) => {
-                            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+                        <VersionHistoryBadge
+                          key={`${workspaceGeneration}:${file.id}:${file.updatedAt}:${file.versionCount}`}
+                          name={file.name} count={file.versionCount}
+                          busy={openingTimelineFileId === file.id}
+                          disabled={Boolean(busyAction) || openingTimelineFileId !== null || isTimelinePanelOpen}
+                          loadSummary={async () => {
+                            if (!isTauri()) {
+                              const fixture = createVisualTimeline(file)!;
+                              return { ...fixture, workspaceId: "visual-preview", versions: fixture.versions.slice(0, 5) };
+                            }
+                            const workspaceId = workspaceDirectory?.currentWorkspaceId;
+                            if (!workspaceId) throw new Error("The workspace is unavailable");
+                            const summary = await invoke<VersionSummary>("get_file_version_summary", { workspaceId, fileId: file.id });
+                            if (summary.workspaceId !== workspaceId || summary.fileId !== file.id) throw new Error("The workspace changed");
+                            return summary;
                           }}
                           onContextMenu={(event) => openFileContextMenu(event, file.id)}
-                          onClick={async (event) => {
-                            event.stopPropagation();
-                            if (event.detail > 1) return;
-                            timelineBadgeReturnFocusRef.current = event.currentTarget;
-                            if (await openTimeline(file)) {
+                          onOpen={async (anchor, versionId) => {
+                            timelineBadgeReturnFocusRef.current = anchor;
+                            if (await openTimeline(file, versionId)) {
                               window.requestAnimationFrame(() => {
                                 timelinePanelRef.current?.querySelector<HTMLButtonElement>("header > button")?.focus({ preventScroll: true });
                               });
                             }
                           }}
-                        >
-                          {openingTimelineFileId === file.id
-                            ? <LoaderCircle size={11} className="is-spinning" aria-hidden="true" />
-                            : <Clock3 size={11} aria-hidden="true" />}
-                          <span>{t("fileSpace.content.versionCount", { count: file.versionCount })}</span>
-                        </button>
+                        />
                       ) : null}
                     </div>
                   );

@@ -1,6 +1,15 @@
 export const zh = {
   fileSpace: {
+    versionSummary: {
+      title: "最近版本",
+      viewAll: "查看完整时间线",
+      loadError: "版本加载失败。",
+      retry: "重试",
+      empty: "暂无版本记录。",
+      milestone: "里程碑",
+    },
     versionAnnotation: {
+      tooLong: "备注最多 {{count}} 个字。",
       star: "将 v{{version}} 标为里程碑",
       unstar: "取消 v{{version}} 的里程碑星标",
       add: "为 v{{version}} 添加备注",

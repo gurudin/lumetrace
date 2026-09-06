@@ -4,11 +4,12 @@ import test from "node:test";
 
 const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
 const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");
-const entry = page.slice(page.indexOf('className="file-space-file-version-count is-history-action"'), page.indexOf('className="file-space-selection-marquee"'));
+const entry = readFileSync(new URL("../src/pages/file-space/VersionHistoryBadge.tsx", import.meta.url), "utf8");
 const openTimeline = page.slice(page.indexOf("const openTimeline = async"), page.indexOf("const selectTimelineVersion = async"));
 
 test("the history badge is a sibling button, preserving first-child file-card contracts", () => {
-  assert.match(page, /<\/button>\s*\{fileLayoutMode !== "list" && shouldShowFileVersionBadge\(file.versionCount\) \? \(\s*<button\s+className="file-space-file-version-count is-history-action"/);
+  assert.match(page, /<\/button>\s*\{fileLayoutMode !== "list" && shouldShowFileVersionBadge\(file.versionCount\) \? \(\s*<VersionHistoryBadge/);
+  assert.match(entry, /return <>\s*<button ref=\{badge\} className="file-space-file-version-count is-history-action"/);
   assert.match(page, /<FileArtwork file=\{file\} onImageDimensions=\{recordImageDimensions\} showVersionBadge=\{false\} \/>/);
   assert.match(page, /onPointerDown=\{\(event\) => beginFileDragGesture\(event, file.id\)\}/);
   assert.match(page, /onClick=\{\(event\) => handleFileClick\(event, file.id\)\}/);
@@ -21,11 +22,11 @@ test("the history badge is a sibling button, preserving first-child file-card co
 test("badge click opens the existing timeline without triggering preview, drag, or Space shortcuts", () => {
   assert.match(entry, /onPointerDown=\{\(event\) => event.stopPropagation\(\)\}/);
   assert.match(entry, /onDoubleClick=\{\(event\) => event.stopPropagation\(\)\}/);
-  assert.match(entry, /event.key === "Enter" \|\| event.key === " "/);
+  assert.match(entry, /\["Enter", " ", "ArrowDown", "Tab"\].includes\(event.key\)\) event.stopPropagation/);
   assert.match(entry, /if \(event.detail > 1\) return/);
-  assert.match(entry, /await openTimeline\(file\)/);
-  assert.match(entry, /onContextMenu=\{\(event\) => openFileContextMenu\(event, file.id\)\}/);
-  assert.doesNotMatch(entry, /dispatchEvent|beginFileDragGesture|handleFileClick/);
+  assert.match(page, /await openTimeline\(file, versionId\)/);
+  assert.match(page, /onContextMenu=\{\(event\) => openFileContextMenu\(event, file.id\)\}/);
+  assert.doesNotMatch(entry, /beginFileDragGesture|handleFileClick|new MouseEvent/);
 });
 
 test("opening history preserves paging, selection and other selected files' inspector data", () => {
@@ -37,10 +38,10 @@ test("opening history preserves paging, selection and other selected files' insp
 });
 
 test("the entry has per-file loading feedback, keyboard focus, and reduced motion support", () => {
-  assert.match(entry, /aria-busy=\{openingTimelineFileId === file.id\}/);
-  assert.match(entry, /disabled=\{Boolean\(busyAction\) \|\| openingTimelineFileId === file.id\}/);
-  assert.match(entry, /aria-label=\{[^\n]*file.name/);
-  assert.match(entry, /timelineBadgeReturnFocusRef.current = event.currentTarget/);
+  assert.match(entry, /aria-busy=\{busy\} disabled=\{disabled\}/);
+  assert.match(page, /busy=\{openingTimelineFileId === file.id\}/);
+  assert.match(entry, /aria-label=\{[^\n]*name/);
+  assert.match(page, /timelineBadgeReturnFocusRef.current = anchor/);
   assert.match(page, /trigger.focus\(\{ preventScroll: true \}\)/);
   // A full-window dialog no longer has a clickable outside region.
   assert.match(page, /window\.addEventListener\("focusin", keepTimelineFocus\)/);

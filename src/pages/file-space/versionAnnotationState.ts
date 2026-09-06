@@ -8,6 +8,9 @@ export interface VersionAnnotationUpdate {
   isMilestone: boolean;
 }
 export const versionAnnotationUpdatedEvent = "file-space-version-annotation-updated";
+export const versionNoteLimit = 50;
+// Match Rust's Unicode scalar count; a surrogate pair is not two characters.
+export const versionNoteLength = (note: string) => Array.from(note).length;
 
 export function applyVersionAnnotation<T extends AnnotatedTimeline>(timeline: T | null, update: VersionAnnotationUpdate): T | null {
   if (!timeline || timeline.workspaceId !== update.workspaceId || timeline.fileId !== update.fileId
