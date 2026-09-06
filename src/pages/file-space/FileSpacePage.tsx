@@ -1061,9 +1061,11 @@ function filePreviewSource(file: FileSpaceFileRecord) {
 function FileArtwork({
   file,
   onImageDimensions,
+  showVersionBadge = true,
 }: {
   file: FileSpaceFileRecord;
   onImageDimensions?: (fileId: string, fileUpdatedAt: number, width: number, height: number) => void;
+  showVersionBadge?: boolean;
 }) {
   const { t } = useTranslation();
   const Icon = fileIcon(file);
@@ -1142,7 +1144,7 @@ function FileArtwork({
           <small>{file.name.split(".").pop()?.toUpperCase().slice(0, 5)}</small>
         </>
       )}
-      {shouldShowFileVersionBadge(file.versionCount) ? (
+      {showVersionBadge && shouldShowFileVersionBadge(file.versionCount) ? (
         <span
           className="file-space-file-version-count"
           title={t("fileSpace.content.versionCount", { count: file.versionCount })}
@@ -1259,6 +1261,7 @@ export function FileSpacePage() {
   const [versionPreview, setVersionPreview] = useState<string | null>(null);
   const [timelineBusy, setTimelineBusy] = useState(false);
   const [isTimelinePanelOpen, setTimelinePanelOpen] = useState(false);
+  const [openingTimelineFileId, setOpeningTimelineFileId] = useState<string | null>(null);
   const [diffBeforeVersionId, setDiffBeforeVersionId] = useState<string | null>(null);
   const [diffAfterVersionId, setDiffAfterVersionId] = useState<string | null>(null);
   const [versionDiffStatus, setVersionDiffStatus] = useState<VersionDiffStatus>("idle");
@@ -1325,6 +1328,7 @@ export function FileSpacePage() {
   const sidebarScrollRef = useRef<HTMLDivElement>(null);
   const folderTreeRef = useRef<HTMLDivElement>(null);
   const timelinePanelRef = useRef<HTMLElement>(null);
+  const timelineBadgeReturnFocusRef = useRef<HTMLButtonElement | null>(null);
   const importExistingTriggerRef = useRef<HTMLElement | null>(null);
   const operationRef = useRef<FileSpaceOperation | null>(null);
   const lifecycleRef = useRef({ mounted: false, generation: 0 });
@@ -1416,7 +1420,11 @@ export function FileSpacePage() {
     versionPreviewRequestRef.current += 1;
     versionDiffRequestRef.current += 1;
     setTimelineBusy(false);
+    setOpeningTimelineFileId(null);
     setTimelinePanelOpen(false);
+    const trigger = timelineBadgeReturnFocusRef.current;
+    timelineBadgeReturnFocusRef.current = null;
+    if (trigger?.isConnected) window.requestAnimationFrame(() => trigger.focus({ preventScroll: true }));
   }, []);
 
   const openGlobalSearch = useCallback(() => {
@@ -1434,6 +1442,8 @@ export function FileSpacePage() {
       const target = event.target;
       if (target instanceof Element && target.closest(".mac-select-menu")) return;
       if (!timelinePanelRef.current?.contains(target as Node)) {
+        // A click outside should keep focus on the newly clicked control.
+        timelineBadgeReturnFocusRef.current = null;
         closeTimelinePanel();
       }
     };
@@ -2892,21 +2902,18 @@ export function FileSpacePage() {
     versionPreviewRequestRef.current += 1;
     setFileContextMenu(null);
     setTimelineBusy(true);
+    setOpeningTimelineFileId(file.id);
     setError(null);
     try {
-      let timelineFileRecord = file;
       const loaded = !isTauri()
         ? createVisualTimeline(file)
         : await invoke<TaskFileTimelineRecord>("get_task_file_timeline", { fileId: file.id });
       if (!loaded || requestId !== timelineRequestRef.current || !lifecycleRef.current.mounted) return;
-      if (isTauri()) {
-        const refreshedSnapshot = await invoke<FileSpaceSnapshot>("get_file_space_snapshot");
-        if (requestId !== timelineRequestRef.current || !lifecycleRef.current.mounted) return;
-        setSnapshot(refreshedSnapshot);
-        timelineFileRecord = refreshedSnapshot.files.find((candidate) => candidate.id === file.id) ?? file;
+      // Opening history is read-only: keep the current paged list and its scroll position.
+      if (selectedFileIdsRef.current.size === 1 && selectedFileIdsRef.current.has(file.id)) {
+        setInspectorTimeline(loaded);
       }
-      setInspectorTimeline(loaded);
-      setTimelineFile(timelineFileRecord);
+      setTimelineFile(file);
       setTimeline(loaded);
       const selectedId = loaded.versions.some((version) => version.id === targetVersionId)
         ? targetVersionId! : loaded.currentVersionId;
@@ -2927,6 +2934,7 @@ export function FileSpacePage() {
     } finally {
       if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
         setTimelineBusy(false);
+        setOpeningTimelineFileId(null);
       }
     }
   };
@@ -5975,7 +5983,7 @@ export function FileSpacePage() {
                         onClick={(event) => handleFileClick(event, file.id)}
                         onContextMenu={(event) => openFileContextMenu(event, file.id)}
                       >
-                        <FileArtwork file={file} onImageDimensions={recordImageDimensions} />
+                        <FileArtwork file={file} onImageDimensions={recordImageDimensions} showVersionBadge={false} />
                         {fileLayoutMode === "list" ? (
                           <>
                             <span className="file-space-file-list-name">
@@ -5997,6 +6005,37 @@ export function FileSpacePage() {
                           </span>
                         )}
                       </button>
+                      {fileLayoutMode !== "list" && shouldShowFileVersionBadge(file.versionCount) ? (
+                        <button
+                          className="file-space-file-version-count is-history-action"
+                          type="button"
+                          title={t("fileSpace.fileMenu.versionHistory")}
+                          aria-label={`${t("fileSpace.fileMenu.versionHistory")} · ${file.name} · ${t("fileSpace.content.versionCount", { count: file.versionCount })}`}
+                          aria-busy={openingTimelineFileId === file.id}
+                          disabled={Boolean(busyAction) || openingTimelineFileId === file.id}
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onDoubleClick={(event) => event.stopPropagation()}
+                          onKeyDown={(event) => {
+                            if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+                          }}
+                          onContextMenu={(event) => openFileContextMenu(event, file.id)}
+                          onClick={async (event) => {
+                            event.stopPropagation();
+                            if (event.detail > 1) return;
+                            timelineBadgeReturnFocusRef.current = event.currentTarget;
+                            if (await openTimeline(file)) {
+                              window.requestAnimationFrame(() => {
+                                timelinePanelRef.current?.querySelector<HTMLButtonElement>("header > button")?.focus({ preventScroll: true });
+                              });
+                            }
+                          }}
+                        >
+                          {openingTimelineFileId === file.id
+                            ? <LoaderCircle size={11} className="is-spinning" aria-hidden="true" />
+                            : <Clock3 size={11} aria-hidden="true" />}
+                          <span>{t("fileSpace.content.versionCount", { count: file.versionCount })}</span>
+                        </button>
+                      ) : null}
                     </div>
                   );
                 })}
