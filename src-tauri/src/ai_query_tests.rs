@@ -475,6 +475,9 @@ fn mock_provider(
                     Err(e) => panic!("loopback fixture: {e}"),
                 }
             };
+            // macOS accepted sockets can inherit the listener's nonblocking
+            // flag. The fixture uses bounded blocking reads after acceptance.
+            stream.set_nonblocking(false).unwrap();
             stream
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
