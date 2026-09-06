@@ -44,3 +44,11 @@ test("setup and settings slots use one extension, without imposing a local works
     assert.match(html, new RegExp(`<button>${placement}</button>`));
   }
 });
+
+test("the body-portaled AI panel is hidden without cancelling work behind an extension page", () => {
+  const ai = readFileSync(new URL("../src/pages/file-space/FileSpaceAiSurface.tsx", import.meta.url), "utf8");
+  assert.match(ai, /workspaceHidden = useApplicationExtension\(\)\?\.active/);
+  assert.match(ai, /hidden=\{workspaceHidden\}\s+inert=\{workspaceHidden\}/);
+  assert.match(ai, /if \(!panelOpen \|\| workspaceHidden\) return undefined/);
+  assert.doesNotMatch(ai, /workspaceHidden[^;]*stopQuestion\(/);
+});

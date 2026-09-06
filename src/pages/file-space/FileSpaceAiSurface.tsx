@@ -22,6 +22,7 @@ import remarkGfm from "remark-gfm";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import type { AgentCliKey } from "../../shared/brand/AgentCliLogo";
 import { usePresence } from "../../shared/ui/usePresence";
+import { useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
 import {
   aiAnswerDurationSeconds,
   aiPendingStatusKey,
@@ -372,6 +373,7 @@ function AiHistoryLoadNotice({
 
 export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
   const { t } = useTranslation();
+  const workspaceHidden = useApplicationExtension()?.active ?? false;
   const [panelOpen, setPanelOpen] = useState(false);
   const [loadState, setLoadState] = useState(() => (
     initialAiSurfaceLoadState<AiServiceSettingsSnapshot>()
@@ -488,16 +490,16 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       : null;
 
   useEffect(() => {
-    if (!panelPresence.mounted || !panelOpen) return undefined;
+    if (!panelPresence.mounted || !panelOpen || workspaceHidden) return undefined;
     const frame = window.requestAnimationFrame(() => {
       if (canAsk) composerRef.current?.focus();
       else panelCloseRef.current?.focus();
     });
     return () => window.cancelAnimationFrame(frame);
-  }, [canAsk, panelOpen, panelPresence.mounted]);
+  }, [canAsk, panelOpen, panelPresence.mounted, workspaceHidden]);
 
   useEffect(() => {
-    if (!panelOpen) return undefined;
+    if (!panelOpen || workspaceHidden) return undefined;
     const closeOnEscape = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
       if (document.querySelector('[aria-modal="true"]')) return;
@@ -507,7 +509,7 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
     };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
-  }, [closePanel, panelOpen]);
+  }, [closePanel, panelOpen, workspaceHidden]);
 
   useEffect(() => {
     if (!panelOpen || !shouldFollowConversationRef.current) return undefined;
@@ -656,6 +658,10 @@ export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
       {panelPresence.mounted ? createPortal(
         <aside
           className={`file-space-ai-panel${panelPresence.state === "open" ? " is-open" : ""}`}
+          hidden={workspaceHidden}
+          inert={workspaceHidden}
+          aria-hidden={workspaceHidden}
+          style={workspaceHidden ? { display: "none" } : undefined}
           role="dialog"
           aria-modal="false"
           aria-label={t("fileSpace.ai.workspaceTitle")}
