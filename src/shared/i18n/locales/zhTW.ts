@@ -589,6 +589,8 @@ export const zhTW = {
         versionHistory: "版本歷程",
         showVersionHistory: "顯示版本歷程",
         hideVersionHistory: "隱藏版本歷程",
+        fileVersionCount_one: "目前檔案共 {{count}} 個版本",
+        fileVersionCount_other: "目前檔案共 {{count}} 個版本",
         versionCount_one: "{{count}} 個版本",
         versionCount_other: "{{count}} 個版本",
         current: "目前版本",

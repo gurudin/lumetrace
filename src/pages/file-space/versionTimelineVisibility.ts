@@ -1,3 +1,3 @@
-export function shouldShowVersionTimelineByDefault(versionCount: number) {
-  return versionCount > 0;
+export function shouldShowVersionTimelineByDefault() {
+  return false;
 }

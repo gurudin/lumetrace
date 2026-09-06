@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { usePresence } from "../../shared/ui/usePresence";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { PreviewFileHeading } from "./PreviewFileHeading";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { claimFirstVersionChange, savedVersionNotification, viewVersionChangeEvent } from "./firstVersionChange";
 import type { FileSpaceVersionNotification } from "./versionNotification";
@@ -412,7 +413,7 @@ export function MarkdownPreviewOverlay() {
       setTimeline(null);
       setTimelineLoading(false);
       setTimelineError(null);
-      const timelineInitiallyVisible = shouldShowVersionTimelineByDefault(card.request.versionCount);
+      const timelineInitiallyVisible = shouldShowVersionTimelineByDefault();
       setTimelineVisible(timelineInitiallyVisible);
       setSelectedVersionId(null);
       setVersionError(null);
@@ -521,12 +522,11 @@ export function MarkdownPreviewOverlay() {
       aria-label={copy.dialog(request.name)}
     >
       <header className="file-markdown-preview-toolbar">
-        <div className="file-markdown-preview-title">
-          <strong title={request.name}>{request.name}</strong>
+        <PreviewFileHeading name={request.name} versionCount={timeline?.versions.length ?? request.versionCount}>
           {!loading && !loadError && historicalVersionSelected ? <small>{copy.historicalVersion}</small> : null}
           {!loading && !loadError && dirty ? <small>{copy.unsaved}</small> : null}
           {!loading && !loadError && !dirty && saved ? <small>{copy.saved}</small> : null}
-        </div>
+        </PreviewFileHeading>
         <div className="file-markdown-preview-actions">
           <div className="file-markdown-preview-mode" aria-label={copy.dialog(request.name)}>
             <button

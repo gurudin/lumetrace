@@ -651,6 +651,8 @@ export const zh = {
         versionHistory: "版本记录",
         showVersionHistory: "显示版本记录",
         hideVersionHistory: "隐藏版本记录",
+        fileVersionCount_one: "当前文件共 {{count}} 个版本",
+        fileVersionCount_other: "当前文件共 {{count}} 个版本",
         versionCount_one: "共 {{count}} 个版本",
         versionCount_other: "共 {{count}} 个版本",
         current: "当前版本",

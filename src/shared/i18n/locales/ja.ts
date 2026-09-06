@@ -589,6 +589,8 @@ export const ja = {
         versionHistory: "バージョン履歴",
         showVersionHistory: "バージョン履歴を表示",
         hideVersionHistory: "バージョン履歴を非表示",
+        fileVersionCount_one: "このファイルのバージョン数：{{count}}",
+        fileVersionCount_other: "このファイルのバージョン数：{{count}}",
         versionCount_one: "バージョン {{count}}件",
         versionCount_other: "バージョン {{count}}件",
         current: "現在",

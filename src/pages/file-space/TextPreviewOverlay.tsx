@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { PreviewFileHeading } from "./PreviewFileHeading";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
 import "./text-preview-overlay.css";
@@ -165,7 +166,7 @@ export function TextPreviewOverlay() {
       setContent("");
       setTimeline(null);
       setTimelineError(null);
-      setTimelineVisible(shouldShowVersionTimelineByDefault(target.versionCount));
+      setTimelineVisible(shouldShowVersionTimelineByDefault());
       setSelectedVersionId(null);
       setOpen(true);
       void loadCurrent(target);
@@ -222,10 +223,9 @@ export function TextPreviewOverlay() {
   return (
     <div ref={dialogRef} className="file-text-preview" data-state={presence.state} role="dialog" aria-modal="true" aria-label={copy.dialog(request.name)}>
       <header className="file-text-preview-toolbar">
-        <div>
-          <strong title={request.name}>{request.name}</strong>
+        <PreviewFileHeading name={request.name} versionCount={timeline?.versions.length ?? request.versionCount}>
           {selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}
-        </div>
+        </PreviewFileHeading>
         <div className="file-text-preview-actions">
           <PreviewDiffButton
             active={diffVisible}

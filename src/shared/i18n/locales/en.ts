@@ -651,6 +651,8 @@ export const en = {
         versionHistory: "Version history",
         showVersionHistory: "Show version history",
         hideVersionHistory: "Hide version history",
+        fileVersionCount_one: "This file has {{count}} version",
+        fileVersionCount_other: "This file has {{count}} versions",
         versionCount_one: "{{count}} version",
         versionCount_other: "{{count}} versions",
         current: "Current",

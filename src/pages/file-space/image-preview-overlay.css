@@ -28,30 +28,8 @@
   gap: 18px;
 }
 
-.file-image-preview-toolbar > div:first-child {
-  display: flex;
-  height: 32px;
-  margin-top: -10px;
-  min-width: 0;
-  align-self: flex-start;
-  align-items: center;
-  gap: 9px;
-}
-
-.file-image-preview-toolbar > div:first-child > strong {
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--font-size-body);
-  font-weight: 560;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.file-image-preview-toolbar > div:first-child > small {
-  flex: 0 0 auto;
-  color: rgba(255,255,255,.58);
-  font-size: var(--font-size-secondary);
-}
+.file-image-preview .file-preview-heading { --preview-heading-secondary: rgba(255, 255, 255, .58); }
+.file-image-preview .file-preview-heading-row > strong { font-weight: 560; }
 
 .file-image-preview-controls {
   display: flex;

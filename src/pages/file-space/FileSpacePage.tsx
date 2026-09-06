@@ -1864,6 +1864,20 @@ export function FileSpacePage() {
           || previewParameters.has("timelinePreview")
         ) {
           const fixture = createVisualFixture();
+          if (previewParameters.has("fileSpacePreview") && previewParameters.has("previewVersionCount")) {
+            // Synthetic preview metadata only; never reads or changes a real file.
+            const count = Number(previewParameters.get("previewVersionCount"));
+            if (Number.isInteger(count) && count >= 0 && count <= 40) {
+              fixture.files[7] = {
+                ...fixture.files[7],
+                name: previewParameters.has("previewLongName")
+                  ? "Launch Plan with a very long filename for checking version count and toolbar layout at minimum window size.md"
+                  : "Launch Plan.md",
+                versionCount: count,
+                currentVersion: count || null,
+              };
+            }
+          }
           if (previewParameters.has("timelinePreview")) {
             // Browser-only density fixture: no workspace, snapshot, or service access.
             const file: FileSpaceFileRecord = {

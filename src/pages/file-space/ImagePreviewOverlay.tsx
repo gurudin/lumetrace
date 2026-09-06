@@ -7,6 +7,7 @@ import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVers
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { calculateWheelZoom, normalizeWheelDelta } from "./imagePreviewZoom";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { PreviewFileHeading } from "./PreviewFileHeading";
 import "./image-preview-overlay.css";
 
 interface ImagePreviewRequest {
@@ -236,7 +237,7 @@ export function ImagePreviewOverlay() {
       resetView();
       setTimeline(null);
       setTimelineError(null);
-      setTimelineVisible(shouldShowVersionTimelineByDefault(target.versionCount));
+      setTimelineVisible(shouldShowVersionTimelineByDefault());
       setSelectedVersionId(null);
       void loadTimeline(target);
     };
@@ -345,7 +346,9 @@ export function ImagePreviewOverlay() {
       aria-label={copy.preview(request.name)}
     >
       <header className="file-image-preview-toolbar">
-        <div><strong title={request.name}>{request.name}</strong>{selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}</div>
+        <PreviewFileHeading name={request.name} versionCount={timeline?.versions.length ?? request.versionCount}>
+          {selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}
+        </PreviewFileHeading>
         <div className="file-image-preview-controls">
           <button
             type="button"

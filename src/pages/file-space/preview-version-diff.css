@@ -49,5 +49,4 @@
 @media (max-width: 980px) {
   .file-markdown-preview-body.is-diff,
   .file-text-preview-body.is-diff { padding-inline: 16px; }
-  .file-markdown-preview-title > small { max-width: 100px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 }

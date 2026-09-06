@@ -17,6 +17,7 @@ import { usePresence } from "../../shared/ui/usePresence";
 import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVersionTimelineRail";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
+import { PreviewFileHeading } from "./PreviewFileHeading";
 import "./pdf-preview-overlay.css";
 
 interface PdfPreviewRequest {
@@ -356,7 +357,7 @@ export function PdfPreviewOverlay() {
       setRequest(card.request);
       setTimeline(null);
       setTimelineError(null);
-      setTimelineVisible(shouldShowVersionTimelineByDefault(card.request.versionCount));
+      setTimelineVisible(shouldShowVersionTimelineByDefault());
       setSelectedVersionId(null);
       setOpen(true);
       void loadPdf(card.request);
@@ -494,7 +495,9 @@ export function PdfPreviewOverlay() {
       aria-label={copy.dialog(request.name)}
     >
       <header className="file-pdf-preview-toolbar">
-        <div className="file-pdf-preview-title"><strong title={request.name}>{request.name}</strong>{selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}</div>
+        <PreviewFileHeading name={request.name} versionCount={timeline?.versions.length ?? request.versionCount}>
+          {selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}
+        </PreviewFileHeading>
         <div className="file-pdf-preview-controls">
           <button type="button" disabled={!pdfDocument || currentPage <= 1} onClick={() => scrollToPage(currentPage - 1)} title={copy.previous} aria-label={copy.previous}>
             <ChevronLeft size={17} />

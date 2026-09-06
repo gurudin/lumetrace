@@ -589,6 +589,8 @@ export const es = {
         versionHistory: "Historial de versiones",
         showVersionHistory: "Mostrar el historial de versiones",
         hideVersionHistory: "Ocultar el historial de versiones",
+        fileVersionCount_one: "Este archivo tiene {{count}} versión",
+        fileVersionCount_other: "Este archivo tiene {{count}} versiones",
         versionCount_one: "{{count}} versión",
         versionCount_other: "{{count}} versiones",
         current: "Actual",

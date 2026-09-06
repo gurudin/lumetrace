@@ -589,6 +589,8 @@ export const ko = {
         versionHistory: "버전 기록",
         showVersionHistory: "버전 기록 표시",
         hideVersionHistory: "버전 기록 숨기기",
+        fileVersionCount_one: "현재 파일의 버전: {{count}}개",
+        fileVersionCount_other: "현재 파일의 버전: {{count}}개",
         versionCount_one: "버전 {{count}}개",
         versionCount_other: "버전 {{count}}개",
         current: "현재",
