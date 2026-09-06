@@ -25,15 +25,24 @@ fn show_main_window<R: tauri::Runtime>(app: &tauri::AppHandle<R>) {
     }
 }
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
+/// Launch the common workspace using the calling application's identity and assets.
+pub fn run(context: tauri::Context<tauri::Wry>) {
+    run_with_plugins(context, Vec::new());
+}
+
+/// Edition extensions use namespaced Tauri plugins, never a replacement command handler.
+/// This is an internal integration seam, not an external plugin marketplace API.
+pub fn run_with_plugins(
+    context: tauri::Context<tauri::Wry>,
+    plugins: Vec<tauri::plugin::TauriPlugin<tauri::Wry>>,
+) {
     let startup_ready = Arc::new(AtomicBool::new(false));
     let ready_for_page = Arc::clone(&startup_ready);
     let ready_for_instance = Arc::clone(&startup_ready);
     #[cfg(target_os = "macos")]
     let ready_for_reopen = Arc::clone(&startup_ready);
 
-    let app = tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(move |app, _, _| {
             if ready_for_instance.load(Ordering::Acquire) {
                 show_main_window(app);
@@ -154,8 +163,12 @@ pub fn run() {
             file_space::inspect_file_space_dropped_conflicts,
             file_space::import_file_space_dropped_files,
             file_space::cancel_file_space_import
-        ])
-        .build(tauri::generate_context!())
+        ]);
+    for plugin in plugins {
+        builder = builder.plugin(plugin);
+    }
+    let app = builder
+        .build(context)
         .expect("error while building Lume Trace");
     app.run(move |app, event| {
         #[cfg(target_os = "macos")]

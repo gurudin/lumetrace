@@ -27,6 +27,14 @@ For every material UI or interaction change:
 7. Verify with realistic maximum-density content at the default window size and minimum supported size. Check light and dark appearances, scrolling, selection, menus, Popovers, Panels, Sheets, empty states, loading states, errors, and disabled states.
 8. Compare the rendered result with the approved reference at the level of hierarchy, grouping, spacing, disclosure, and control placement, not only colors and corner radii.
 
+## Community / professional ownership
+
+- Everything implemented at the edition split remains free and open source here: file spaces, monitoring, Timeline, Diff, restore, previews, trash, search, semantic indexing, AI providers/chat, settings and localization.
+- Shared bug fixes, security fixes, performance improvements and UI/UX polish belong here, not in a professional-only fork. Professional integration uses a pinned commit of this repository.
+- New paid product capabilities belong in the private `lumetrace-pro` repository. Do not add payment checks or remove existing functionality here. Clarify ambiguous new feature ownership with the user.
+- Shared frontend initialization is `src/bootstrap.tsx`; shared build configuration is `build/createViteConfig.ts`. The Rust library takes its caller's Tauri context; each edition owns its binary/configuration. Never duplicate the common command handler, worker lifecycle or migrations in Pro.
+- See `docs/EDITIONS.md` for repository boundaries, dependency updates, data isolation and licensing constraints. Do not publish private modules or local competitor research into this repository.
+
 ## Desktop development
 
 - During development, run the desktop application with `npm run tauri:dev`.

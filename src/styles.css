@@ -1,4 +1,6 @@
 @import "tailwindcss";
+/* Also scan the shared UI when this repository is a pinned edition dependency. */
+@source "./";
 
 :root {
   --font-family-ui:
