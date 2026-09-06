@@ -34,7 +34,9 @@ The selected AI service settings and installed semantic-model setting are copied
 
 ## Database schema migrations
 
-Workspace databases use SQLite `PRAGMA user_version`. The current schema version is `3`.
+Workspace databases use SQLite `PRAGMA user_version`. The current schema version is `4`.
+
+- Migration 4 adds per-version `note` and `is_milestone` metadata with empty/unstarred defaults. It does not create snapshots or change current-version pointers, timestamps, file contents or indexes. These labels are shared Community/Pro capabilities and are included in workspace database backups.
 
 - A database with `user_version = 0`, including a database created before explicit schema versioning, is upgraded through migration 1 when it is opened.
 - Migration 2 adds the reserved `context_json` column to AI turns; it does not by itself implement structured AI context or historical comparison in chat.

@@ -63,6 +63,7 @@ import {
   type FileSpaceWorkspaceMutation,
 } from "./FileSpaceWorkspaceMenu";
 import { FileVersionDiff, type VersionDiffStatus } from "./FileVersionDiff";
+import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
 import { globalSearchShortcutLabel } from "./globalSearchShortcut";
@@ -158,6 +159,8 @@ interface FileSpaceFileRecord {
 }
 
 interface TaskFileVersionRecord {
+  note?: string;
+  isMilestone?: boolean;
   id: string;
   versionNumber: number;
   name: string;
@@ -183,6 +186,7 @@ interface TaskFileEventRecord {
 }
 
 interface TaskFileTimelineRecord {
+  workspaceId?: string;
   fileId: string;
   logicalKey: string;
   currentVersionId: string;
@@ -911,6 +915,7 @@ function createVisualTimeline(file: FileSpaceFileRecord): TaskFileTimelineRecord
   return {
     fileId: file.id,
     logicalKey: file.relativePath,
+    workspaceId: "visual-preview",
     currentVersionId: versions.find((version) => version.isCurrent)?.id ?? versions[0].id,
     versions,
     events: [],
@@ -1256,6 +1261,7 @@ export function FileSpacePage() {
   const [tagFileId, setTagFileId] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState("");
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
+  useVersionAnnotationUpdates(setTimeline);
   const [timelineFile, setTimelineFile] = useState<FileSpaceFileRecord | null>(null);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionPreview, setVersionPreview] = useState<string | null>(null);
@@ -1473,6 +1479,7 @@ export function FileSpacePage() {
     };
     const keepTimelineFocus = (event: FocusEvent) => {
       const target = event.target;
+      if (target instanceof Element && target.closest(".file-version-note-dialog")) return;
       if (target instanceof Element && target.closest(".mac-select-menu")) return;
       if (!panel.contains(target as Node)) focusCloseButton();
     };
@@ -6349,6 +6356,7 @@ export function FileSpacePage() {
                       {version.roundNumber ? <span>{t("fileSpace.timeline.round", { count: version.roundNumber })} · {version.cellName}</span> : null}
                       <small>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(version.producedAt)}</small>
                     </button>
+                    <VersionAnnotation workspaceId={timeline.workspaceId} fileId={timeline.fileId} version={version} disabled={timelineBusy} />
                     {!version.isCurrent ? (
                       <button type="button" disabled={timelineBusy} onClick={() => void setCurrentTimelineVersion(version.id)}>{t("fileSpace.timeline.setCurrent")}</button>
                     ) : null}

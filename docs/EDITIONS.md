@@ -15,6 +15,8 @@ LumeTrace's existing functionality remains in the free, AGPL community edition. 
 
 Community is a complete application, not a trial. A new paid capability does not justify moving a pre-existing feature or its maintenance into Pro. Confirm unclear feature boundaries before implementation.
 
+Version notes and milestone stars are explicitly shared Community/Pro features. Their UI, storage and migrations belong in Community and are reused by Pro, without payment checks.
+
 ## One implementation, two entries
 
 The current layout stays in place to avoid a disruptive directory migration:

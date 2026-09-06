@@ -1,5 +1,20 @@
 export const fr = {
   fileSpace: {
+    versionAnnotation: {
+      star: "Marquer v{{version}} comme jalon",
+      unstar: "Retirer le jalon de v{{version}}",
+      add: "Ajouter une note à v{{version}}",
+      edit: "Modifier la note de v{{version}}",
+      addShort: "Ajouter une note",
+      title: "v{{version}} · Note de version",
+      hint: "Décrivez l’importance de cette version. Le contenu du fichier ne sera pas modifié.",
+      field: "Note de version",
+      placeholder: "Exemple : Plan de lancement approuvé",
+      cancel: "Annuler",
+      save: "Enregistrer",
+      saving: "Enregistrement…",
+      saveError: "Échec de l’enregistrement.",
+    },
     eyebrow: "Espace de fichiers traçable",
     title: "Lume Trace",
     subtitle: "Gérez les fichiers, leurs versions, leurs Tags et leur historique traçable au même endroit.",

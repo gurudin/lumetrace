@@ -12,6 +12,7 @@ import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { claimFirstVersionChange, savedVersionNotification, viewVersionChangeEvent } from "./firstVersionChange";
 import type { FileSpaceVersionNotification } from "./versionNotification";
 import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
+import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
 import "./markdown-preview-overlay.css";
 
 interface MarkdownPreviewRequest {
@@ -23,6 +24,8 @@ interface MarkdownPreviewRequest {
 }
 
 interface TaskFileVersionRecord {
+  note?: string;
+  isMilestone?: boolean;
   id: string;
   versionNumber: number;
   name: string;
@@ -39,6 +42,7 @@ interface TaskFileVersionRecord {
 }
 
 interface TaskFileTimelineRecord {
+  workspaceId?: string;
   fileId: string;
   logicalKey: string;
   currentVersionId: string;
@@ -140,6 +144,7 @@ function createTimelineVisualFixture(target: MarkdownPreviewRequest): TaskFileTi
   });
   return {
     fileId: target.fileId,
+    workspaceId: "visual-preview",
     logicalKey: "artifact-test",
     currentVersionId: `fixture-version-${currentVersion}`,
     versions,
@@ -194,6 +199,7 @@ export function MarkdownPreviewOverlay() {
   const [firstVersionChange, setFirstVersionChange] = useState<FileSpaceVersionNotification | null>(null);
   const [confirmClose, setConfirmClose] = useState(false);
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
+  useVersionAnnotationUpdates(setTimeline);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
@@ -643,6 +649,7 @@ export function MarkdownPreviewOverlay() {
                       <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
                       {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
                     </button>
+                    <VersionAnnotation workspaceId={timeline.workspaceId} fileId={request.fileId} version={version} disabled={dirty || saving} />
                   </li>
                 ))}
               </ol>

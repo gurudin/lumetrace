@@ -8,6 +8,7 @@ mod file_query;
 mod file_space;
 mod pdf_preview;
 mod semantic_search;
+mod version_annotation;
 mod version_comparison;
 mod workspace;
 
@@ -146,6 +147,7 @@ pub fn run_with_plugins(
             file_space::open_file_space_file,
             file_space::choose_application_for_file_space_file,
             file_space::get_task_file_timeline,
+            version_annotation::update_file_version_annotation,
             file_space::set_current_task_file_version,
             file_space::read_task_file_version,
             version_comparison::get_task_file_text_diff,

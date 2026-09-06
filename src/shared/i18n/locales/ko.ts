@@ -1,5 +1,20 @@
 export const ko = {
   fileSpace: {
+    versionAnnotation: {
+      star: "v{{version}}을 마일스톤으로 표시",
+      unstar: "v{{version}}의 마일스톤 해제",
+      add: "v{{version}}에 메모 추가",
+      edit: "v{{version}}의 메모 편집",
+      addShort: "메모 추가",
+      title: "v{{version}} · 버전 메모",
+      hint: "이 버전의 중요한 점을 기록하세요. 파일 내용은 변경되지 않습니다.",
+      field: "버전 메모",
+      placeholder: "예: 승인된 출시 계획",
+      cancel: "취소",
+      save: "저장",
+      saving: "저장 중…",
+      saveError: "저장하지 못했습니다.",
+    },
     eyebrow: "추적 가능한 파일 작업 공간",
     title: "Lume Trace",
     subtitle: "파일, 버전, Tag, 추적 가능한 기록을 한곳에서 관리하세요.",

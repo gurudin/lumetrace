@@ -1,5 +1,20 @@
 export const ja = {
   fileSpace: {
+    versionAnnotation: {
+      star: "v{{version}} をマイルストーンに設定",
+      unstar: "v{{version}} のマイルストーンを解除",
+      add: "v{{version}} にメモを追加",
+      edit: "v{{version}} のメモを編集",
+      addShort: "メモを追加",
+      title: "v{{version}} · バージョンメモ",
+      hint: "このバージョンの重要な点を記録します。ファイルの内容は変更されません。",
+      field: "バージョンメモ",
+      placeholder: "例：承認済みのリリース計画",
+      cancel: "キャンセル",
+      save: "保存",
+      saving: "保存中…",
+      saveError: "保存できませんでした。",
+    },
     eyebrow: "追跡可能なファイルワークスペース",
     title: "Lume Trace",
     subtitle: "ファイル、バージョン、Tag、追跡可能な履歴を一元管理します。",

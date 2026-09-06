@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 
 // Migration numbers are append-only once released. Never change or reuse an
 // existing number; add a new migration and advance CURRENT_SCHEMA_VERSION.
-const CURRENT_SCHEMA_VERSION: i64 = 3;
+const CURRENT_SCHEMA_VERSION: i64 = 4;
 
 const MIGRATION_1_SCHEMA: &str = r#"
 
@@ -515,6 +515,10 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
                    INSERT INTO file_space_file_lookup SELECT new.id, new.original_name, new.storage_path
                    WHERE new.trashed_at IS NULL AND new.storage_path IS NOT NULL;
                  END;",
+            ),
+            4 => transaction.execute_batch(
+                "ALTER TABLE file_space_artifact_versions ADD COLUMN note TEXT NOT NULL DEFAULT '';
+                 ALTER TABLE file_space_artifact_versions ADD COLUMN is_milestone INTEGER NOT NULL DEFAULT 0 CHECK (is_milestone IN (0, 1));",
             ),
             // CURRENT_SCHEMA_VERSION and this match must advance together.
             _ => unreachable!("missing migration for schema version {next_version}"),
@@ -1076,6 +1080,42 @@ mod tests {
     }
 
     #[test]
+    fn schema_four_adds_annotation_defaults_to_existing_v3_versions() {
+        // Released v3 version rows have no note/star columns. Use the original
+        // schema, not a current database with its migration marker rolled back.
+        let mut connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(MIGRATION_1_SCHEMA).unwrap();
+        connection.execute_batch(
+            "ALTER TABLE file_space_ai_turns ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';
+             CREATE TABLE file_space_file_lookup(file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE, file_name TEXT NOT NULL COLLATE NOCASE, relative_path TEXT NOT NULL COLLATE NOCASE);
+             INSERT INTO files(id,original_name,storage_path,created_at) VALUES('file','test-version.md','test-version.md',1);
+             INSERT INTO file_space_artifacts(file_id,task_id,logical_key,current_version_id,created_at,updated_at) VALUES('file','synthetic','test-version.md','v1',1,1);
+             INSERT INTO file_space_artifact_versions(id,file_id,version_number,snapshot_path,sha256,size_bytes,produced_name,origin,produced_at,created_at)
+             VALUES('v1','file',1,'synthetic.blob','synthetic-hash',11,'test-version.md','user_edit',1,1);"
+        ).unwrap();
+        connection.pragma_update(None, "user_version", 3).unwrap();
+        migrate_connection(&mut connection).unwrap();
+        let row = connection.query_row("SELECT note,is_milestone,sha256,version_number FROM file_space_artifact_versions WHERE id='v1'", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))).unwrap();
+        assert_eq!(row, ("".to_owned(), false, "synthetic-hash".to_owned(), 1));
+        assert_eq!(schema_version(&connection), 4);
+        connection
+            .execute(
+                "UPDATE file_space_artifact_versions SET note='Launch milestone',is_milestone=1",
+                [],
+            )
+            .unwrap();
+        migrate_connection(&mut connection).unwrap();
+        assert_eq!(
+            connection
+                .query_row("SELECT note FROM file_space_artifact_versions", [], |r| {
+                    r.get::<_, String>(0)
+                })
+                .unwrap(),
+            "Launch milestone"
+        );
+    }
+
+    #[test]
     fn schema_three_upgrades_v2_without_scanning_files_or_touching_history() {
         let mut connection = Connection::open_in_memory().unwrap();
         let transaction = connection.transaction().unwrap();
@@ -1087,7 +1127,7 @@ mod tests {
         transaction.pragma_update(None, "user_version", 2).unwrap();
         transaction.commit().unwrap();
         migrate_connection(&mut connection).unwrap();
-        assert_eq!(schema_version(&connection), 3);
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
         assert_eq!(
             connection
                 .query_row("SELECT COUNT(*) FROM file_space_file_lookup", [], |r| r

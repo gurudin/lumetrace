@@ -15,6 +15,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVersionTimelineRail";
+import { useVersionAnnotationUpdates } from "./VersionAnnotation";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import { PreviewFileHeading } from "./PreviewFileHeading";
@@ -27,7 +28,7 @@ interface PdfPreviewRequest {
   versionCount: number;
 }
 
-interface PdfTaskTimeline { currentVersionId: string; versions: PreviewTaskFileVersion[]; }
+interface PdfTaskTimeline { workspaceId?: string; fileId: string; currentVersionId: string; versions: PreviewTaskFileVersion[]; }
 
 interface PdfPageCanvasProps {
   document: PDFDocumentProxy;
@@ -201,6 +202,7 @@ export function PdfPreviewOverlay() {
   const [fitScale, setFitScale] = useState(1);
   const [scrollRoot, setScrollRoot] = useState<HTMLElement | null>(null);
   const [timeline, setTimeline] = useState<PdfTaskTimeline | null>(null);
+  useVersionAnnotationUpdates(setTimeline);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
@@ -553,7 +555,7 @@ export function PdfPreviewOverlay() {
       >
         {hasTimeline ? (
           <VersionTimelineRegion visible={showTimeline}>
-            <TaskVersionTimelineRail id="file-pdf-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={loading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
+            <TaskVersionTimelineRail workspaceId={timeline?.workspaceId} fileId={request.fileId} id="file-pdf-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={loading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
           </VersionTimelineRegion>
         ) : null}
         {hasTimeline ? (

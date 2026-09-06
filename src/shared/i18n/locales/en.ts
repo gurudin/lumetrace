@@ -1,5 +1,20 @@
 export const en = {
   fileSpace: {
+    versionAnnotation: {
+      star: "Mark v{{version}} as a milestone",
+      unstar: "Unmark v{{version}} as a milestone",
+      add: "Add a note to v{{version}}",
+      edit: "Edit the note for v{{version}}",
+      addShort: "Add note",
+      title: "v{{version}} · Version note",
+      hint: "Describe why this version matters. The file content will not change.",
+      field: "Version note",
+      placeholder: "For example: Approved launch plan",
+      cancel: "Cancel",
+      save: "Save",
+      saving: "Saving…",
+      saveError: "Couldn’t save.",
+    },
     eyebrow: "Traceable file workspace",
     title: "Lume Trace",
     subtitle: "Manage files, versions, tags, and traceable history in one place.",

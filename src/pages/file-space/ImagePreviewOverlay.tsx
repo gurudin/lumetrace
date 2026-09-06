@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { TaskVersionTimelineRail, type PreviewTaskFileVersion } from "./TaskVersionTimelineRail";
+import { useVersionAnnotationUpdates } from "./VersionAnnotation";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { calculateWheelZoom, normalizeWheelDelta } from "./imagePreviewZoom";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
@@ -20,7 +21,7 @@ interface ImagePreviewRequest {
 }
 
 interface ImageTaskFileVersion extends PreviewTaskFileVersion { mimeType: string | null; }
-interface ImageTaskTimeline { currentVersionId: string; versions: ImageTaskFileVersion[]; }
+interface ImageTaskTimeline { workspaceId?: string; fileId: string; currentVersionId: string; versions: ImageTaskFileVersion[]; }
 
 interface DragState {
   pointerId: number;
@@ -70,6 +71,7 @@ export function ImagePreviewOverlay() {
   const [dragging, setDragging] = useState(false);
   const [wheelZooming, setWheelZooming] = useState(false);
   const [timeline, setTimeline] = useState<ImageTaskTimeline | null>(null);
+  useVersionAnnotationUpdates(setTimeline);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
@@ -403,7 +405,7 @@ export function ImagePreviewOverlay() {
       <div className={`file-image-preview-workspace file-preview-version-workspace${showTimeline ? " has-version-timeline" : ""}`}>
         {hasTimeline ? (
           <VersionTimelineRegion visible={showTimeline}>
-            <TaskVersionTimelineRail id="file-image-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={versionLoading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} tone="dark" copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
+            <TaskVersionTimelineRail workspaceId={timeline?.workspaceId} fileId={request.fileId} id="file-image-version-timeline" versions={timeline?.versions ?? null} versionCount={request.versionCount} selectedVersionId={selectedVersionId} loading={timelineLoading} error={timelineError} disabled={versionLoading} locale={i18n.resolvedLanguage ?? "en-US"} onSelect={(version) => void selectVersion(version)} onRetry={() => void loadTimeline(request)} tone="dark" copy={{ title: copy.versionHistory, count: copy.versionCount, loading: copy.timelineLoading, loadError: copy.timelineError, retry: copy.retry, current: copy.current, userEdit: copy.userEdit, round: copy.round }} />
           </VersionTimelineRegion>
         ) : null}
         {hasTimeline ? (

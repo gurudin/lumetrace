@@ -1,7 +1,10 @@
 import { AlertTriangle, History, LoaderCircle } from "lucide-react";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
+import { VersionAnnotation } from "./VersionAnnotation";
 
 export interface PreviewTaskFileVersion {
+  note?: string;
+  isMilestone?: boolean;
   id: string;
   versionNumber: number;
   origin: "task" | "user_edit";
@@ -13,6 +16,8 @@ export interface PreviewTaskFileVersion {
 }
 
 interface TaskVersionTimelineRailProps {
+  workspaceId?: string;
+  fileId: string;
   id?: string;
   versions: PreviewTaskFileVersion[] | null;
   versionCount: number;
@@ -37,6 +42,8 @@ interface TaskVersionTimelineRailProps {
 }
 
 export function TaskVersionTimelineRail({
+  workspaceId,
+  fileId,
   id,
   versions,
   versionCount,
@@ -72,6 +79,7 @@ export function TaskVersionTimelineRail({
                 <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
                 {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
               </button>
+              <VersionAnnotation workspaceId={workspaceId} fileId={fileId} version={version} />
             </li>
           ))}
         </ol>

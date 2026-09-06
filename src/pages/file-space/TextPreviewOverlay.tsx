@@ -8,6 +8,7 @@ import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility"
 import { PreviewFileHeading } from "./PreviewFileHeading";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
+import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
 import "./text-preview-overlay.css";
 
 interface TextPreviewRequest {
@@ -18,6 +19,8 @@ interface TextPreviewRequest {
 }
 
 interface TaskFileVersionRecord {
+  note?: string;
+  isMilestone?: boolean;
   id: string;
   versionNumber: number;
   sizeBytes: number;
@@ -30,6 +33,7 @@ interface TaskFileVersionRecord {
 }
 
 interface TaskFileTimelineRecord {
+  workspaceId?: string;
   fileId: string;
   currentVersionId: string;
   versions: TaskFileVersionRecord[];
@@ -67,6 +71,7 @@ export function TextPreviewOverlay() {
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [timeline, setTimeline] = useState<TaskFileTimelineRecord | null>(null);
+  useVersionAnnotationUpdates(setTimeline);
   const [timelineLoading, setTimelineLoading] = useState(false);
   const [timelineError, setTimelineError] = useState<string | null>(null);
   const [timelineVisible, setTimelineVisible] = useState(false);
@@ -252,6 +257,7 @@ export function TextPreviewOverlay() {
                           <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
                           {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
                         </button>
+                        <VersionAnnotation workspaceId={timeline.workspaceId} fileId={request.fileId} version={version} />
                       </li>
                     ))}
                   </ol>

@@ -1,5 +1,20 @@
 export const de = {
   fileSpace: {
+    versionAnnotation: {
+      star: "v{{version}} als Meilenstein markieren",
+      unstar: "Meilenstein für v{{version}} entfernen",
+      add: "Notiz zu v{{version}} hinzufügen",
+      edit: "Notiz zu v{{version}} bearbeiten",
+      addShort: "Notiz hinzufügen",
+      title: "v{{version}} · Versionsnotiz",
+      hint: "Beschreibe die Bedeutung dieser Version. Der Dateiinhalt bleibt unverändert.",
+      field: "Versionsnotiz",
+      placeholder: "Zum Beispiel: Freigegebener Startplan",
+      cancel: "Abbrechen",
+      save: "Speichern",
+      saving: "Wird gespeichert…",
+      saveError: "Speichern fehlgeschlagen.",
+    },
     eyebrow: "Nachvollziehbarer Datei-Arbeitsbereich",
     title: "Lume Trace",
     subtitle: "Dateien, Versionen und Tags mit nachvollziehbarem Verlauf zentral verwalten.",

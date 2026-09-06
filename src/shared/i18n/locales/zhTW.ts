@@ -1,5 +1,20 @@
 export const zhTW = {
   fileSpace: {
+    versionAnnotation: {
+      star: "將 v{{version}} 標為里程碑",
+      unstar: "取消 v{{version}} 的里程碑星標",
+      add: "為 v{{version}} 新增備註",
+      edit: "編輯 v{{version}} 的備註",
+      addShort: "新增備註",
+      title: "v{{version}} · 版本備註",
+      hint: "記錄這一版的重要之處，不會修改檔案內容。",
+      field: "版本備註",
+      placeholder: "例如：已確認的發布方案",
+      cancel: "取消",
+      save: "儲存",
+      saving: "儲存中…",
+      saveError: "儲存失敗。",
+    },
     eyebrow: "可追溯檔案工作區",
     title: "Lume Trace",
     subtitle: "集中管理檔案、版本、Tag 與可追溯歷程。",

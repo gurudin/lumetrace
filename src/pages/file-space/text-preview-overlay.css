@@ -39,12 +39,12 @@
 .file-text-version-timeline > header span { font-size: var(--font-size-secondary); font-weight: 620; }
 .file-text-version-timeline > header small { font-size: var(--font-size-xs); }
 .file-text-version-list { display: grid; margin: 0; padding: 0; gap: 3px; list-style: none; }
-.file-text-version-list button { display: grid; width: 100%; min-width: 0; padding: 10px; gap: 4px; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; text-align: left; cursor: pointer; }
-.file-text-version-list button:hover, .file-text-version-list li.is-selected button { color: var(--text); background: var(--surface); }
+.file-text-version-list > li > button { display: grid; width: 100%; min-width: 0; padding: 10px; gap: 4px; border: 0; border-radius: 8px; color: var(--text-muted); background: transparent; text-align: left; cursor: pointer; }
+.file-text-version-list > li > button:hover, .file-text-version-list > li.is-selected > button { color: var(--text); background: var(--surface); }
 .file-text-version-list time, .file-text-version-list small { font-size: var(--font-size-2xs); font-variant-numeric: tabular-nums; }
 .file-text-version-list strong { display: flex; align-items: center; gap: 6px; font-size: var(--font-size-secondary); }
 .file-text-version-list strong span { padding: 1px 5px; border-radius: 4px; color: var(--text-muted); background: var(--surface-subtle); font-size: var(--font-size-2xs); font-weight: 500; }
-.file-text-version-list button > span { overflow: hidden; font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
+.file-text-version-list > li > button > span { overflow: hidden; font-size: var(--font-size-xs); text-overflow: ellipsis; white-space: nowrap; }
 
 .file-text-preview-body { min-width: 0; min-height: 0; padding: 36px clamp(28px, 6vw, 96px); overflow: auto; }
 .file-text-preview-body > pre { max-width: 920px; margin: 0 auto; color: var(--text); font: 400 var(--font-size-body)/1.72 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }

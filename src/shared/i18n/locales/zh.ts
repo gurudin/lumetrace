@@ -1,5 +1,20 @@
 export const zh = {
   fileSpace: {
+    versionAnnotation: {
+      star: "将 v{{version}} 标为里程碑",
+      unstar: "取消 v{{version}} 的里程碑星标",
+      add: "为 v{{version}} 添加备注",
+      edit: "编辑 v{{version}} 的备注",
+      addShort: "添加备注",
+      title: "v{{version}} · 版本备注",
+      hint: "记录这一版的重要之处，不会修改文件内容。",
+      field: "版本备注",
+      placeholder: "例如：已确认的发布方案",
+      cancel: "取消",
+      save: "保存",
+      saving: "保存中…",
+      saveError: "保存失败。",
+    },
     eyebrow: "可追溯文件工作台",
     title: "Lume Trace",
     subtitle: "统一管理文件、版本、标签与可追溯历史。",

@@ -1,5 +1,20 @@
 export const es = {
   fileSpace: {
+    versionAnnotation: {
+      star: "Marcar v{{version}} como hito",
+      unstar: "Quitar el hito de v{{version}}",
+      add: "Añadir nota a v{{version}}",
+      edit: "Editar nota de v{{version}}",
+      addShort: "Añadir nota",
+      title: "v{{version}} · Nota de versión",
+      hint: "Describe por qué importa esta versión. El contenido del archivo no cambiará.",
+      field: "Nota de versión",
+      placeholder: "Por ejemplo: Plan de lanzamiento aprobado",
+      cancel: "Cancelar",
+      save: "Guardar",
+      saving: "Guardando…",
+      saveError: "No se pudo guardar.",
+    },
     eyebrow: "Espacio de archivos con trazabilidad",
     title: "Lume Trace",
     subtitle: "Gestiona archivos, versiones, Tags e historial trazable en un solo lugar.",

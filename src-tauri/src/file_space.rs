@@ -75,6 +75,8 @@ fn sync_directory(path: &Path) -> Result<(), String> {
 #[serde(rename_all = "camelCase")]
 pub struct TaskFileVersion {
     pub id: String,
+    pub note: String,
+    pub is_milestone: bool,
     pub version_number: i64,
     pub name: String,
     pub mime_type: Option<String>,
@@ -103,6 +105,7 @@ pub struct TaskFileEvent {
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TaskFileTimeline {
+    pub workspace_id: String,
     pub file_id: String,
     pub logical_key: String,
     pub current_version_id: String,
@@ -891,7 +894,7 @@ fn load_task_file_timeline_record(
     let mut version_statement = connection
         .prepare(
             "SELECT id, version_number, produced_name, mime_type, size_bytes, origin,
-                    task_id, task_title, round_number, cell_id, cell_name, produced_at
+                    task_id, task_title, round_number, cell_id, cell_name, produced_at, note, is_milestone
              FROM file_space_artifact_versions WHERE file_id = ?1
              ORDER BY version_number DESC",
         )
@@ -913,6 +916,8 @@ fn load_task_file_timeline_record(
                 cell_id: row.get(9)?,
                 cell_name: row.get(10)?,
                 produced_at: row.get(11)?,
+                note: row.get(12)?,
+                is_milestone: row.get(13)?,
             })
         })
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
@@ -939,6 +944,7 @@ fn load_task_file_timeline_record(
         .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
         .map_err(|error| format!("Unable to load Task file timeline: {error}"))?;
     Ok(TaskFileTimeline {
+        workspace_id: database.location()?.workspace_id,
         file_id: file_id.to_owned(),
         logical_key,
         current_version_id,
@@ -2651,11 +2657,31 @@ fn replace_file_space_records_from_backup(
         )
         .map_err(|error| format!("Unable to attach the restored local index: {error}"))?;
     let restore_result = (|| {
+        // Old backups predate annotation columns. Only fixed SQL expressions
+        // are selected here; backup values are never interpolated into SQL.
+        let source_columns = connection
+            .prepare("PRAGMA restore_source.table_info(file_space_artifact_versions)")
+            .and_then(|mut statement| {
+                statement
+                    .query_map([], |row| row.get::<_, String>(1))?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+            })
+            .map_err(|error| format!("Unable to read backup version metadata: {error}"))?;
+        let note_expression = if source_columns.iter().any(|name| name == "note") {
+            "note"
+        } else {
+            "''"
+        };
+        let star_expression = if source_columns.iter().any(|name| name == "is_milestone") {
+            "is_milestone"
+        } else {
+            "0"
+        };
         let transaction = connection
             .transaction()
             .map_err(|error| format!("Unable to begin restoring the local index: {error}"))?;
         transaction
-            .execute_batch(
+            .execute_batch(&format!(
                 "PRAGMA defer_foreign_keys = ON;
                  DELETE FROM file_space_purge_paths;
                  DELETE FROM file_space_purge_members;
@@ -2690,10 +2716,10 @@ fn replace_file_space_records_from_backup(
                  INSERT INTO file_space_artifact_versions
                    (id, file_id, version_number, snapshot_path, sha256, size_bytes, produced_name,
                     mime_type, origin, task_id, task_title, round_number, cell_id, cell_name,
-                    produced_at, created_at, source_turn_token, source_artifact_id)
+                    produced_at, created_at, source_turn_token, source_artifact_id, note, is_milestone)
                  SELECT id, file_id, version_number, snapshot_path, sha256, size_bytes, produced_name,
                         mime_type, origin, task_id, task_title, round_number, cell_id, cell_name,
-                        produced_at, created_at, source_turn_token, source_artifact_id
+                        produced_at, created_at, source_turn_token, source_artifact_id, {note_expression}, {star_expression}
                  FROM restore_source.file_space_artifact_versions;
                  INSERT INTO file_space_artifact_events
                    (id, file_id, version_id, event_type, actor, details_json, created_at)
@@ -2719,7 +2745,7 @@ fn replace_file_space_records_from_backup(
                  SELECT file_id, file_name, body_text, tag_text, task_text, cell_text,
                         file_updated_at, size_bytes, indexed_at
                  FROM restore_source.file_space_search_documents;",
-            )
+            ))
             .map_err(|error| format!("Unable to restore the local file index: {error}"))?;
 
         let restored_versions = {
@@ -12180,89 +12206,123 @@ mod tests {
 
     #[test]
     fn backup_restore_switches_to_a_verified_new_workspace_without_deleting_the_old_one() {
-        let (source_root, source_storage, source_versions, source_database) =
-            test_workspace("backup-restore-source");
-        let source = source_root.join("brief.md");
-        fs::write(&source, b"version one").unwrap();
-        let imported = import_files_record(
-            &source_database,
-            None,
-            &[source.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-        let restored_file_id = imported.files[0].id.clone();
-        capture_initial_user_versions(&source_database, &source_versions).unwrap();
-        fs::write(source_storage.join("brief.md"), b"version two").unwrap();
-        reconcile_task_file(&source_database, &source_versions, &restored_file_id).unwrap();
-        set_file_tags_record(
-            &source_database,
-            &restored_file_id,
-            vec!["important".to_owned()],
-        )
-        .unwrap();
-        let backup_directory = source_root.join("exports");
-        fs::create_dir_all(&backup_directory).unwrap();
-        let backup = backup_directory.join("source.lumetrace");
-        export_file_space_backup_record(
-            &source_database,
-            &source_versions,
-            backup.to_string_lossy().as_ref(),
-        )
-        .unwrap();
-
-        let (current_root, current_storage, current_versions, current_database) =
-            test_workspace("backup-restore-current");
-        let current_source = current_root.join("current.txt");
-        fs::write(&current_source, b"keep this physical file").unwrap();
-        import_files_record(
-            &current_database,
-            None,
-            &[current_source.to_string_lossy().into_owned()],
-        )
-        .unwrap();
-        capture_initial_user_versions(&current_database, &current_versions).unwrap();
-        let restore_parent = current_root.join("restored");
-        fs::create_dir_all(&restore_parent).unwrap();
-
-        let snapshot = restore_file_space_backup_record(
-            &current_database,
-            &current_versions,
-            backup.to_string_lossy().as_ref(),
-            restore_parent.to_string_lossy().as_ref(),
-        )
-        .unwrap();
-
-        let restored_root = PathBuf::from(snapshot.root_path.clone().unwrap());
-        assert!(restored_root.starts_with(restore_parent.canonicalize().unwrap()));
-        assert_eq!(
-            fs::read(restored_root.join("brief.md")).unwrap(),
-            b"version two"
-        );
-        assert_eq!(
-            fs::read(current_storage.join("current.txt")).unwrap(),
-            b"keep this physical file"
-        );
-        assert!(!snapshot.files.iter().any(|file| file.name == "current.txt"));
-        let restored_file = snapshot
-            .files
-            .iter()
-            .find(|file| file.name == "brief.md")
+        for legacy_annotations in [false, true] {
+            let (source_root, source_storage, source_versions, source_database) =
+                test_workspace("backup-restore-source");
+            let source = source_root.join("brief.md");
+            fs::write(&source, b"version one").unwrap();
+            let imported = import_files_record(
+                &source_database,
+                None,
+                &[source.to_string_lossy().into_owned()],
+            )
             .unwrap();
-        assert_eq!(restored_file.version_count, 2);
-        assert_eq!(restored_file.tags, vec!["important"]);
-        let timeline =
-            load_task_file_timeline_record(&current_database, &restored_file.id).unwrap();
-        assert_eq!(timeline.versions.len(), 2);
-        assert!(timeline
-            .versions
-            .iter()
-            .all(|version| Path::new(&current_versions)
-                .join(&restored_file.id)
-                .join(format!("{}.blob", version.id))
-                .is_file()));
+            let restored_file_id = imported.files[0].id.clone();
+            capture_initial_user_versions(&source_database, &source_versions).unwrap();
+            fs::write(source_storage.join("brief.md"), b"version two").unwrap();
+            reconcile_task_file(&source_database, &source_versions, &restored_file_id).unwrap();
+            set_file_tags_record(
+                &source_database,
+                &restored_file_id,
+                vec!["important".to_owned()],
+            )
+            .unwrap();
+            let backup_directory = source_root.join("exports");
+            source_database.0.lock().unwrap().execute(
+            "UPDATE file_space_artifact_versions SET note='Approved launch plan',is_milestone=1 WHERE version_number=1", []
+        ).unwrap();
+            fs::create_dir_all(&backup_directory).unwrap();
+            let backup = backup_directory.join("source.lumetrace");
+            if legacy_annotations {
+                // Synthetic legacy backup fixture only: emulate the absence of
+                // annotation columns in archives created before schema 4.
+                source_database
+                    .0
+                    .lock()
+                    .unwrap()
+                    .execute_batch(
+                        "ALTER TABLE file_space_artifact_versions DROP COLUMN note;
+                 ALTER TABLE file_space_artifact_versions DROP COLUMN is_milestone;
+                 PRAGMA user_version = 3;",
+                    )
+                    .unwrap();
+            }
+            export_file_space_backup_record(
+                &source_database,
+                &source_versions,
+                backup.to_string_lossy().as_ref(),
+            )
+            .unwrap();
 
-        fs::remove_dir_all(source_root).unwrap();
-        fs::remove_dir_all(current_root).unwrap();
+            let (current_root, current_storage, current_versions, current_database) =
+                test_workspace("backup-restore-current");
+            let current_source = current_root.join("current.txt");
+            fs::write(&current_source, b"keep this physical file").unwrap();
+            import_files_record(
+                &current_database,
+                None,
+                &[current_source.to_string_lossy().into_owned()],
+            )
+            .unwrap();
+            capture_initial_user_versions(&current_database, &current_versions).unwrap();
+            let restore_parent = current_root.join("restored");
+            fs::create_dir_all(&restore_parent).unwrap();
+
+            let snapshot = restore_file_space_backup_record(
+                &current_database,
+                &current_versions,
+                backup.to_string_lossy().as_ref(),
+                restore_parent.to_string_lossy().as_ref(),
+            )
+            .unwrap();
+
+            let restored_root = PathBuf::from(snapshot.root_path.clone().unwrap());
+            assert!(restored_root.starts_with(restore_parent.canonicalize().unwrap()));
+            assert_eq!(
+                fs::read(restored_root.join("brief.md")).unwrap(),
+                b"version two"
+            );
+            assert_eq!(
+                fs::read(current_storage.join("current.txt")).unwrap(),
+                b"keep this physical file"
+            );
+            assert!(!snapshot.files.iter().any(|file| file.name == "current.txt"));
+            let restored_file = snapshot
+                .files
+                .iter()
+                .find(|file| file.name == "brief.md")
+                .unwrap();
+            assert_eq!(restored_file.version_count, 2);
+            assert_eq!(restored_file.tags, vec!["important"]);
+            let timeline =
+                load_task_file_timeline_record(&current_database, &restored_file.id).unwrap();
+            assert_eq!(timeline.versions.len(), 2);
+            assert!(timeline
+                .versions
+                .iter()
+                .all(|version| Path::new(&current_versions)
+                    .join(&restored_file.id)
+                    .join(format!("{}.blob", version.id))
+                    .is_file()));
+            let milestone = timeline
+                .versions
+                .iter()
+                .find(|version| version.version_number == 1)
+                .unwrap();
+            assert_eq!(
+                milestone.note,
+                if legacy_annotations {
+                    ""
+                } else {
+                    "Approved launch plan"
+                }
+            );
+            assert_eq!(milestone.is_milestone, !legacy_annotations);
+            assert!(!timeline.versions[0].is_milestone);
+
+            fs::remove_dir_all(source_root).unwrap();
+            fs::remove_dir_all(current_root).unwrap();
+        }
     }
 
     #[test]
