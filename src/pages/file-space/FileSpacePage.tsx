@@ -918,6 +918,11 @@ function createVisualTimeline(file: FileSpaceFileRecord): TaskFileTimelineRecord
 }
 
 function createVisualVersionContent(file: FileSpaceFileRecord, version: TaskFileVersionRecord) {
+  if (import.meta.env.DEV && file.id === "fixture-timeline-scroll") {
+    return Array.from({ length: 160 }, (_, index) => (
+      `Version ${version.versionNumber} / line ${index + 1}: ${"Synthetic preview content. ".repeat(6)}`
+    )).join("\n");
+  }
   const lines = [
     `# ${file.name}`,
     "",
@@ -1856,8 +1861,39 @@ export function FileSpacePage() {
           previewParameters.has("fileSpacePreview")
           || previewParameters.has("trashPreview")
           || previewParameters.has("emptyPreview")
+          || previewParameters.has("timelinePreview")
         ) {
           const fixture = createVisualFixture();
+          if (previewParameters.has("timelinePreview")) {
+            // Browser-only density fixture: no workspace, snapshot, or service access.
+            const file: FileSpaceFileRecord = {
+              ...fixture.files[7],
+              id: "fixture-timeline-scroll",
+              name: "Synthetic version history with a long filename for scroll verification.md",
+              mimeType: "text/markdown",
+              versionCount: 40,
+              currentVersion: 40,
+              sizeBytes: 32_000,
+            };
+            fixture.files[7] = file;
+            const previewTimeline = createVisualTimeline(file)!;
+            previewTimeline.events = previewTimeline.versions.map((version) => ({
+              id: `fixture-event-${version.id}`,
+              versionId: version.id,
+              eventType: "current_version_changed",
+              actor: "user",
+              details: {},
+              createdAt: version.producedAt,
+            }));
+            const comparison = defaultVersionComparison(previewTimeline.versions, previewTimeline.currentVersionId);
+            setTimelineFile(file);
+            setTimeline(previewTimeline);
+            setSelectedVersionId(previewTimeline.currentVersionId);
+            setVersionPreview(createVisualVersionContent(file, previewTimeline.versions[0]));
+            setDiffBeforeVersionId(comparison?.beforeVersionId ?? null);
+            setDiffAfterVersionId(comparison?.afterVersionId ?? null);
+            setTimelinePanelOpen(true);
+          }
           if (previewParameters.get("trashPreview") === "empty") {
             fixture.trashItems = [];
           }
@@ -2903,7 +2939,7 @@ export function FileSpacePage() {
       setDiffAfterVersionId(comparison?.afterVersionId ?? null);
     }
     if (!isTauri()) {
-      setVersionPreview(null);
+      setVersionPreview(import.meta.env.DEV && timelineFile ? createVisualVersionContent(timelineFile, version) : null);
       setTimelineBusy(false);
       return;
     }
@@ -6204,12 +6240,12 @@ export function FileSpacePage() {
             <header>
               <div>
                 <span>{t("fileSpace.timeline.taskArtifact")} · {timeline.logicalKey}</span>
-                <h2>{timelineFile.name}</h2>
+                <h2 title={timelineFile.name}>{timelineFile.name}</h2>
               </div>
               <button type="button" onClick={closeTimelinePanel} aria-label={t("fileSpace.timeline.close")}><X size={18} /></button>
             </header>
             <div className="file-space-timeline-body">
-              <section className="file-space-version-list">
+              <section className="file-space-version-list" aria-label={t("fileSpace.content.listColumns.versions")} tabIndex={0}>
                 {timeline.versions.map((version) => (
                   <div
                     key={version.id}
@@ -6228,7 +6264,7 @@ export function FileSpacePage() {
                 ))}
                 <InitialVersionHint versions={timeline.versions} />
               </section>
-              <section className="file-space-version-preview">
+              <section className="file-space-version-preview" aria-label={t("fileSpace.timeline.historicalContent")} tabIndex={0}>
                 {timeline.versions.length > 1 ? <FileVersionDiff
                   versions={timeline.versions}
                   beforeVersionId={diffBeforeVersionId}
