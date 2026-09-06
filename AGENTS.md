@@ -52,3 +52,4 @@ For every material UI or interaction change:
 - All commit titles and descriptions must be written in English. Prefer concise conventional commit messages, such as `fix: refresh indexes after file edits`.
 - Commit only the intended project changes. Exclude credentials, local user files, generated artifacts, and unrelated work. Never force-push or rewrite published history without explicit authorization.
 - If verification, commit, or push fails, report the exact failure and do not claim that delivery is complete.
+- 每次提交完成后，最终回复末尾必须单独输出固定格式：提交：社区版 `<本次实际提交短哈希>`，专业版 `<本次实际提交短哈希>`。仅提交社区版时只写“提交：社区版 `<本次实际提交短哈希>`”，仅提交专业版时只写“提交：专业版 `<本次实际提交短哈希>`”；不得列出本次未提交的版本或沿用历史哈希，推送失败须另外明确说明。
