@@ -4,18 +4,30 @@
 
 <h1 align="center">Every file has a timeline.</h1>
 
-<p align="center">Automatically record every save. Visually compare every change.</p>
+<p align="center">LumeTrace is a local-first file manager for macOS,<br>built around automatic version history and visual diffs.</p>
+
+<p align="center">Organize your files, keep using your favorite editor, and trace, compare, or restore earlier versions.</p>
 
 <p align="center">
-  <a href="https://i.ibb.co/67XxPbbT/1.gif">
-    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
+  <a href="docs/media/lumetrace-overview.gif">
+    <img src="docs/media/lumetrace-overview.gif" width="960" alt="LumeTrace overview: drag in Launch Plan.md, find it by the word onboarding in its content, and ask Lumie to summarize its goals with a file reference. Edited 12-second demo; waiting time is shortened.">
   </a>
 </p>
 
 <p align="center">
   <a href="docs/README.zh-CN.md">简体中文</a> ·
-  <a href="https://i.ibb.co/67XxPbbT/1.gif">View full-size demo</a> ·
+  <a href="docs/media/lumetrace-overview.gif">View full-size demo</a> ·
   <a href="docs/DEVELOPMENT.md">Development guide</a>
+</p>
+
+## See every change
+
+Automatically record every save. Visually compare every change. Restore an earlier version when you need to go back.
+
+<p align="center">
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">
+    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace: edit a Markdown file from V1 to V2, see both versions in its timeline, and compare changes with inline and side-by-side Diff.">
+  </a>
 </p>
 
 ## How it works

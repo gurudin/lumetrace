@@ -4,18 +4,30 @@
 
 <h1 align="center">每个文件，都有自己的时间线。</h1>
 
-<p align="center">自动记录每一次保存，直观对比每一处修改。</p>
+<p align="center">LumeTrace 是一款 macOS 本地文件管理器，<br>以自动版本记录、文件时间线和可视化差异对比为核心。</p>
+
+<p align="center">整理文件，继续使用你习惯的编辑器，随时追踪、对比和恢复历史版本。</p>
 
 <p align="center">
-  <a href="https://i.ibb.co/67XxPbbT/1.gif">
-    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace 操作演示：将 Markdown 文件从 V1 修改为 V2，在时间线中查看两个版本，再通过行内与并排 Diff 对比修改。">
+  <a href="media/lumetrace-overview.gif">
+    <img src="media/lumetrace-overview.gif" width="960" alt="LumeTrace 功能演示：拖入 Launch Plan.md，通过正文中的 onboarding 搜索文件，再让 Lumie 总结文件目标并展示引用来源。演示经过剪辑，时长 12 秒，等待时间已压缩。">
   </a>
 </p>
 
 <p align="center">
   <a href="../README.md">English</a> ·
-  <a href="https://i.ibb.co/67XxPbbT/1.gif">查看完整演示</a> ·
+  <a href="media/lumetrace-overview.gif">查看完整演示</a> ·
   <a href="DEVELOPMENT.md">开发文档</a>
+</p>
+
+## 看清每一次修改
+
+自动记录每一次保存，直观对比每一处修改。需要回到之前时，随时恢复历史版本。
+
+<p align="center">
+  <a href="https://i.ibb.co/67XxPbbT/1.gif">
+    <img src="https://i.ibb.co/67XxPbbT/1.gif" width="960" alt="LumeTrace 操作演示：将 Markdown 文件从 V1 修改为 V2，在时间线中查看两个版本，再通过行内与并排 Diff 对比修改。">
+  </a>
 </p>
 
 ## 如何使用
