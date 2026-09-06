@@ -26,7 +26,9 @@ The current layout stays in place to avoid a disruptive directory migration:
 - `src-tauri` exports `lumetrace_lib::run(context)` and `run_with_plugins(context, plugins)`. All common commands, workers, previews and lifecycle handling remain here. The calling binary creates its own Tauri context.
 - Pro references an exact public commit through `vendor/lumetrace`, a Git submodule. Its build uses the pinned public npm lockfile/toolchain and Rust library, not source-file copies or a floating branch dependency.
 
-`run_with_plugins` is an internal extension seam. It is not a sandbox, a stable third-party plugin API or a plugin marketplace. Future professional commands must be namespaced plugins, not replacement common handlers. Frontend extension slots should be introduced only when a concrete feature requires them; there are no paid-feature placeholders now.
+`run_with_plugins` is an internal extension seam. It is not a sandbox, a stable third-party plugin API or a plugin marketplace. Professional commands must be namespaced plugins, not replacement common handlers.
+
+`mountLumeTrace(element, extension?)` also accepts an optional edition-owned page and entry component. The shared first-run page and settings menu render that same entry when supplied; Community supplies nothing and its UI stays unchanged. The extension page participates in the shared theme/language shell without requiring a personal workspace. Navigating into it hides/inerts, but does not unmount, the workspace and its background work. Shared search shortcuts and file drops do not act on the hidden workspace. Page contents, authorization and professional service calls remain outside the public source.
 
 ## Fix and release workflow
 

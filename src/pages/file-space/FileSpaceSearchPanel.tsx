@@ -15,6 +15,7 @@ import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
 import { globalSearchShortcutLabel, isGlobalSearchShortcut } from "./globalSearchShortcut";
 import "./file-space-search-panel.css";
+import { useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
 
 export type FileSpaceSearchScope = "name" | "content" | "tag";
 
@@ -103,6 +104,7 @@ export function FileSpaceSearchPanel({
   onClose,
   onOpenFile,
 }: FileSpaceSearchPanelProps) {
+  const applicationExtension = useApplicationExtension();
   const { t } = useTranslation();
   const [query, setQuery] = useState("");
   const [searchMatches, setSearchMatches] = useState<FileSpaceSearchMatch[]>([]);
@@ -157,6 +159,7 @@ export function FileSpaceSearchPanel({
 
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
+      if (applicationExtension?.active) return;
       if (!isGlobalSearchShortcut(event)) return;
       const activeModal = document.querySelector<HTMLElement>('[aria-modal="true"]');
       if (activeModal && !activeModal.classList.contains("file-space-global-search-panel")) return;
@@ -170,7 +173,7 @@ export function FileSpaceSearchPanel({
     };
     window.addEventListener("keydown", handleShortcut, true);
     return () => window.removeEventListener("keydown", handleShortcut, true);
-  }, [onOpen, open]);
+  }, [onOpen, open, applicationExtension?.active]);
 
   useEffect(() => {
     if (open && !wasOpenRef.current) {

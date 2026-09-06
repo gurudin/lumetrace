@@ -67,6 +67,7 @@ import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotat
 import { VersionHistoryBadge, type VersionSummary } from "./VersionHistoryBadge";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
+import { ApplicationExtensionEntry, useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
 import { globalSearchShortcutLabel } from "./globalSearchShortcut";
 import {
   calculateFileListLayout,
@@ -1208,6 +1209,7 @@ function FolderTreeChildren({
 }
 
 export function FileSpacePage() {
+  const applicationExtension = useApplicationExtension();
   const { t, i18n } = useTranslation();
   const { appearance } = useTheme();
   const [snapshot, setSnapshot] = useState<FileSpaceSnapshot>(emptySnapshot);
@@ -3691,6 +3693,7 @@ export function FileSpacePage() {
   };
 
   const nativeDropBlocked = Boolean(
+    applicationExtension?.active ||
     internalFileDrag ||
     internalFolderDrag ||
     selectionMarquee ||
@@ -5564,6 +5567,7 @@ export function FileSpacePage() {
               <ChevronRight size={16} aria-hidden="true" />
             </button>
           </div>
+          <ApplicationExtensionEntry placement="setup" disabled={busyAction === "configure"} />
           {setupCancelled ? <p className="file-space-setup-feedback">{t("fileSpace.root.cancel")}</p> : null}
           {error ? <p className="file-space-error" role="alert">{error}</p> : null}
           <p className="file-space-setup-privacy">

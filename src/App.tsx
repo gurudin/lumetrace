@@ -7,8 +7,9 @@ import { PdfPreviewOverlay } from "./pages/file-space/PdfPreviewOverlay";
 import { TextPreviewOverlay } from "./pages/file-space/TextPreviewOverlay";
 import "./pages/file-space/task-version-timeline-rail.css";
 import { ThemeProvider } from "./shared/theme/ThemeProvider";
+import { ApplicationExtensionHost, type ApplicationExtension } from "./shared/extensions/ApplicationExtension";
 
-export default function App() {
+export default function App({ extension }: { extension?: ApplicationExtension }) {
   useEffect(() => {
     const preventFileDropNavigation = (event: DragEvent) => {
       if (!event.dataTransfer || !Array.from(event.dataTransfer.types).includes("Files")) return;
@@ -24,12 +25,14 @@ export default function App() {
 
   return (
     <ThemeProvider>
-      <PdfPreviewOverlay />
-      <ImagePreviewOverlay />
-      <MarkdownPreviewOverlay />
-      <TextPreviewOverlay />
-      <ExternalDocumentOpenBridge />
-      <FileSpacePage />
+      <ApplicationExtensionHost extension={extension}>
+        <PdfPreviewOverlay />
+        <ImagePreviewOverlay />
+        <MarkdownPreviewOverlay />
+        <TextPreviewOverlay />
+        <ExternalDocumentOpenBridge />
+        <FileSpacePage />
+      </ApplicationExtensionHost>
     </ThemeProvider>
   );
 }

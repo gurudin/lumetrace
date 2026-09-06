@@ -24,6 +24,7 @@ import {
   useEffect,
   useRef,
   useState,
+  Fragment,
   type KeyboardEvent,
   type PointerEvent,
 } from "react";
@@ -34,6 +35,7 @@ import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
 import { FileSpacePreferences } from "./FileSpacePreferences";
 import { FileSpaceFeedback } from "./FileSpaceFeedback";
+import { ApplicationExtensionEntry } from "../../shared/extensions/ApplicationExtension";
 import {
   FileSpaceWorkspaceSettings,
   type FileSpaceWorkspaceDirectory,
@@ -567,6 +569,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                     ? MessageSquare
                   : ShieldCheck;
             return (
+              <Fragment key={item}>
               <button
                 key={item}
                 className={item === "semantic" || item === "backup" || item === "feedback"
@@ -590,6 +593,9 @@ export function FileSpaceSettingsMenu<TSnapshot>({
                   ? t("fileSpace.settings.semantic.menu")
                   : t(`fileSpace.settings.${item}`)}</span>
               </button>
+              {item === "workspace" ? <ApplicationExtensionEntry placement="settings" disabled={workspaceDisabled}
+                beforeOpen={() => closeMenu(false)} returnFocus={() => triggerRef.current} /> : null}
+              </Fragment>
             );
           })}
         </div>
