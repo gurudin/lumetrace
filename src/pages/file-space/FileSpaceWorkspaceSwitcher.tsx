@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { Check, ChevronsUpDown, Folder } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { FileSpaceWorkspaceStatus, type FileSpaceWorkspaceDirectory, type FileSpaceWorkspaceMutation } from "./FileSpaceWorkspaceMenu";
@@ -11,15 +12,17 @@ export function FileSpaceWorkspaceSwitcher<T>({ directory, disabled = false, onW
   const { t } = useTranslation();
   const external = useWorkspaceExtension(), ExtraList = external?.List;
   const [open, setOpen] = useState(false), [busy, setBusy] = useState(false), [error, setError] = useState("");
+  const [anchor, setAnchor] = useState({ left: 12, bottom: 60 });
   const host = useRef<HTMLDivElement>(null), trigger = useRef<HTMLButtonElement>(null), menu = useRef<HTMLDivElement>(null);
   const close = () => { setOpen(false); trigger.current?.focus(); };
   useEffect(() => {
     if (!open) return;
     const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]:not(:disabled)')?.focus());
-    const outside = (event: PointerEvent) => { if (!host.current?.contains(event.target as Node)) setOpen(false); };
+    const outside = (event: PointerEvent) => { if (!host.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false); };
+    const resize = () => setOpen(false);
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); trigger.current?.focus(); } };
-    window.addEventListener("pointerdown", outside); window.addEventListener("keydown", escape, true);
-    return () => { cancelAnimationFrame(frame); window.removeEventListener("pointerdown", outside); window.removeEventListener("keydown", escape, true); };
+    window.addEventListener("pointerdown", outside); window.addEventListener("keydown", escape, true); window.addEventListener("resize", resize);
+    return () => { cancelAnimationFrame(frame); window.removeEventListener("pointerdown", outside); window.removeEventListener("keydown", escape, true); window.removeEventListener("resize", resize); };
   }, [open]);
   const selectLocal = async (id: string) => {
     if (busy || disabled) return;
@@ -33,10 +36,14 @@ export function FileSpaceWorkspaceSwitcher<T>({ directory, disabled = false, onW
   };
   return <div className="file-space-workspace-switcher" ref={host}>
     <button ref={trigger} type="button" className="file-space-workspace-switcher-trigger" disabled={disabled || busy} aria-haspopup="menu" aria-expanded={open}
-      aria-label={t("fileSpace.workspaces.switcher")} onClick={() => setOpen(value => !value)}>
+      aria-label={t("fileSpace.workspaces.switcher")} onClick={() => {
+        const rect = trigger.current?.getBoundingClientRect();
+        if (rect) setAnchor({ left: Math.max(8, Math.min(rect.left, window.innerWidth - 356)), bottom: window.innerHeight - rect.top + 8 });
+        setOpen(value => !value);
+      }}>
       <FileSpaceWorkspaceStatus directory={directory} /><ChevronsUpDown size={13} aria-hidden="true" />
     </button>
-    {open ? <div ref={menu} className="file-space-workspace-switcher-popover" role="menu" aria-label={t("fileSpace.workspaces.switcher")} onKeyDown={event => {
+    {open ? createPortal(<div ref={menu} className="file-space-workspace-switcher-popover" style={{ position: "fixed", ...anchor }} role="menu" aria-label={t("fileSpace.workspaces.switcher")} onKeyDown={event => {
       if (event.key === "Tab") { setOpen(false); return; }
       if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
@@ -54,6 +61,6 @@ export function FileSpaceWorkspaceSwitcher<T>({ directory, disabled = false, onW
       </div>
       {ExtraList ? <ExtraList compact disabled={disabled || busy} onDone={close} /> : null}
       {error ? <p role="alert" className="file-space-workspace-error">{error}</p> : null}
-    </div> : null}
+    </div>, document.body) : null}
   </div>;
 }
