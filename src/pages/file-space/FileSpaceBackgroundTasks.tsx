@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   Activity,
   CircleAlert,
@@ -28,6 +29,7 @@ function progressPercent(task: BackgroundPipelineStatus) {
 }
 
 export function FileSpaceBackgroundTasks({ onOpenSemantic }: FileSpaceBackgroundTasksProps) {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const [status, setStatus] = useState<BackgroundStatus | null>(null);
   const [busy, setBusy] = useState<"pause" | "retry" | null>(null);

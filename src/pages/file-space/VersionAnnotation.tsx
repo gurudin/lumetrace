@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
 import { LoaderCircle, Pencil, Star } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { createPortal } from "react-dom";
@@ -26,6 +26,7 @@ interface Props {
 
 /** Metadata controls are siblings of version selection, never nested buttons. */
 export function VersionAnnotation({ workspaceId, fileId, version, disabled = false }: Props) {
+  const invoke = useWorkspaceInvoke();
   const { t } = useTranslation();
   const labelId = useId();
   const helpId = useId();

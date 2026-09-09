@@ -1,4 +1,5 @@
-import { createContext, useContext, useRef, useState, type ComponentType, type PropsWithChildren, type ReactNode } from "react";
+import { createContext, useContext, useRef, useState, type ComponentType, type PropsWithChildren } from "react";
+import type { WorkspaceCommandSource } from "./workspaceCommands";
 import "./application-extension.css";
 
 export interface ApplicationExtension {
@@ -9,15 +10,17 @@ export interface ApplicationExtension {
   WorkspaceProvider?: ComponentType<PropsWithChildren>;
 }
 
-/** Edition-owned storage surfaces reuse the shared workspace settings, never the local file commands. */
+/** Additional data sources use the same workbench, not an edition-owned file page. */
 export interface WorkspaceExtension {
   active: boolean;
+  initializing: boolean;
+  selectionKey: string;
   name: string;
   typeLabel: string;
-  onLocalSelect: () => void;
-  List: ComponentType<{ disabled: boolean; onDone: () => void }>;
-  surface: ReactNode;
-  footerTarget: HTMLElement | null;
+  onLocalSelect: (id?: string) => void;
+  List: ComponentType<{ disabled: boolean; onDone: () => void; compact?: boolean }>;
+  source: WorkspaceCommandSource | null;
+  notice?: string;
 }
 export const WorkspaceExtensionContext = createContext<WorkspaceExtension | null>(null);
 export function useWorkspaceExtension() { return useContext(WorkspaceExtensionContext); }
@@ -40,7 +43,6 @@ export function ApplicationExtensionHost({ extension, children }: PropsWithChild
 
 function ExtensionHost({ extension, children }: PropsWithChildren<{ extension?: ApplicationExtension }>) {
   const [active, setActive] = useState(extension?.initiallyOpen ?? false);
-  const workspace = useWorkspaceExtension();
   const returnFocus = useRef<HTMLElement | null>(null);
   if (!extension) return children;
   const open = (target?: HTMLElement | null) => {
@@ -56,12 +58,9 @@ function ExtensionHost({ extension, children }: PropsWithChildren<{ extension?: 
     });
   };
   const Page = extension.Page;
-  const workspaceHidden = active || Boolean(workspace?.active);
+  const workspaceHidden = active;
   return <ExtensionContext.Provider value={{ extension, active: workspaceHidden, pageActive: active, open }}>
     <div className="application-workspace-surface" hidden={workspaceHidden} inert={workspaceHidden} aria-hidden={workspaceHidden}>{children}</div>
-    {workspace ? <div className="application-extension-surface" hidden={active || !workspace.active} inert={active || !workspace.active} aria-hidden={active || !workspace.active}>
-      {workspace.surface}
-    </div> : null}
     <div className="application-extension-surface" hidden={!active} inert={!active} aria-hidden={!active}>
       <Page active={active} onClose={close} />
     </div>

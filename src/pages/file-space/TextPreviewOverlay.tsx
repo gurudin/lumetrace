@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, History, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -44,6 +45,7 @@ function errorText(error: unknown) {
 }
 
 export function TextPreviewOverlay() {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "en-US";
   const copy = {

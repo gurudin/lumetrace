@@ -1,0 +1,34 @@
+import { invoke as nativeInvoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
+
+export interface WorkspaceCommandSource {
+  key: string;
+  capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean };
+  invoke: <T>(command: string, args?: InvokeArgs) => Promise<T>;
+}
+let source: WorkspaceCommandSource | null = null;
+// These manage the application/local registry, not the selected space's files.
+const applicationCommands = new Set([
+  "get_file_space_workspaces", "create_file_space_workspace", "switch_file_space_workspace",
+  "rename_file_space_workspace", "remove_file_space_workspace", "open_feedback_channel",
+  "get_ai_service_settings", "check_cloud_ai_connection", "check_local_llm_connection",
+  "save_cloud_ai_settings", "save_local_llm_settings", "check_agent_clis", "check_agent_cli_status",
+  "check_agent_cli", "get_agent_cli_settings", "save_agent_cli_settings",
+]);
+export function setWorkspaceCommandSource(next: WorkspaceCommandSource | null) {
+  source = next;
+  return () => { if (source === next) source = null; };
+}
+export async function workspaceInvoke<T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> {
+  const captured = source;
+  return bindWorkspaceInvoke(captured)(command, args, options);
+}
+export function bindWorkspaceInvoke(captured: WorkspaceCommandSource | null, mounted = () => true) {
+  return async <T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> => {
+  const current = () => mounted() && source === captured;
+  if (!current()) throw new Error("The active workspace changed. Please try again.");
+  if (applicationCommands.has(command)) return nativeInvoke<T>(command, args, options);
+  const result = captured ? await captured.invoke<T>(command, args) : await nativeInvoke<T>(command, args, options);
+  if (!current()) throw new Error("The active workspace changed. Please try again.");
+  return result;
+  };
+}

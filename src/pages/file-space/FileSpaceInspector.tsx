@@ -1,5 +1,6 @@
 import { Clock3, File, FolderOpen, Info, Tag } from "lucide-react";
 import type { ReactNode } from "react";
+import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { useTranslation } from "react-i18next";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 
@@ -53,6 +54,7 @@ export function FileSpaceInspector({
   onReveal,
   onEditTags,
 }: FileSpaceInspectorProps) {
+  const capabilities = useWorkspaceExtension()?.source?.capabilities;
   const { t, i18n } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "en-US";
   const dateFormatter = new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" });
@@ -135,9 +137,9 @@ export function FileSpaceInspector({
           </section>
 
           <div className="file-space-inspector-actions">
-            <button type="button" onClick={onReveal}><FolderOpen size={16} /><span>{t("fileSpace.inspector.reveal")}</span></button>
-            <button type="button" onClick={onEditTags}><Tag size={16} /><span>{t("fileSpace.inspector.tags")}</span></button>
-            <button type="button" disabled={versionCount < 1} onClick={onShowTimeline}><Clock3 size={16} /><span>{t("fileSpace.inspector.history")}</span></button>
+            <button type="button" disabled={capabilities?.content === false} onClick={onReveal}><FolderOpen size={16} /><span>{t("fileSpace.inspector.reveal")}</span></button>
+            <button type="button" disabled={capabilities?.write === false} onClick={onEditTags}><Tag size={16} /><span>{t("fileSpace.inspector.tags")}</span></button>
+            <button type="button" disabled={versionCount < 1 || capabilities?.history === false} onClick={onShowTimeline}><Clock3 size={16} /><span>{t("fileSpace.inspector.history")}</span></button>
           </div>
 
           <section className="file-space-inspector-section">

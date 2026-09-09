@@ -1,6 +1,6 @@
-import { invoke } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
 import { AlertTriangle, GitCompareArrows, LoaderCircle } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { FileVersionDiff, type VersionDiffStatus } from "./FileVersionDiff";
 import { defaultVersionComparison, type VersionDiffResult } from "./versionDiff";
@@ -37,11 +37,11 @@ interface PreviewVersionDiffProps {
   readSnapshot?: PreviewSnapshotReader;
 }
 
-const readSnapshot: PreviewSnapshotReader = (fileId, versionId) => invoke<number[]>(
-  "read_task_file_version", { fileId, versionId },
-);
-
 export function PreviewVersionDiff(props: PreviewVersionDiffProps) {
+  const invoke = useWorkspaceInvoke();
+  const readSnapshot: PreviewSnapshotReader = useCallback((fileId, versionId) => invoke<number[]>(
+    "read_task_file_version", { fileId, versionId },
+  ), [invoke]);
   const { t } = useTranslation();
   if (props.loading || props.error || !props.versions) {
     return <div className={`file-version-diff-state${props.error ? " is-error" : ""}`} role={props.error ? "alert" : "status"}>

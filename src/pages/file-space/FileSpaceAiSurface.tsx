@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   ChevronDown,
@@ -372,6 +373,7 @@ function AiHistoryLoadNotice({
 }
 
 export function FileSpaceAiSurface({ onOpenSource }: FileSpaceAiSurfaceProps) {
+  const invoke = useWorkspaceInvoke();
   const { t } = useTranslation();
   const workspaceHidden = useApplicationExtension()?.active ?? false;
   const [panelOpen, setPanelOpen] = useState(false);

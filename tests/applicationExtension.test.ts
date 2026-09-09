@@ -46,16 +46,16 @@ test("setup and settings slots use one extension, without imposing a local works
   }
 });
 
-test("alternate storage suppresses local commands without opening management", () => {
+test("additional storage keeps the same workbench visible without opening management", () => {
   function Status() { const state = useApplicationExtension(); return createElement("span", { "data-hidden": state.active, "data-management": state.pageActive }); }
   const extension = { Entry: () => null, Page: () => null, WorkspaceProvider: ({ children }: any) => createElement(WorkspaceExtensionContext.Provider, {
-    value: { active: true, surface: createElement("main", null, "Alternate files") },
+    value: { active: true, selectionKey: "external-one", source: {} },
   }, children) };
   const html = renderToStaticMarkup(createElement(ApplicationExtensionHost, { extension }, createElement("div", null, workspace, createElement(Status))));
-  assert.match(html, /application-workspace-surface[^>]*hidden=""[^>]*inert=""/);
+  assert.doesNotMatch(html, /application-workspace-surface[^>]*hidden=""/);
   assert.match(html, /data-workspace="preserved"/);
-  assert.match(html, /data-hidden="true" data-management="false"/);
-  assert.match(html, /Alternate files/);
+  assert.match(html, /data-hidden="false" data-management="false"/);
+  assert.doesNotMatch(html, /Alternate files/);
 });
 
 test("the body-portaled AI panel is hidden without cancelling work behind an extension page", () => {

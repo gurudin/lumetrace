@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
 import { Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -40,6 +40,7 @@ function clampZoom(value: number) {
 }
 
 export function ImagePreviewOverlay() {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const copy = {
     preview: (name: string) => t("fileSpace.preview.image.dialog", { name }),

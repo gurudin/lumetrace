@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -47,6 +48,7 @@ function externalDocumentFromTarget(target: EventTarget | null) {
 }
 
 export function ExternalDocumentOpenBridge() {
+  const invoke = useWorkspaceInvoke();
   const { t } = useTranslation();
   const copy = {
     opening: (name: string) => t("fileSpace.externalDocument.opening", { name }),

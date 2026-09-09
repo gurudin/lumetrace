@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, Eye, History, LoaderCircle, Pencil, Save, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -152,6 +153,7 @@ function createTimelineVisualFixture(target: MarkdownPreviewRequest): TaskFileTi
 }
 
 export function MarkdownPreviewOverlay() {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const copy = {
     dialog: (name: string) => t("fileSpace.preview.markdown.dialog", { name }),

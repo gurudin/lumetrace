@@ -1,4 +1,5 @@
-import { convertFileSrc, invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import { toBlob } from "html-to-image";
@@ -58,7 +59,7 @@ import {
 import { FileSpaceSettingsMenu } from "./FileSpaceSettingsMenu";
 import { FileSpaceTrashView, type FileSpaceTrashItemRecord } from "./FileSpaceTrashView";
 import {
-  FileSpaceWorkspaceStatus,
+  FileSpaceWorkspaceSwitcher,
   type FileSpaceWorkspaceDirectory,
   type FileSpaceWorkspaceMutation,
 } from "./FileSpaceWorkspaceMenu";
@@ -436,7 +437,7 @@ const emptySnapshot: FileSpaceSnapshot = {
   files: [],
   trashItems: [],
 };
-const currentFolderStorageKey = "lumetrace.file-space.current-folder";
+const currentFolderStorageKeyBase = "lumetrace.file-space.current-folder";
 const previewSizeStorageKey = "lumetrace.file-space.preview-size";
 const sortOptionStorageKey = "lumetrace.file-space.sort-option";
 const fileLayoutModeStorageKey = "lumetrace.file-space.layout-mode";
@@ -1060,7 +1061,7 @@ function fixtureImageSource(file: FileSpaceFileRecord) {
 }
 
 function filePreviewSource(file: FileSpaceFileRecord) {
-  if (fileCategory(file) !== "image") return null;
+  if (fileCategory(file) !== "image" || file.currentVersion === null) return null;
   if (!isTauri()) return file.id.startsWith("fixture-file-") ? fixtureImageSource(file) : null;
   return convertFileSrc(file.id, "lumetrace-file-preview");
 }
@@ -1209,8 +1210,14 @@ function FolderTreeChildren({
 }
 
 export function FileSpacePage() {
+  const invoke = useWorkspaceInvoke();
   const applicationExtension = useApplicationExtension();
   const externalWorkspace = useWorkspaceExtension();
+  const capabilities = externalWorkspace?.source?.capabilities;
+  const canWrite = capabilities?.write !== false;
+  const canSearch = capabilities?.search !== false;
+  const currentFolderStorageKey = externalWorkspace
+    ? `${currentFolderStorageKeyBase}:${externalWorkspace.selectionKey}` : currentFolderStorageKeyBase;
   const { t, i18n } = useTranslation();
   const { appearance } = useTheme();
   const [snapshot, setSnapshot] = useState<FileSpaceSnapshot>(emptySnapshot);
@@ -1438,6 +1445,7 @@ export function FileSpacePage() {
   }, []);
 
   const openGlobalSearch = useCallback(() => {
+    if (!canSearch) return;
     const activeModal = document.querySelector<HTMLElement>('[aria-modal="true"]');
     if (activeModal && !activeModal.classList.contains("file-space-global-search-panel")) return;
     setFilterMenuOpen(false);
@@ -1758,6 +1766,7 @@ export function FileSpacePage() {
   };
 
   const beginOperation = (action: FileSpaceBusyAction) => {
+    if (!canWrite && action !== "configure") return null;
     if (!lifecycleRef.current.mounted || operationRef.current) return null;
     const operation: FileSpaceOperation = {
       token: Symbol(action),
@@ -1797,7 +1806,10 @@ export function FileSpacePage() {
     try {
       const [loaded, loadedWorkspaceDirectory] = await Promise.all([
         invoke<FileSpaceSnapshot>("get_file_space_snapshot"),
-        invoke<FileSpaceWorkspaceDirectory>("get_file_space_workspaces"),
+        invoke<FileSpaceWorkspaceDirectory>("get_file_space_workspaces").then(directory => {
+          if (lifecycleRef.current.mounted && lifecycleRef.current.generation === generation) setWorkspaceDirectory(directory);
+          return directory;
+        }),
       ]);
       if (
         !lifecycleRef.current.mounted ||
@@ -2941,6 +2953,7 @@ export function FileSpacePage() {
   }, [selectedFile?.id, selectedFile?.updatedAt, selectedFile?.versionCount]);
 
   const openTimeline = async (file: FileSpaceFileRecord, targetVersionId?: string) => {
+    if (capabilities?.history === false) return;
     if (file.versionCount < 1 && inspectorTimeline?.fileId !== file.id) return;
     if (!isTimelinePanelOpen && !timelineBadgeReturnFocusRef.current) {
       timelineBadgeReturnFocusRef.current = document.activeElement instanceof HTMLElement
@@ -3212,6 +3225,9 @@ export function FileSpacePage() {
     : currentFolder?.name ?? snapshot.rootName ?? t("fileSpace.title");
 
   const applyWorkspaceMutation = useCallback((mutation: FileSpaceWorkspaceMutation<FileSpaceSnapshot>) => {
+    // The extension remounts the workbench for its next selection; do not write
+    // a local snapshot into the outgoing source or erase its remembered folder.
+    if (externalWorkspace) { setWorkspaceDirectory(mutation.directory); return; }
     aiSourceNavigationSequenceRef.current += 1;
     fileRevealNavigationRef.current.cancel();
     setWorkspaceDirectory(mutation.directory);
@@ -3399,6 +3415,7 @@ export function FileSpacePage() {
   };
 
   const openCreateTextFile = (parentId: string | null) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     rememberDialogReturnFocus(contentDropZoneRef.current);
     nativeDropBlockedRef.current = true;
@@ -3415,6 +3432,7 @@ export function FileSpacePage() {
   };
 
   const openCreateFolder = (parentId: string | null) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     rememberDialogReturnFocus();
     nativeDropBlockedRef.current = true;
@@ -3693,7 +3711,7 @@ export function FileSpacePage() {
     }
   };
 
-  const nativeDropBlocked = Boolean(
+  const nativeDropBlocked = !canWrite || Boolean(
     applicationExtension?.active ||
     internalFileDrag ||
     internalFolderDrag ||
@@ -3917,6 +3935,7 @@ export function FileSpacePage() {
   };
 
   const openTagDialog = (fileId: string) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     const file = snapshot.files.find((item) => item.id === fileId);
     if (!file) return;
@@ -4158,6 +4177,7 @@ export function FileSpacePage() {
   ) => {
     if (event.button !== 0 || operationRef.current) return;
     const fileIds = selectFileFromPointer(event, fileId);
+    if (!canWrite) return;
     const card = event.currentTarget.closest<HTMLElement>(".file-space-file-card");
     const rect = card?.getBoundingClientRect() ?? event.currentTarget.getBoundingClientRect();
     fileDragGestureRef.current = {
@@ -4857,6 +4877,7 @@ export function FileSpacePage() {
   }, [fileLayoutMode, visibleFileIds, previewSize]);
 
   const openRenameFile = (fileId: string) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     const file = snapshot.files.find((item) => item.id === fileId);
     if (!file) return;
@@ -4890,6 +4911,7 @@ export function FileSpacePage() {
   };
 
   const requestDeleteFile = (fileId: string) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-file-id="${CSS.escape(fileId)}"] > button:first-child`));
     nativeDropBlockedRef.current = true;
@@ -4921,6 +4943,7 @@ export function FileSpacePage() {
   };
 
   const openRenameFolder = (folderId: string) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     const folder = snapshot.folders.find((item) => item.id === folderId);
     if (!folder) return;
@@ -4954,6 +4977,7 @@ export function FileSpacePage() {
   };
 
   const requestDeleteFolder = (folderId: string) => {
+    if (!canWrite) return;
     if (operationRef.current) return;
     rememberDialogReturnFocus(document.querySelector<HTMLElement>(`[data-folder-tree-id="${CSS.escape(folderId)}"] .file-space-tree-name`));
     nativeDropBlockedRef.current = true;
@@ -5425,7 +5449,7 @@ export function FileSpacePage() {
               aria-selected={active}
               aria-expanded={hasChildren ? expanded : undefined}
               aria-grabbed={internalFolderDrag?.folderId === folder.id}
-              onPointerDown={(event) => beginFolderDragGesture(event, folder.id)}
+              onPointerDown={(event) => { if (canWrite) beginFolderDragGesture(event, folder.id); }}
               onClick={() => {
                 if (suppressFolderClickRef.current) {
                   suppressFolderClickRef.current = false;
@@ -5465,7 +5489,7 @@ export function FileSpacePage() {
   }, [rootView]);
 
   const workspaceControls = <>
-    <FileSpaceWorkspaceStatus directory={workspaceDirectory} />
+    <FileSpaceWorkspaceSwitcher directory={workspaceDirectory} disabled={Boolean(busyAction)} onWorkspaceChanged={applyWorkspaceMutation} />
     <FileSpaceSettingsMenu<FileSpaceSnapshot>
       workspaceDirectory={workspaceDirectory}
       workspaceDisabled={Boolean(busyAction)}
@@ -5473,14 +5497,9 @@ export function FileSpacePage() {
       onWorkspaceDirectoryChanged={setWorkspaceDirectory}
     />
   </>;
-  // The same controls move into the edition surface; the local workspace stays mounted.
-  const externalControls = externalWorkspace?.active && externalWorkspace.footerTarget
-    ? createPortal(workspaceControls, externalWorkspace.footerTarget) : null;
-
   if (rootView === "loading") {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
-        {externalControls}
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <div className="file-space-loading-state" role="status" aria-live="polite">
           <span className="file-space-loading-mark" aria-hidden="true" />
@@ -5494,7 +5513,7 @@ export function FileSpacePage() {
   if (rootView === "loadError" && initialLoadError) {
     return (
       <section className="file-space-page file-space-page--loading">
-        {externalControls}
+        <footer className="file-space-recovery-workspaces file-space-sidebar-footer">{workspaceControls}</footer>
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <div className="file-space-empty" role="alert" aria-live="assertive">
           <span className="file-space-empty-symbol" aria-hidden="true">
@@ -5519,7 +5538,7 @@ export function FileSpacePage() {
       : t(`fileSpace.root.status.${snapshot.rootStatus}`);
     return (
       <section className="file-space-page file-space-setup-page">
-        {externalControls}
+        <footer className="file-space-recovery-workspaces file-space-sidebar-footer">{workspaceControls}</footer>
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <SetupPreferences />
         <div className="file-space-setup">
@@ -5657,7 +5676,7 @@ export function FileSpacePage() {
             data-folder-root-drop="true"
           >
             <span>{t("fileSpace.sidebar.folders")}</span>
-            <button type="button" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(null)} aria-label={t("fileSpace.sidebar.addFolder")}>
+            <button type="button" disabled={!canWrite || Boolean(busyAction)} onClick={() => openCreateFolder(null)} aria-label={t("fileSpace.sidebar.addFolder")}>
               <Plus size={15} />
             </button>
           </div>
@@ -5673,11 +5692,12 @@ export function FileSpacePage() {
         </div>
 
         <footer className="file-space-sidebar-footer">
-          {externalControls ?? workspaceControls}
+          {workspaceControls}
         </footer>
       </aside>
 
       <main className="file-space-workspace">
+        {externalWorkspace?.notice ? <div className="file-space-source-notice" role="status">{externalWorkspace.notice}</div> : null}
         <header className="file-space-workspace-toolbar" data-tauri-drag-region>
           <div className="file-space-toolbar-navigation">
             <button
@@ -5839,6 +5859,7 @@ export function FileSpacePage() {
           <button
             className="file-space-search file-space-search-trigger"
             type="button"
+            disabled={!canSearch}
             onClick={openGlobalSearch}
             title={t("fileSpace.globalSearch.openShortcut", { shortcut: globalSearchShortcut })}
             aria-label={t("fileSpace.globalSearch.openShortcut", { shortcut: globalSearchShortcut })}
@@ -5848,8 +5869,8 @@ export function FileSpacePage() {
             <span>{t("fileSpace.globalSearch.trigger")}</span>
             <kbd className="file-space-search-shortcut">{globalSearchShortcut}</kbd>
           </button>
-          <FileSpaceBackgroundStatusButton />
-          <FileSpaceAiSurface key={workspaceGeneration} onOpenSource={openFileFromAiSource} />
+          {capabilities?.search !== false ? <FileSpaceBackgroundStatusButton /> : null}
+          {capabilities?.ai !== false ? <FileSpaceAiSurface key={workspaceGeneration} onOpenSource={openFileFromAiSource} /> : null}
           <button
             className={`file-space-toolbar-icon-button${isInspectorVisible ? " is-active" : ""}`}
             type="button"
@@ -6168,11 +6189,11 @@ export function FileSpacePage() {
                   <span className="file-space-empty-drop-hint"><Upload size={13} />{t("fileSpace.content.emptyDropTitle")}</span>
                 ) : null}
                 <div className="file-space-empty-actions">
-                  <button className="is-primary" type="button" disabled={Boolean(busyAction)} onClick={() => void importFiles()}>
+                  <button className="is-primary" type="button" disabled={!canWrite || Boolean(busyAction)} onClick={() => void importFiles()}>
                     <Upload size={16} />
                     {busyAction === "import" ? t("fileSpace.content.uploading") : t("fileSpace.content.uploadLocalFiles")}
                   </button>
-                  <button type="button" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(currentFolder?.id ?? null)}>
+                  <button type="button" disabled={!canWrite || Boolean(busyAction)} onClick={() => openCreateFolder(currentFolder?.id ?? null)}>
                     <FolderPlus size={16} />{t("fileSpace.content.createSubfolder")}
                   </button>
                 </div>
@@ -6461,7 +6482,7 @@ export function FileSpacePage() {
           onKeyDown={handleContextMenuKeyDown}
           style={{ left: contentContextMenu.x, top: contentContextMenu.y }}
         >
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateTextFile(currentFolder?.id ?? null)}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => openCreateTextFile(currentFolder?.id ?? null)}>
             <FilePlus2 size={16} />{t("fileSpace.contentMenu.createFile")}
           </button>
           <span />
@@ -6542,7 +6563,7 @@ export function FileSpacePage() {
           onKeyDown={handleContextMenuKeyDown}
           style={{ left: folderContextMenu.x, top: folderContextMenu.y }}
         >
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openCreateFolder(folderContextMenu.folderId)}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => openCreateFolder(folderContextMenu.folderId)}>
             <FolderPlus size={16} />{t("fileSpace.folderMenu.newSubfolder")}
           </button>
           {folderContextMenuExpandableIds.length > 0 ? (
@@ -6551,11 +6572,11 @@ export function FileSpacePage() {
               {t(isFolderContextSubtreeFullyExpanded ? "fileSpace.folderMenu.collapseAll" : "fileSpace.folderMenu.expandAll")}
             </button>
           ) : null}
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openRenameFolder(folderContextMenu.folderId)}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => openRenameFolder(folderContextMenu.folderId)}>
             <Pencil size={15} />{t("fileSpace.folderMenu.rename")}
           </button>
           <span />
-          <button className="is-danger" type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => requestDeleteFolder(folderContextMenu.folderId)}>
+          <button className="is-danger" type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => requestDeleteFolder(folderContextMenu.folderId)}>
             <Trash2 size={16} />{t("fileSpace.folderMenu.delete")}
           </button>
         </div>
@@ -6580,24 +6601,24 @@ export function FileSpacePage() {
               <span />
             </>
           ) : null}
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => void runFileCommand("reveal_file_space_file", fileContextMenu.fileId, "revealFile")}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => void runFileCommand("reveal_file_space_file", fileContextMenu.fileId, "revealFile")}>
             <FolderOpen size={16} />{t("fileSpace.fileMenu.reveal")}
           </button>
           <span />
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openRenameFile(fileContextMenu.fileId)}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => openRenameFile(fileContextMenu.fileId)}>
             <Pencil size={15} />{t("fileSpace.fileMenu.rename")}
           </button>
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => openTagDialog(fileContextMenu.fileId)}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => openTagDialog(fileContextMenu.fileId)}>
             <Tag size={15} />{t("fileSpace.fileMenu.tags")}
           </button>
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => void runFileCommand("copy_file_space_file", fileContextMenu.fileId, "copyFile")}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => void runFileCommand("copy_file_space_file", fileContextMenu.fileId, "copyFile")}>
             <Copy size={15} />{t("fileSpace.fileMenu.copyFile")}
           </button>
-          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => void runFileCommand("copy_file_space_file_path", fileContextMenu.fileId, "copyPath")}>
+          <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => void runFileCommand("copy_file_space_file_path", fileContextMenu.fileId, "copyPath")}>
             <FileText size={15} />{t("fileSpace.fileMenu.copyPath")}
           </button>
           <span />
-          <button className="is-danger" type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => requestDeleteFile(fileContextMenu.fileId)}>
+          <button className="is-danger" type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => requestDeleteFile(fileContextMenu.fileId)}>
             <Trash2 size={16} />{t("fileSpace.fileMenu.delete")}
           </button>
         </div>

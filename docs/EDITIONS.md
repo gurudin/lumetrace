@@ -32,7 +32,9 @@ The current layout stays in place to avoid a disruptive directory migration:
 
 ## Fix and release workflow
 
-An optional `WorkspaceProvider` supplies edition-owned workspace choices and a read-only or editable surface. The shared settings list remains the single local workspace manager. Its footer controls can be portaled into the active surface, including when no local space exists. The hidden local workspace stays mounted and its shortcuts/AI surface are suppressed; returning to the already-current local space does not reload its snapshot. Remote identifiers never reach local filesystem mutation commands. Authorization, connectors, labels and capabilities of additional storage surfaces belong to the edition.
+An optional `WorkspaceProvider` supplies edition-owned choices and a data source, **not a second file page**. The existing `FileSpacePage`, folder tree, list/grid and inspector remain shared. The bottom-left workspace name opens an undimmed, keyboard-accessible grouped popover; settings still manages local spaces. The provider resolves the initial/remembered selection before mounting the workbench. Source changes remount file/preview state and remember folders by selection key. Management pages remain separate from the file workbench.
+
+`useWorkspaceInvoke` binds each component's file commands to its selected source. Unsupported external commands fail instead of falling through to the local database; stale replies and callbacks after unmount are rejected. Application settings and local registry management remain native. This frontend routing is not an authorization boundary: every external native operation must independently validate access and credentials. Declared unavailable capabilities disable their controls; the seam itself does not implement remote writes, previews, history, indexes or synchronization. Those data paths must be implemented and verified by the edition before being enabled.
 
 1. Implement and test a common change in public `develop`; commit in English and push.
 2. In private `develop`, fetch that public commit and update the submodule's exact commit reference. Never edit tracked files inside the Pro submodule.

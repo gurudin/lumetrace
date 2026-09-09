@@ -15,6 +15,7 @@ import {
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
+export { FileSpaceWorkspaceSwitcher } from "./FileSpaceWorkspaceSwitcher";
 
 export interface FileSpaceWorkspaceRecord {
   id: string;
@@ -207,7 +208,7 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
     if (workspace.current || busyAction || disabled) return;
     if (external?.active && workspace.id === directory?.currentWorkspaceId) {
       onDone();
-      external.onLocalSelect();
+      external.onLocalSelect(workspace.id);
       return;
     }
     setBusyAction("switch");
@@ -222,7 +223,8 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
         { workspaceId: workspace.id },
       );
       onWorkspaceChanged(mutation);
-      if (external?.active) { onDone(); external.onLocalSelect(); }
+      external?.onLocalSelect(mutation.directory.currentWorkspaceId);
+      if (external?.active) onDone();
     } catch (switchError) {
       setError(`${t("fileSpace.workspaces.errors.switch")} ${errorText(switchError)}`);
     } finally {
@@ -252,7 +254,8 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
         { request: { requestId, name, path: workspacePath, mode: creationMode } },
       );
       onWorkspaceChanged(mutation);
-      if (external?.active) { onDone(); external.onLocalSelect(); }
+      external?.onLocalSelect(mutation.directory.currentWorkspaceId);
+      if (external?.active) onDone();
       setView("overview");
     } catch (createError) {
       setError(`${t("fileSpace.workspaces.errors.create")} ${errorText(createError)}`);

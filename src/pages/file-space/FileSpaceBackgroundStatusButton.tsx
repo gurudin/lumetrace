@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { CircleAlert, LoaderCircle, Pause } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -10,6 +11,7 @@ import {
 import { openBackgroundStatusEventName } from "./preferencesNavigation";
 
 export function FileSpaceBackgroundStatusButton() {
+  const invoke = useWorkspaceInvoke();
   const { t } = useTranslation();
   const [status, setStatus] = useState<BackgroundStatus | null>(null);
   const [statusUnavailable, setStatusUnavailable] = useState(false);

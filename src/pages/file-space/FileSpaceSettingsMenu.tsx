@@ -1,5 +1,6 @@
 import { getVersion } from "@tauri-apps/api/app";
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   ArchiveRestore,
@@ -160,6 +161,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   onWorkspaceChanged,
   onWorkspaceDirectoryChanged,
 }: FileSpaceSettingsMenuProps<TSnapshot>) {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const externalWorkspace = useWorkspaceExtension();
   const triggerRef = useRef<HTMLButtonElement>(null);

@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   File,
   FileImage,
@@ -104,6 +105,7 @@ export function FileSpaceSearchPanel({
   onClose,
   onOpenFile,
 }: FileSpaceSearchPanelProps) {
+  const invoke = useWorkspaceInvoke();
   const applicationExtension = useApplicationExtension();
   const { t } = useTranslation();
   const [query, setQuery] = useState("");

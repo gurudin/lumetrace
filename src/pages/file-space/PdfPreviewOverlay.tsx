@@ -1,4 +1,5 @@
-import { invoke, isTauri } from "@tauri-apps/api/core";
+import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { isTauri } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
   ChevronLeft,
@@ -166,6 +167,7 @@ function PdfPageCanvas({ document, pageNumber, scale, scrollRoot }: PdfPageCanva
 }
 
 export function PdfPreviewOverlay() {
+  const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
   const copy = {
     dialog: (name: string) => t("fileSpace.preview.pdf.dialog", { name }),
