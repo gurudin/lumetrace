@@ -43,3 +43,18 @@ test("the community entry uses the shared UI and shared native menu handling", (
   assert.match(read("src/bootstrap.tsx"), /removeEventListener/);
   assert.match(read("src/styles.css"), /@source "\.\/"/);
 });
+
+test("workspace popover targets the selected radio before falling back to the first choice", () => {
+  const source = read("src/pages/file-space/FileSpaceWorkspaceSwitcher.tsx");
+  assert.match(source, /\[aria-checked="true"\]:not\(:disabled\)/);
+  assert.match(source, /selected \?\? menu\.current\?\.querySelector/);
+  assert.match(source, /selected\?\.scrollIntoView\(\{ block: "nearest" \}\)/);
+});
+
+test("external workspace identity has an optional icon without changing local status layout", () => {
+  assert.match(read("src/shared/extensions/ApplicationExtension.tsx"), /icon\?: ReactNode/);
+  const status = read("src/pages/file-space/FileSpaceWorkspaceMenu.tsx");
+  assert.match(status, /external\.icon \? " has-icon" : ""/);
+  assert.match(status, /file-space-health-dot/);
+  assert.match(read("src/styles.css"), /\.file-space-workspace-status\.has-icon\s*\{\s*grid-template-columns: 28px minmax\(0, 1fr\)/);
+});

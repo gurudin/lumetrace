@@ -17,7 +17,11 @@ export function FileSpaceWorkspaceSwitcher<T>({ directory, disabled = false, onW
   const close = () => { setOpen(false); trigger.current?.focus(); };
   useEffect(() => {
     if (!open) return;
-    const frame = requestAnimationFrame(() => menu.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]:not(:disabled)')?.focus());
+    const frame = requestAnimationFrame(() => {
+      const selected = menu.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"][aria-checked="true"]:not(:disabled)');
+      (selected ?? menu.current?.querySelector<HTMLButtonElement>('[role="menuitemradio"]:not(:disabled)'))?.focus({ preventScroll: true });
+      selected?.scrollIntoView({ block: "nearest" });
+    });
     const outside = (event: PointerEvent) => { if (!host.current?.contains(event.target as Node) && !menu.current?.contains(event.target as Node)) setOpen(false); };
     const resize = () => setOpen(false);
     const escape = (event: KeyboardEvent) => { if (event.key === "Escape") { event.stopPropagation(); setOpen(false); trigger.current?.focus(); } };

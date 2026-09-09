@@ -4177,6 +4177,25 @@ body.is-file-space-reordering * {
   gap: 2px;
 }
 
+.file-space-workspace-status.has-icon {
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.file-space-workspace-status-icon {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.file-space-workspace-status-icon img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
 .file-space-workspace-status strong,
 .file-space-workspace-status small {
   overflow: hidden;

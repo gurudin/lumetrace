@@ -1,4 +1,4 @@
-import { createContext, useContext, useRef, useState, type ComponentType, type PropsWithChildren } from "react";
+import { createContext, useContext, useRef, useState, type ComponentType, type PropsWithChildren, type ReactNode } from "react";
 import type { WorkspaceCommandSource } from "./workspaceCommands";
 import "./application-extension.css";
 
@@ -17,6 +17,7 @@ export interface WorkspaceExtension {
   selectionKey: string;
   name: string;
   typeLabel: string;
+  icon?: ReactNode;
   onLocalSelect: (id?: string) => void;
   List: ComponentType<{ disabled: boolean; onDone: () => void; compact?: boolean }>;
   source: WorkspaceCommandSource | null;
