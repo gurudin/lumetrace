@@ -86,7 +86,7 @@ export function FileSpaceWorkspaceStatus({ directory }: FileSpaceWorkspaceStatus
     (workspace) => workspace.id === directory.currentWorkspaceId,
   );
 
-  if (external?.active) return <div className="file-space-workspace-status"><span><strong>{external.name}</strong><small>{external.typeLabel}</small></span></div>;
+  if (external?.active) return <div className="file-space-workspace-status"><span aria-hidden="true" /><span><strong>{external.name}</strong><small>{external.typeLabel}</small></span></div>;
   if (!currentWorkspace) return <div className="file-space-workspace-status-placeholder" />;
 
   return (
