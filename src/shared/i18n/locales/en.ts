@@ -359,8 +359,8 @@ export const en = {
       },
     },
     workspaces: {
-      localSection: "Local Workspaces",
-      teamSection: "Team Workspaces",
+      localSection: "Local spaces",
+      teamSection: "Team spaces",
       switcher: "Switch Workspace",
       create: "New Workspace…",
       manage: "Manage Workspaces…",

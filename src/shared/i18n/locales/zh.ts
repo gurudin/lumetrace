@@ -359,8 +359,8 @@ export const zh = {
       },
     },
     workspaces: {
-      localSection: "本地工作空间",
-      teamSection: "团队工作空间",
+      localSection: "本地空间",
+      teamSection: "团队空间",
       switcher: "切换工作空间",
       create: "新建工作空间…",
       manage: "管理工作空间…",

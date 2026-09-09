@@ -32,6 +32,8 @@ The current layout stays in place to avoid a disruptive directory migration:
 
 ## Fix and release workflow
 
+An optional `WorkspaceProvider` supplies edition-owned workspace choices and a read-only or editable surface. The shared settings list remains the single local workspace manager. Its footer controls can be portaled into the active surface, including when no local space exists. The hidden local workspace stays mounted and its shortcuts/AI surface are suppressed; returning to the already-current local space does not reload its snapshot. Remote identifiers never reach local filesystem mutation commands. Authorization, connectors, labels and capabilities of additional storage surfaces belong to the edition.
+
 1. Implement and test a common change in public `develop`; commit in English and push.
 2. In private `develop`, fetch that public commit and update the submodule's exact commit reference. Never edit tracked files inside the Pro submodule.
 3. Run Pro integration checks against the new reference, review the diff and commit/push the reference update.

@@ -14,6 +14,7 @@ const compiled = ts.transpileModule(source.replace('import "./application-extens
 const module = { exports: {} as Record<string, any> };
 new Function("require", "exports", compiled)(require, module.exports);
 const { ApplicationExtensionHost, ApplicationExtensionEntry } = module.exports;
+const { WorkspaceExtensionContext, useApplicationExtension } = module.exports;
 const workspace = createElement("div", { "data-workspace": "preserved" }, "Existing workspace");
 
 test("community without an extension renders its existing workspace unchanged", () => {
@@ -43,6 +44,18 @@ test("setup and settings slots use one extension, without imposing a local works
     const html = renderToStaticMarkup(createElement(ApplicationExtensionHost, { extension }, createElement(ApplicationExtensionEntry, { placement })));
     assert.match(html, new RegExp(`<button>${placement}</button>`));
   }
+});
+
+test("alternate storage suppresses local commands without opening management", () => {
+  function Status() { const state = useApplicationExtension(); return createElement("span", { "data-hidden": state.active, "data-management": state.pageActive }); }
+  const extension = { Entry: () => null, Page: () => null, WorkspaceProvider: ({ children }: any) => createElement(WorkspaceExtensionContext.Provider, {
+    value: { active: true, surface: createElement("main", null, "Alternate files") },
+  }, children) };
+  const html = renderToStaticMarkup(createElement(ApplicationExtensionHost, { extension }, createElement("div", null, workspace, createElement(Status))));
+  assert.match(html, /application-workspace-surface[^>]*hidden=""[^>]*inert=""/);
+  assert.match(html, /data-workspace="preserved"/);
+  assert.match(html, /data-hidden="true" data-management="false"/);
+  assert.match(html, /Alternate files/);
 });
 
 test("the body-portaled AI panel is hidden without cancelling work behind an extension page", () => {

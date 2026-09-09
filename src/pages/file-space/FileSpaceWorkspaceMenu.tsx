@@ -14,6 +14,7 @@ import {
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 
 export interface FileSpaceWorkspaceRecord {
   id: string;
@@ -80,10 +81,12 @@ function createWorkspaceRequestId() {
 
 export function FileSpaceWorkspaceStatus({ directory }: FileSpaceWorkspaceStatusProps) {
   const { t } = useTranslation();
+  const external = useWorkspaceExtension();
   const currentWorkspace = directory?.workspaces.find(
     (workspace) => workspace.id === directory.currentWorkspaceId,
   );
 
+  if (external?.active) return <div className="file-space-workspace-status"><span><strong>{external.name}</strong><small>{external.typeLabel}</small></span></div>;
   if (!currentWorkspace) return <div className="file-space-workspace-status-placeholder" />;
 
   return (
@@ -110,6 +113,8 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
   onDone,
 }: FileSpaceWorkspaceSettingsProps<TSnapshot>) {
   const { t } = useTranslation();
+  const external = useWorkspaceExtension();
+  const ExternalList = external?.List;
   const nameInputRef = useRef<HTMLInputElement>(null);
   const creationRequestRef = useRef<string | null>(null);
   const [view, setView] = useState<WorkspaceSettingsView>("overview");
@@ -126,8 +131,8 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
   const [error, setError] = useState<string | null>(null);
 
   const localWorkspaces = useMemo(
-    () => directory?.workspaces.filter((workspace) => workspace.kind === "local") ?? [],
-    [directory],
+    () => directory?.workspaces.filter((workspace) => workspace.kind === "local").map(workspace => ({ ...workspace, current: workspace.current && !external?.active })) ?? [],
+    [directory, external?.active],
   );
   const teamWorkspaces = useMemo(
     () => directory?.workspaces.filter((workspace) => workspace.kind === "team") ?? [],
@@ -200,6 +205,11 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
 
   const switchWorkspace = async (workspace: FileSpaceWorkspaceRecord) => {
     if (workspace.current || busyAction || disabled) return;
+    if (external?.active && workspace.id === directory?.currentWorkspaceId) {
+      onDone();
+      external.onLocalSelect();
+      return;
+    }
     setBusyAction("switch");
     setSwitchingWorkspaceId(workspace.id);
     setRemovingWorkspace(null);
@@ -212,6 +222,7 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
         { workspaceId: workspace.id },
       );
       onWorkspaceChanged(mutation);
+      if (external?.active) { onDone(); external.onLocalSelect(); }
     } catch (switchError) {
       setError(`${t("fileSpace.workspaces.errors.switch")} ${errorText(switchError)}`);
     } finally {
@@ -241,6 +252,7 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
         { request: { requestId, name, path: workspacePath, mode: creationMode } },
       );
       onWorkspaceChanged(mutation);
+      if (external?.active) { onDone(); external.onLocalSelect(); }
       setView("overview");
     } catch (createError) {
       setError(`${t("fileSpace.workspaces.errors.create")} ${errorText(createError)}`);
@@ -375,7 +387,7 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
                     <button
                       className="is-danger"
                       type="button"
-                      disabled={workspace.current || Boolean(busyAction)}
+                      disabled={workspace.id === directory?.currentWorkspaceId || Boolean(busyAction)}
                       onClick={() => {
                         setRemovingWorkspace(workspace);
                         setDeleteWorkspaceData(false);
@@ -480,6 +492,7 @@ export function FileSpaceWorkspaceSettings<TSnapshot>({
       <div className="file-space-workspace-settings-list">
         {renderWorkspaceGroup(t("fileSpace.workspaces.localSection"), localWorkspaces)}
         {renderWorkspaceGroup(t("fileSpace.workspaces.teamSection"), teamWorkspaces)}
+        {ExternalList ? <ExternalList disabled={Boolean(busyAction) || disabled} onDone={onDone} /> : null}
       </div>
       {removingWorkspace ? (
         <div className="file-space-workspace-remove-confirmation" role="alertdialog" aria-modal="false" aria-labelledby="file-space-remove-workspace-title">

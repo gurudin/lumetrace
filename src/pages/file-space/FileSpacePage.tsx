@@ -67,7 +67,7 @@ import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotat
 import { VersionHistoryBadge, type VersionSummary } from "./VersionHistoryBadge";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
-import { ApplicationExtensionEntry, useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
+import { ApplicationExtensionEntry, useApplicationExtension, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { globalSearchShortcutLabel } from "./globalSearchShortcut";
 import {
   calculateFileListLayout,
@@ -1210,6 +1210,7 @@ function FolderTreeChildren({
 
 export function FileSpacePage() {
   const applicationExtension = useApplicationExtension();
+  const externalWorkspace = useWorkspaceExtension();
   const { t, i18n } = useTranslation();
   const { appearance } = useTheme();
   const [snapshot, setSnapshot] = useState<FileSpaceSnapshot>(emptySnapshot);
@@ -5463,9 +5464,23 @@ export function FileSpacePage() {
     return dismissStartupSplash();
   }, [rootView]);
 
+  const workspaceControls = <>
+    <FileSpaceWorkspaceStatus directory={workspaceDirectory} />
+    <FileSpaceSettingsMenu<FileSpaceSnapshot>
+      workspaceDirectory={workspaceDirectory}
+      workspaceDisabled={Boolean(busyAction)}
+      onWorkspaceChanged={applyWorkspaceMutation}
+      onWorkspaceDirectoryChanged={setWorkspaceDirectory}
+    />
+  </>;
+  // The same controls move into the edition surface; the local workspace stays mounted.
+  const externalControls = externalWorkspace?.active && externalWorkspace.footerTarget
+    ? createPortal(workspaceControls, externalWorkspace.footerTarget) : null;
+
   if (rootView === "loading") {
     return (
       <section className="file-space-page file-space-page--loading" aria-busy="true">
+        {externalControls}
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <div className="file-space-loading-state" role="status" aria-live="polite">
           <span className="file-space-loading-mark" aria-hidden="true" />
@@ -5479,6 +5494,7 @@ export function FileSpacePage() {
   if (rootView === "loadError" && initialLoadError) {
     return (
       <section className="file-space-page file-space-page--loading">
+        {externalControls}
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <div className="file-space-empty" role="alert" aria-live="assertive">
           <span className="file-space-empty-symbol" aria-hidden="true">
@@ -5503,6 +5519,7 @@ export function FileSpacePage() {
       : t(`fileSpace.root.status.${snapshot.rootStatus}`);
     return (
       <section className="file-space-page file-space-setup-page">
+        {externalControls}
         <div className="file-space-setup-titlebar" data-tauri-drag-region aria-hidden="true" />
         <SetupPreferences />
         <div className="file-space-setup">
@@ -5656,13 +5673,7 @@ export function FileSpacePage() {
         </div>
 
         <footer className="file-space-sidebar-footer">
-          <FileSpaceWorkspaceStatus directory={workspaceDirectory} />
-          <FileSpaceSettingsMenu<FileSpaceSnapshot>
-            workspaceDirectory={workspaceDirectory}
-            workspaceDisabled={Boolean(busyAction)}
-            onWorkspaceChanged={applyWorkspaceMutation}
-            onWorkspaceDirectoryChanged={setWorkspaceDirectory}
-          />
+          {externalControls ?? workspaceControls}
         </footer>
       </aside>
 
