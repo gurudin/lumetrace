@@ -5527,7 +5527,7 @@ export function FileSpacePage() {
           ) : null}
           <div className="file-space-setup-options">
             <button
-              className="file-space-setup-option is-primary"
+              className="file-space-setup-option"
               type="button"
               disabled={busyAction === "configure"}
               aria-busy={busyAction === "configure" && rootSetupMode === "new"}

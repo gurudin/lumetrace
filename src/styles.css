@@ -312,11 +312,6 @@ h1 {
   transition: border-color 120ms ease, background 120ms ease, box-shadow 120ms ease, transform 120ms ease;
 }
 
-.file-space-setup-option.is-primary {
-  border-color: color-mix(in srgb, var(--highlight) 38%, var(--border));
-  background: color-mix(in srgb, var(--highlight-soft) 38%, var(--surface));
-}
-
 .file-space-setup-option:hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--highlight) 48%, var(--border));
   background: color-mix(in srgb, var(--highlight-soft) 48%, var(--surface));
