@@ -90,6 +90,7 @@
 .file-image-preview-stage > img.is-original-loading {
   position: absolute;
   visibility: hidden;
+  opacity: 1;
   pointer-events: none;
 }
 
