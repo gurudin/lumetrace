@@ -541,7 +541,7 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
     Ok(())
 }
 
-fn open_connection(path: &PathBuf) -> Result<Connection, String> {
+pub(crate) fn open_connection(path: &PathBuf) -> Result<Connection, String> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
             .map_err(|error| format!("Unable to create Lume Trace database directory: {error}"))?;

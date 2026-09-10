@@ -11,6 +11,7 @@ mod semantic_search;
 mod version_annotation;
 mod version_comparison;
 mod workspace;
+pub mod workspace_database;
 
 use std::sync::{
     atomic::{AtomicBool, Ordering},
