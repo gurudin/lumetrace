@@ -6,6 +6,13 @@ export interface FileImageDimensions {
   height: number;
 }
 
+export function originalImageDimensions(value: unknown): { width: number; height: number } | null {
+  const dimensions = value as { width?: unknown; height?: unknown } | null;
+  if (!dimensions || !Number.isSafeInteger(dimensions.width) || !Number.isSafeInteger(dimensions.height)
+    || (dimensions.width as number) <= 0 || (dimensions.height as number) <= 0) return null;
+  return { width: dimensions.width as number, height: dimensions.height as number };
+}
+
 export function fileDocumentArtworkFormat(extension: string): FileDocumentArtworkFormat | null {
   const normalizedExtension = extension.toLowerCase();
   if (normalizedExtension === "md" || normalizedExtension === "markdown") return "md";

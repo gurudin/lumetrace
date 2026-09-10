@@ -89,6 +89,7 @@ import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
 import { FileRevealNavigation } from "./fileRevealNavigation";
 import {
   fileCardMetadataText,
+  originalImageDimensions,
   fileDocumentArtworkFormat,
   shouldShowFileVersionBadge,
   type FileDocumentArtworkFormat,
@@ -991,12 +992,31 @@ function fileCategory(file: FileSpaceFileRecord): Exclude<TypeFilter, "all"> | "
   return "other";
 }
 
-function fileCardMetadata(file: FileSpaceFileRecord, imageDimensions?: FileImageDimensions) {
+function FileCardMetadata({ file, imageDimensions }: { file: FileSpaceFileRecord; imageDimensions?: FileImageDimensions }) {
+  const source = useWorkspaceExtension()?.source ?? null;
+  const image = fileCategory(file) === "image";
+  // The transport identity includes external revisions (such as ETags), which
+  // can change even when the file timestamp remains the same.
+  const key = JSON.stringify([source?.key, file.id, file.updatedAt, image ? filePreviewSource(file, source) : null]);
+  const [original, setOriginal] = useState<{ key: string; dimensions: FileImageDimensions } | null>(null);
+  useEffect(() => {
+    let current = true;
+    if (source?.imageOriginalDimensions && image) {
+      void source.imageOriginalDimensions(file.id, file.updatedAt).then(value => {
+        const dimensions = originalImageDimensions(value);
+        if (current) setOriginal(dimensions ? { key, dimensions: { ...dimensions, fileUpdatedAt: file.updatedAt } } : null);
+      }).catch(() => { if (current) setOriginal(null); });
+    }
+    return () => { current = false; };
+  }, [source, key, image, file.id, file.updatedAt]);
+  // Intrinsic preview sizes still drive layout. Only local previews contain the
+  // original file; an external thumbnail must never become a resolution label.
+  const dimensions = source ? (original?.key === key ? original.dimensions : undefined) : imageDimensions;
   return fileCardMetadataText(
     formatFileSize(file.sizeBytes),
     fileCategory(file) === "image",
     file.updatedAt,
-    imageDimensions,
+    dimensions,
   );
 }
 
@@ -6096,7 +6116,7 @@ export function FileSpacePage() {
                         ) : (
                           <span className="file-space-item-copy">
                             <strong>{file.name}</strong>
-                            <small>{fileCardMetadata(file, imageDimensions)}</small>
+                            <small><FileCardMetadata file={file} imageDimensions={imageDimensions} /></small>
                           </span>
                         )}
                       </button>
@@ -6480,7 +6500,7 @@ export function FileSpacePage() {
           ) : null}
           <span className="file-space-item-copy">
             <strong>{internallyDraggedFile.name}</strong>
-            <small>{fileCardMetadata(internallyDraggedFile, imageDimensionsByFileVersion[imageDimensionsKey(internallyDraggedFile.id, internallyDraggedFile.updatedAt)])}</small>
+            <small><FileCardMetadata file={internallyDraggedFile} imageDimensions={imageDimensionsByFileVersion[imageDimensionsKey(internallyDraggedFile.id, internallyDraggedFile.updatedAt)]} /></small>
           </span>
         </div>,
         document.body,

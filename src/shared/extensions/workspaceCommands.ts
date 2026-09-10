@@ -4,6 +4,8 @@ export interface WorkspaceCommandSource {
   key: string;
   /** Edition-owned, authenticated image transport; independent of version history. */
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
+  /** Original pixel dimensions, never the dimensions of a resized preview. */
+  imageOriginalDimensions?: (fileId: string, updatedAt: number) => Promise<{ width: number; height: number } | null>;
   capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean; backup?: boolean };
   invoke: <T>(command: string, args?: InvokeArgs) => Promise<T>;
 }
