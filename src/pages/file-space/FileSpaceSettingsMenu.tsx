@@ -36,7 +36,7 @@ import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
 import { FileSpacePreferences } from "./FileSpacePreferences";
 import { FileSpaceFeedback } from "./FileSpaceFeedback";
-import { ApplicationExtensionEntry, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
+import { ApplicationExtensionEntry } from "../../shared/extensions/ApplicationExtension";
 import {
   FileSpaceWorkspaceSettings,
   type FileSpaceWorkspaceDirectory,
@@ -163,7 +163,6 @@ export function FileSpaceSettingsMenu<TSnapshot>({
 }: FileSpaceSettingsMenuProps<TSnapshot>) {
   const invoke = useWorkspaceInvoke();
   const { t, i18n } = useTranslation();
-  const externalWorkspace = useWorkspaceExtension();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const dialogRef = useRef<HTMLElement>(null);
@@ -555,7 +554,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
           aria-label={t("fileSpace.settings.menuLabel")}
           onKeyDown={handleMenuKeyDown}
         >
-          {menuItems.filter(item => !externalWorkspace?.active || ["workspace", "about", "feedback", "privacy"].includes(item)).map((item) => {
+          {menuItems.map((item) => {
             const Icon = item === "workspace"
               ? FolderCog
               : item === "about"

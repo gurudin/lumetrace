@@ -2954,7 +2954,8 @@ export function FileSpacePage() {
 
   const openTimeline = async (file: FileSpaceFileRecord, targetVersionId?: string) => {
     if (capabilities?.history === false) return;
-    if (file.versionCount < 1 && inspectorTimeline?.fileId !== file.id) return;
+    // External catalogues can load history on demand without an upfront count.
+    if (file.versionCount < 1 && !externalWorkspace?.source && inspectorTimeline?.fileId !== file.id) return;
     if (!isTimelinePanelOpen && !timelineBadgeReturnFocusRef.current) {
       timelineBadgeReturnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement : null;
@@ -3856,7 +3857,7 @@ export function FileSpacePage() {
     nativeDropBlockedRef.current = true;
     const menuWidth = 218;
     const file = snapshot.files.find((item) => item.id === fileId);
-    const menuHeight = file?.versionCount ? 280 : 236;
+    const menuHeight = file?.versionCount || externalWorkspace?.source ? 280 : 236;
     updateSelectedFiles(new Set([fileId]), fileId);
     setFolderContextMenu(null);
     setContentContextMenu(null);
@@ -6590,7 +6591,7 @@ export function FileSpacePage() {
           onKeyDown={handleContextMenuKeyDown}
           style={{ left: fileContextMenu.x, top: fileContextMenu.y }}
         >
-          {(snapshot.files.find((file) => file.id === fileContextMenu.fileId)?.versionCount ?? 0) > 0 ? (
+          {(snapshot.files.find((file) => file.id === fileContextMenu.fileId)?.versionCount ?? 0) > 0 || externalWorkspace?.source ? (
             <>
               <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => {
                 const file = snapshot.files.find((item) => item.id === fileContextMenu.fileId);

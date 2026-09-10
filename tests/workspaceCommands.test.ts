@@ -32,3 +32,14 @@ test("stale replies and delayed callbacks are rejected across source switches", 
   const unmounted = api.bindWorkspaceInvoke(null, () => false);
   await assert.rejects(unmounted("create_file_space_text_file"), /workspace changed/);
 });
+
+test("visible external actions remain source-bound instead of operating on personal data", async () => {
+  const api = harness(), requests: string[] = [];
+  api.setWorkspaceCommandSource({ key: "external", invoke: async (command: string) => { requests.push(command); throw new Error("not connected"); } });
+  const actions = ["search_file_space_files", "ask_file_space_ai", "get_task_file_timeline", "get_semantic_search_status", "install_semantic_search_model", "export_file_space_backup", "restore_file_space_backup", "create_file_space_text_file", "delete_file_space_file"];
+  for (const action of actions) await assert.rejects(api.workspaceInvoke(action), /not connected/);
+  assert.deepEqual(requests, actions);
+  assert.deepEqual(api.calls, []);
+  await api.workspaceInvoke("get_ai_service_settings");
+  assert.deepEqual(api.calls, ["get_ai_service_settings"]);
+});
