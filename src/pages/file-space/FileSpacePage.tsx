@@ -1062,11 +1062,11 @@ function fixtureImageSource(file: FileSpaceFileRecord) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function filePreviewSource(file: FileSpaceFileRecord, source: WorkspaceCommandSource | null) {
+function filePreviewSource(file: FileSpaceFileRecord, source: WorkspaceCommandSource | null, purpose: "thumbnail" | "detail" = "thumbnail") {
   if (fileCategory(file) !== "image") return null;
   // An external current file does not need a local snapshot, and must not use
   // the local database-backed protocol even when its transport is unavailable.
-  if (source) return source.imagePreviewUrl?.(file.id, file.updatedAt) ?? null;
+  if (source) return source.imagePreviewUrl?.(file.id, file.updatedAt, purpose) ?? null;
   if (file.currentVersion === null) return null;
   if (!isTauri()) return file.id.startsWith("fixture-file-") ? fixtureImageSource(file) : null;
   return convertFileSrc(file.id, "lumetrace-file-preview");
@@ -1102,6 +1102,7 @@ function FileArtwork({
         <img
           key={previewKey}
           src={previewSource ?? undefined}
+          data-detail-source={source ? filePreviewSource(file, source, "detail") ?? undefined : undefined}
           alt=""
           loading="lazy"
           decoding="async"

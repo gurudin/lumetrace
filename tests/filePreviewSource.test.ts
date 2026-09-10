@@ -23,6 +23,9 @@ test('external images without history use their own transport, never local previ
   );
   const file = { id: 'external-file', name: 'photo.png', mimeType: null, currentVersion: null, updatedAt: 10 };
   assert.equal(resolve(file, { imagePreviewUrl: (id: string, revision: number) => `${id}:${revision}` }), 'external-file:10');
+  const sizedSource = { imagePreviewUrl: (_id: string, _revision: number, purpose: string) => purpose };
+  assert.equal(resolve(file, sizedSource), 'thumbnail');
+  assert.equal(resolve(file, sizedSource, 'detail'), 'detail');
   assert.equal(resolve(file, {}), null);
   assert.deepEqual(native, []);
   assert.equal(resolve({ ...file, currentVersion: 1 }, null), 'local-image');

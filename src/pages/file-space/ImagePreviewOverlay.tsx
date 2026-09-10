@@ -218,7 +218,7 @@ export function ImagePreviewOverlay() {
     };
 
     const openPreview = (button: HTMLButtonElement, image: HTMLImageElement) => {
-      const source = image.currentSrc || image.src;
+      const source = image.dataset.detailSource || image.currentSrc || image.src;
       if (!source) return;
       returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
       const card = button.closest<HTMLElement>(".file-space-file-card");
