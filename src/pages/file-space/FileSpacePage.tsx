@@ -40,7 +40,7 @@ import {
   Info,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
@@ -1111,20 +1111,29 @@ function FileArtwork({
   const artworkTitle = fileArtworkTitle(file);
   const source = useWorkspaceExtension()?.source ?? null;
   const previewSource = filePreviewSource(file, source);
+  const store = source?.imagePreviews;
+  const subscribe = useCallback((listener: () => void) => store?.subscribe(listener) ?? (() => {}), [store]);
+  const snapshot = useCallback(() => previewSource ? store?.snapshot(previewSource) ?? null : null, [store, previewSource]);
+  const retained = useSyncExternalStore(subscribe, snapshot, snapshot);
+  useEffect(() => {
+    if (store && previewSource) return store.retain(previewSource);
+  }, [store, previewSource]);
   const previewKey = JSON.stringify([file.id, file.updatedAt, previewSource]);
   const [preview, setPreview] = useState<{ key: string; state: "loading" | "loaded" | "failed" }>({ key: previewKey, state: "loading" });
   // Reset before committing a changed image, so cached load events cannot be
   // overwritten by a later reset effect for the previous source/version.
   if (preview.key !== previewKey) setPreview({ key: previewKey, state: "loading" });
-  const previewState = preview.key === previewKey ? preview.state : "loading";
+  const previewState = store ? (retained?.failed ? "failed" : retained?.url ? "loaded" : "loading")
+    : preview.key === previewKey ? preview.state : "loading";
+  const displaySource = store ? retained?.url : previewSource;
   const showPreview = Boolean(previewSource) && previewState !== "failed";
   const previewLoading = showPreview && previewState === "loading";
   return (
     <span aria-busy={previewLoading || undefined} className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}${previewLoading ? " is-preview-loading" : ""}`}>
-      {showPreview ? (
+      {showPreview && !displaySource ? null : showPreview ? (
         <img
           key={previewKey}
-          src={previewSource ?? undefined}
+          src={displaySource ?? undefined}
           data-detail-source={source ? filePreviewSource(file, source, "detail") ?? undefined : undefined}
           alt=""
           loading="lazy"
@@ -1137,7 +1146,10 @@ function FileArtwork({
               onImageDimensions?.(file.id, file.updatedAt, naturalWidth, naturalHeight);
             }
           }}
-          onError={() => setPreview({ key: previewKey, state: "failed" })}
+          onError={() => {
+            if (store && previewSource) store.fail(previewSource);
+            setPreview({ key: previewKey, state: "failed" });
+          }}
         />
       ) : artworkFormat ? (
         <span className={`file-space-format-art is-${artworkFormat}`}>

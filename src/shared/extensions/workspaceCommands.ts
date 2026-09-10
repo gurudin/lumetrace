@@ -1,9 +1,12 @@
 import { invoke as nativeInvoke, type InvokeArgs, type InvokeOptions } from "@tauri-apps/api/core";
+import type { ImagePreviewStore } from "./imagePreviewStore";
 
 export interface WorkspaceCommandSource {
   key: string;
   /** Edition-owned, authenticated image transport; independent of version history. */
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
+  /** Optional workspace-owned loaded thumbnails, retained across card virtualization. */
+  imagePreviews?: ImagePreviewStore;
   /** Original pixel dimensions, never the dimensions of a resized preview. */
   imageOriginalDimensions?: (fileId: string, updatedAt: number) => Promise<{ width: number; height: number } | null>;
   capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean; backup?: boolean };

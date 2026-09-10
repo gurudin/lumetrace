@@ -44,6 +44,8 @@ test('image loading settles on load/error and resets for a new file, revision or
     element: (type: any, props: any, ...children: any[]) => ({ type, props: { ...props, children } }),
     fragment: 'fragment',
     useState: (initial: any) => [state ??= initial, (next: any) => { state = next; pendingRender = true; }],
+    useCallback: (fn: any) => fn, useEffect: () => {},
+    useSyncExternalStore: (_subscribe: any, snapshot: any) => snapshot(),
     useTranslation: () => ({ t: () => '' }),
     fileIcon: () => 'icon', fileArtworkFormat: () => null,
     fileArchiveExtension: () => null, fileArtworkTitle: () => '',
