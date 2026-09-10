@@ -1135,6 +1135,7 @@ function FileArtwork({
           key={previewKey}
           src={displaySource ?? undefined}
           data-detail-source={source ? filePreviewSource(file, source, "detail") ?? undefined : undefined}
+          data-preview-revision={source ? file.updatedAt : undefined}
           data-original-source={source?.imageOriginalUrl?.(file.id, file.updatedAt) ?? undefined}
           alt=""
           loading="lazy"

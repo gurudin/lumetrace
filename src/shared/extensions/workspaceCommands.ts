@@ -7,6 +7,8 @@ export interface WorkspaceCommandSource {
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
   /** Present only when the displayed preview is processed and an original can be fetched on demand. */
   imageOriginalUrl?: (fileId: string, updatedAt: number) => string | null;
+  /** Resolve a detail source on open using transport metadata, without downloading image bodies. */
+  resolveImagePreview?: (fileId: string, updatedAt: number) => Promise<{ source: string; originalSource: string | null } | null>;
   /** Optional workspace-owned loaded thumbnails, retained across card virtualization. */
   imagePreviews?: ImagePreviewStore;
   /** Original pixel dimensions, never the dimensions of a resized preview. */

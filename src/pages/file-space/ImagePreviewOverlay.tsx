@@ -1,4 +1,5 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { Minus, Plus, RotateCcw, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
@@ -43,6 +44,7 @@ function clampZoom(value: number) {
 
 export function ImagePreviewOverlay() {
   const invoke = useWorkspaceInvoke();
+  const workspaceSource = useWorkspaceExtension()?.source;
   const { t, i18n } = useTranslation();
   const copy = {
     preview: (name: string) => t("fileSpace.preview.image.dialog", { name }),
@@ -248,8 +250,14 @@ export function ImagePreviewOverlay() {
         hasVersionHistory: Number(card.dataset.versionCount ?? 0) > 0,
         versionCount: Number.isFinite(versionCount) ? Math.max(0, versionCount) : 0,
       };
-      setRequest(target);
       cancelOriginal();
+      const attempt = originalAttempt.current;
+      const updatedAt = Number(image.dataset.previewRevision);
+      const resolve = workspaceSource?.resolveImagePreview;
+      const shouldResolve = resolve && image.dataset.previewRevision !== undefined && Number.isSafeInteger(updatedAt);
+      // Show the already-loaded card image while deciding the detail transport.
+      // Do not start a processed image request before metadata chooses a source.
+      setRequest(shouldResolve ? { ...target, source: image.currentSrc || image.src, originalSource: null } : target);
       setOpen(true);
       setLoaded(false);
       setFailed(false);
@@ -259,6 +267,16 @@ export function ImagePreviewOverlay() {
       setTimelineVisible(shouldShowVersionTimelineByDefault());
       setSelectedVersionId(null);
       void loadTimeline(target);
+      if (shouldResolve) {
+        void resolve(fileId, updatedAt).then(result => {
+          if (originalAttempt.current !== attempt) return;
+          if (!result) { setFailed(true); return; }
+          setRequest(current => current ? { ...current, source: result.source, currentSource: result.source,
+            originalSource: originalImageSource(result.source, result.originalSource) } : current);
+        }).catch(() => {
+          if (originalAttempt.current === attempt) setFailed(true);
+        });
+      }
     };
 
     const handleImageDoubleClick = (event: MouseEvent) => {
@@ -273,7 +291,7 @@ export function ImagePreviewOverlay() {
     return () => {
       document.removeEventListener("dblclick", handleImageDoubleClick, true);
     };
-  }, [loadTimeline, resetView, cancelOriginal]);
+  }, [loadTimeline, resetView, cancelOriginal, workspaceSource]);
 
   useEffect(() => {
     if (!open) return undefined;
