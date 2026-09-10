@@ -9678,7 +9678,7 @@ fn copy_path_to_clipboard(path: &Path) -> Result<(), String> {
     process_error("copy the file path", output)
 }
 
-fn mime_type_for(path: &Path) -> Option<String> {
+pub(crate) fn mime_type_for(path: &Path) -> Option<String> {
     let extension = path.extension()?.to_str()?.to_ascii_lowercase();
     let mime = match extension.as_str() {
         "txt" | "md" | "markdown" => "text/plain",

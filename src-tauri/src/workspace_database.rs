@@ -4,6 +4,11 @@
 //! filesystem watchers or run extraction/AI workers against remote paths.
 use std::path::Path;
 
+/// Apply the same filename MIME fallback as ordinary local file imports.
+pub fn file_mime_type(path: &Path) -> Option<String> {
+    crate::file_space::mime_type_for(path)
+}
+
 pub fn open_isolated(path: &Path) -> Result<rusqlite::Connection, String> {
     if !path.is_absolute() {
         return Err("An isolated workspace database requires an absolute path".into());
@@ -59,5 +64,13 @@ mod tests {
         drop((a, b));
         std::fs::remove_dir_all(root).unwrap();
         assert!(open_isolated(Path::new("relative.sqlite3")).is_err());
+        assert_eq!(
+            file_mime_type(Path::new("nested/version.md")).as_deref(),
+            Some("text/plain")
+        );
+        assert_eq!(
+            file_mime_type(Path::new("photo.PNG")).as_deref(),
+            Some("image/png")
+        );
     }
 }
