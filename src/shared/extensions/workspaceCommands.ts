@@ -2,6 +2,8 @@ import { invoke as nativeInvoke, type InvokeArgs, type InvokeOptions } from "@ta
 
 export interface WorkspaceCommandSource {
   key: string;
+  /** Edition-owned, authenticated image transport; independent of version history. */
+  imagePreviewUrl?: (fileId: string, updatedAt: number) => string | null;
   capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean; backup?: boolean };
   invoke: <T>(command: string, args?: InvokeArgs) => Promise<T>;
 }

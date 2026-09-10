@@ -1,4 +1,6 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { fileMimeType } from "../../shared/extensions/fileMimeType";
+import type { WorkspaceCommandSource } from "../../shared/extensions/workspaceCommands";
 import { convertFileSrc, isTauri } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -972,7 +974,7 @@ function formatFileSize(bytes: number) {
 }
 
 function fileCategory(file: FileSpaceFileRecord): Exclude<TypeFilter, "all"> | "other" {
-  const mime = file.mimeType ?? "";
+  const mime = file.mimeType ?? fileMimeType(file.name) ?? "";
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
   if (mime.startsWith("image/")) return "image";
   if (
@@ -1060,8 +1062,12 @@ function fixtureImageSource(file: FileSpaceFileRecord) {
   return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
 }
 
-function filePreviewSource(file: FileSpaceFileRecord) {
-  if (fileCategory(file) !== "image" || file.currentVersion === null) return null;
+function filePreviewSource(file: FileSpaceFileRecord, source: WorkspaceCommandSource | null) {
+  if (fileCategory(file) !== "image") return null;
+  // An external current file does not need a local snapshot, and must not use
+  // the local database-backed protocol even when its transport is unavailable.
+  if (source) return source.imagePreviewUrl?.(file.id, file.updatedAt) ?? null;
+  if (file.currentVersion === null) return null;
   if (!isTauri()) return file.id.startsWith("fixture-file-") ? fixtureImageSource(file) : null;
   return convertFileSrc(file.id, "lumetrace-file-preview");
 }
@@ -1080,7 +1086,8 @@ function FileArtwork({
   const artworkFormat = fileArtworkFormat(file);
   const archiveExtension = fileArchiveExtension(file);
   const artworkTitle = fileArtworkTitle(file);
-  const previewSource = filePreviewSource(file);
+  const source = useWorkspaceExtension()?.source ?? null;
+  const previewSource = filePreviewSource(file, source);
   const [previewFailed, setPreviewFailed] = useState(false);
   useEffect(() => {
     setPreviewFailed(false);
