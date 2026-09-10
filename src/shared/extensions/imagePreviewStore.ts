@@ -46,9 +46,11 @@ export function createImagePreviewStore(load: (key: string) => Promise<Blob>, op
         if (entries.get(entry.key) !== entry) return;
         if (!blob.size || blob.size > maxBytes) throw new Error('preview_size_limit');
         entry.bytes = blob.size;
+        trim();
+        if ([...entries.values()].reduce((sum, item) => sum + item.bytes, 0) > maxBytes) throw new Error('preview_cache_full');
         entry.snapshot = { url: createUrl(blob), failed: false };
       }).catch(() => {
-        if (entries.get(entry.key) === entry) entry.snapshot = { url: null, failed: true };
+        if (entries.get(entry.key) === entry) { entry.bytes = 0; entry.snapshot = { url: null, failed: true }; }
       }).finally(() => {
         active--; entry.running = false;
         if (entries.get(entry.key) === entry && !entry.refs && entry.snapshot.failed) remove(entry);

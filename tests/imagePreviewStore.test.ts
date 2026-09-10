@@ -70,3 +70,10 @@ test('failed and undecodable images settle without unlimited retry and retry aft
   assert.equal(store.snapshot('bad')?.failed, true); assert.deepEqual(revoked, [url]);
   releaseAgain(); releaseAgain(); assert.equal(store.snapshot('bad'), null);
 });
+
+test('mounted thumbnails cannot grow encoded content beyond the byte budget', async () => {
+  const { store, finish } = harness({ maxBytes: 8 });
+  for (const key of ['a', 'b', 'c']) { store.retain(key); await flush(); await finish(key); }
+  assert.ok(store.snapshot('a')?.url); assert.ok(store.snapshot('b')?.url);
+  assert.equal(store.snapshot('c')?.failed, true);
+});
