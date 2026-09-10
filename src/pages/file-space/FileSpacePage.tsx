@@ -999,16 +999,19 @@ function FileCardMetadata({ file, imageDimensions }: { file: FileSpaceFileRecord
   // can change even when the file timestamp remains the same.
   const key = JSON.stringify([source?.key, file.id, file.updatedAt, image ? filePreviewSource(file, source) : null]);
   const [original, setOriginal] = useState<{ key: string; dimensions: FileImageDimensions } | null>(null);
+  // Let lazy thumbnails paint first. Merely mounting/laying out the catalogue
+  // must not enqueue metadata for every image, including offscreen cards.
+  const thumbnailReady = imageDimensions?.fileUpdatedAt === file.updatedAt;
   useEffect(() => {
     let current = true;
-    if (source?.imageOriginalDimensions && image) {
+    if (source?.imageOriginalDimensions && image && thumbnailReady) {
       void source.imageOriginalDimensions(file.id, file.updatedAt).then(value => {
         const dimensions = originalImageDimensions(value);
         if (current) setOriginal(dimensions ? { key, dimensions: { ...dimensions, fileUpdatedAt: file.updatedAt } } : null);
       }).catch(() => { if (current) setOriginal(null); });
     }
     return () => { current = false; };
-  }, [source, key, image, file.id, file.updatedAt]);
+  }, [source, key, image, thumbnailReady, file.id, file.updatedAt]);
   // Intrinsic preview sizes still drive layout. Only local previews contain the
   // original file; an external thumbnail must never become a resolution label.
   const dimensions = source ? (original?.key === key ? original.dimensions : undefined) : imageDimensions;
