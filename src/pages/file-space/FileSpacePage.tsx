@@ -1088,28 +1088,32 @@ function FileArtwork({
   const artworkTitle = fileArtworkTitle(file);
   const source = useWorkspaceExtension()?.source ?? null;
   const previewSource = filePreviewSource(file, source);
-  const [previewFailed, setPreviewFailed] = useState(false);
-  useEffect(() => {
-    setPreviewFailed(false);
-  }, [file.id, file.updatedAt, previewSource]);
-  const showPreview = Boolean(previewSource) && !previewFailed;
+  const previewKey = JSON.stringify([file.id, file.updatedAt, previewSource]);
+  const [preview, setPreview] = useState<{ key: string; state: "loading" | "loaded" | "failed" }>({ key: previewKey, state: "loading" });
+  // Reset before committing a changed image, so cached load events cannot be
+  // overwritten by a later reset effect for the previous source/version.
+  if (preview.key !== previewKey) setPreview({ key: previewKey, state: "loading" });
+  const previewState = preview.key === previewKey ? preview.state : "loading";
+  const showPreview = Boolean(previewSource) && previewState !== "failed";
+  const previewLoading = showPreview && previewState === "loading";
   return (
-    <span className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}`}>
+    <span aria-busy={previewLoading || undefined} className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}${previewLoading ? " is-preview-loading" : ""}`}>
       {showPreview ? (
         <img
-          key={file.updatedAt}
+          key={previewKey}
           src={previewSource ?? undefined}
           alt=""
           loading="lazy"
           decoding="async"
           draggable={false}
           onLoad={(event) => {
+            setPreview({ key: previewKey, state: "loaded" });
             const { naturalWidth, naturalHeight } = event.currentTarget;
             if (naturalWidth > 0 && naturalHeight > 0) {
               onImageDimensions?.(file.id, file.updatedAt, naturalWidth, naturalHeight);
             }
           }}
-          onError={() => setPreviewFailed(true)}
+          onError={() => setPreview({ key: previewKey, state: "failed" })}
         />
       ) : artworkFormat ? (
         <span className={`file-space-format-art is-${artworkFormat}`}>

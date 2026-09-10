@@ -2099,6 +2099,29 @@ body.is-file-space-reordering * {
   object-fit: contain;
 }
 
+.file-space-file-art.is-preview-loading::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: linear-gradient(105deg, transparent 20%, color-mix(in srgb, var(--border) 16%, transparent) 42%, rgb(255 255 255 / .6) 52%, transparent 80%);
+  transform: translateX(-100%);
+  animation: file-preview-shimmer 2.8s ease-in-out 250ms infinite;
+}
+
+:root[data-theme="dark"] .file-space-file-art.is-preview-loading::after {
+  background: linear-gradient(105deg, transparent 20%, rgb(255 255 255 / .025) 42%, rgb(255 255 255 / .06) 52%, transparent 80%);
+}
+
+@keyframes file-preview-shimmer {
+  0% { transform: translateX(-100%); }
+  75%, 100% { transform: translateX(100%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .file-space-file-art.is-preview-loading::after { content: none; animation: none; }
+}
+
 .file-space-file-art.is-image { color: #7f9a8f; }
 .file-space-file-art.is-sheet { color: #6f9889; }
 .file-space-file-art.is-document { color: #8d8576; }
