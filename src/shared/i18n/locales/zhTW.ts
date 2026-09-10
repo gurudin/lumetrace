@@ -626,6 +626,10 @@ export const zhTW = {
         loading: "正在載入…",
       },
       image: {
+        viewOriginal: "查看原圖",
+        loadingOriginal: "原圖載入中…",
+        originalError: "原圖載入失敗，仍顯示預覽圖。",
+        retryOriginal: "重試原圖",
         dialog: "預覽影像：{{name}}",
         zoomOut: "縮小影像",
         zoomIn: "放大影像",

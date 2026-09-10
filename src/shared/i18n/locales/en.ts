@@ -688,6 +688,10 @@ export const en = {
         loading: "Loading…",
       },
       image: {
+        viewOriginal: "View original",
+        loadingOriginal: "Loading original…",
+        originalError: "Unable to load the original. The preview is still available.",
+        retryOriginal: "Retry original",
         dialog: "Preview image: {{name}}",
         zoomOut: "Zoom out",
         zoomIn: "Zoom in",

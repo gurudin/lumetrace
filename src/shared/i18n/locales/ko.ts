@@ -626,6 +626,10 @@ export const ko = {
         loading: "불러오는 중…",
       },
       image: {
+        viewOriginal: "원본 보기",
+        loadingOriginal: "원본 불러오는 중…",
+        originalError: "원본을 불러오지 못했습니다. 미리보기는 유지됩니다.",
+        retryOriginal: "원본 다시 시도",
         dialog: "이미지 미리보기: {{name}}",
         zoomOut: "축소",
         zoomIn: "확대",

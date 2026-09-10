@@ -79,6 +79,20 @@
   font-variant-numeric: tabular-nums;
 }
 
+.file-image-preview-controls > .file-image-preview-original {
+  padding-inline: 10px;
+  font-size: var(--font-size-secondary);
+  white-space: nowrap;
+}
+
+/* Keep the processed image visible until the original has loaded. This same
+   original img is revealed on success; no second no-store request is made. */
+.file-image-preview-stage > img.is-original-loading {
+  position: absolute;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .file-image-preview-controls > span {
   width: 1px;
   height: 18px;

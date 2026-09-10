@@ -626,6 +626,10 @@ export const de = {
         loading: "Wird geladen…",
       },
       image: {
+        viewOriginal: "Original anzeigen",
+        loadingOriginal: "Original wird geladen…",
+        originalError: "Das Original konnte nicht geladen werden. Die Vorschau bleibt sichtbar.",
+        retryOriginal: "Original erneut laden",
         dialog: "Bildvorschau: {{name}}",
         zoomOut: "Verkleinern",
         zoomIn: "Vergrößern",

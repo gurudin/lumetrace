@@ -626,6 +626,10 @@ export const es = {
         loading: "Cargando…",
       },
       image: {
+        viewOriginal: "Ver original",
+        loadingOriginal: "Cargando original…",
+        originalError: "No se pudo cargar el original. La vista previa sigue disponible.",
+        retryOriginal: "Reintentar original",
         dialog: "Vista previa de imagen: {{name}}",
         zoomOut: "Alejar",
         zoomIn: "Acercar",

@@ -626,6 +626,10 @@ export const fr = {
         loading: "Chargement…",
       },
       image: {
+        viewOriginal: "Voir l’original",
+        loadingOriginal: "Chargement de l’original…",
+        originalError: "Impossible de charger l’original. L’aperçu reste visible.",
+        retryOriginal: "Réessayer l’original",
         dialog: "Aperçu de l’image : {{name}}",
         zoomOut: "Zoom arrière",
         zoomIn: "Zoom avant",

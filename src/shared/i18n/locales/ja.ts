@@ -626,6 +626,10 @@ export const ja = {
         loading: "読み込み中…",
       },
       image: {
+        viewOriginal: "元の画像を表示",
+        loadingOriginal: "元の画像を読み込み中…",
+        originalError: "元の画像を読み込めませんでした。プレビューを表示しています。",
+        retryOriginal: "再読み込み",
         dialog: "画像をプレビュー：{{name}}",
         zoomOut: "縮小",
         zoomIn: "拡大",

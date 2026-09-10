@@ -688,6 +688,10 @@ export const zh = {
         loading: "正在读取…",
       },
       image: {
+        viewOriginal: "查看原图",
+        loadingOriginal: "原图加载中…",
+        originalError: "原图加载失败，仍显示预览图。",
+        retryOriginal: "重试原图",
         dialog: "预览图片：{{name}}",
         zoomOut: "缩小图片",
         zoomIn: "放大图片",

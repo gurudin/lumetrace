@@ -5,6 +5,8 @@ export interface WorkspaceCommandSource {
   key: string;
   /** Edition-owned, authenticated image transport; independent of version history. */
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
+  /** Present only when the displayed preview is processed and an original can be fetched on demand. */
+  imageOriginalUrl?: (fileId: string, updatedAt: number) => string | null;
   /** Optional workspace-owned loaded thumbnails, retained across card virtualization. */
   imagePreviews?: ImagePreviewStore;
   /** Original pixel dimensions, never the dimensions of a resized preview. */

@@ -9,6 +9,7 @@ import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineT
 import { calculateWheelZoom, normalizeWheelDelta } from "./imagePreviewZoom";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import { PreviewFileHeading } from "./PreviewFileHeading";
+import { originalImageSource } from "./originalImagePreview";
 import "./image-preview-overlay.css";
 
 interface ImagePreviewRequest {
@@ -16,6 +17,7 @@ interface ImagePreviewRequest {
   name: string;
   source: string;
   currentSource: string;
+  originalSource: string | null;
   hasVersionHistory: boolean;
   versionCount: number;
 }
@@ -50,6 +52,10 @@ export function ImagePreviewOverlay() {
     close: t("fileSpace.preview.image.close"),
     loading: t("fileSpace.preview.image.loading"),
     loadError: t("fileSpace.preview.image.loadError"),
+    viewOriginal: t("fileSpace.preview.image.viewOriginal"),
+    loadingOriginal: t("fileSpace.preview.image.loadingOriginal"),
+    originalError: t("fileSpace.preview.image.originalError"),
+    retryOriginal: t("fileSpace.preview.image.retryOriginal"),
     hint: t("fileSpace.preview.image.hint"),
     versionHistory: t("fileSpace.preview.common.versionHistory"),
     showVersionHistory: t("fileSpace.preview.common.showVersionHistory"),
@@ -78,6 +84,12 @@ export function ImagePreviewOverlay() {
   const [timelineVisible, setTimelineVisible] = useState(false);
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionLoading, setVersionLoading] = useState(false);
+  const [original, setOriginal] = useState<{ state: "idle" | "loading" | "loaded" | "error"; attempt: number }>({ state: "idle", attempt: 0 });
+  const originalAttempt = useRef(0);
+  const cancelOriginal = useCallback(() => {
+    setOriginal({ state: "idle", attempt: ++originalAttempt.current });
+  }, []);
+  useEffect(() => () => { originalAttempt.current++; }, []);
   const zoomRef = useRef(1);
   const pendingWheelDeltaRef = useRef(0);
   const wheelFrameRef = useRef<number | null>(null);
@@ -133,6 +145,7 @@ export function ImagePreviewOverlay() {
 
   const selectVersion = useCallback(async (version: PreviewTaskFileVersion) => {
     if (!request || versionLoading || selectedVersionId === version.id) return;
+    cancelOriginal();
     setVersionLoading(true);
     setFailed(false);
     setLoaded(false);
@@ -157,15 +170,16 @@ export function ImagePreviewOverlay() {
     } finally {
       setVersionLoading(false);
     }
-  }, [request, resetView, selectedVersionId, versionLoading]);
+  }, [request, resetView, selectedVersionId, versionLoading, cancelOriginal]);
 
   const closePreview = useCallback(() => {
+    cancelOriginal();
     stopWheelGesture();
     dragRef.current = null;
     setDragging(false);
     setOpen(false);
     window.setTimeout(() => returnFocusRef.current?.focus(), 220);
-  }, [stopWheelGesture]);
+  }, [stopWheelGesture, cancelOriginal]);
 
   const updateZoom = useCallback((value: number | ((currentZoom: number) => number)) => {
     const candidate = typeof value === "function" ? value(zoomRef.current) : value;
@@ -230,10 +244,12 @@ export function ImagePreviewOverlay() {
         name: button.title || image.alt,
         source,
         currentSource: source,
+        originalSource: originalImageSource(source, image.dataset.originalSource),
         hasVersionHistory: Number(card.dataset.versionCount ?? 0) > 0,
         versionCount: Number.isFinite(versionCount) ? Math.max(0, versionCount) : 0,
       };
       setRequest(target);
+      cancelOriginal();
       setOpen(true);
       setLoaded(false);
       setFailed(false);
@@ -257,7 +273,7 @@ export function ImagePreviewOverlay() {
     return () => {
       document.removeEventListener("dblclick", handleImageDoubleClick, true);
     };
-  }, [loadTimeline, resetView]);
+  }, [loadTimeline, resetView, cancelOriginal]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -353,6 +369,14 @@ export function ImagePreviewOverlay() {
           {selectedVersion && !selectedVersion.isCurrent ? <small>{copy.historical}</small> : null}
         </PreviewFileHeading>
         <div className="file-image-preview-controls">
+          {request.originalSource && original.state !== "loaded" && (!selectedVersion || selectedVersion.isCurrent) ? (
+            <button type="button" className="file-image-preview-original"
+              disabled={original.state === "loading" || versionLoading}
+              aria-busy={original.state === "loading" || undefined}
+              onClick={() => setOriginal({ state: "loading", attempt: ++originalAttempt.current })}>
+              {original.state === "loading" ? copy.loadingOriginal : original.state === "error" ? copy.retryOriginal : copy.viewOriginal}
+            </button>
+          ) : null}
           <button
             type="button"
             disabled={!loaded || failed || zoom <= zoomMin}
@@ -436,7 +460,8 @@ export function ImagePreviewOverlay() {
           className="file-image-preview-stage"
           style={{ transform: `translate3d(${offset.x}px, ${offset.y}px, 0)` }}
         >
-          <img
+          {original.state !== "loaded" ? <img
+            key="preview"
             src={request.source}
             alt={request.name}
             draggable={false}
@@ -447,11 +472,27 @@ export function ImagePreviewOverlay() {
               setLoaded(false);
               setFailed(true);
             }}
-          />
+          /> : null}
+          {request.originalSource && (original.state === "loading" || original.state === "loaded") ? (
+            <img key={`original:${original.attempt}`} src={request.originalSource} alt={request.name} draggable={false}
+              className={original.state === "loaded" ? "is-loaded" : "is-original-loading"}
+              style={{ transform: `scale(${zoom})` }}
+              onLoad={() => {
+                if (originalAttempt.current !== original.attempt) return;
+                setOriginal({ ...original, state: "loaded" });
+                setLoaded(true); setFailed(false);
+                closeButtonRef.current?.focus();
+              }}
+              onError={() => {
+                if (originalAttempt.current === original.attempt) setOriginal({ ...original, state: "error" });
+              }} />
+          ) : null}
         </div>
         </div>
       </div>
-      <p className="file-image-preview-hint">{copy.hint}</p>
+      <p className="file-image-preview-hint" role={original.state === "error" ? "alert" : undefined}>
+        {original.state === "error" ? copy.originalError : copy.hint}
+      </p>
     </div>
   );
 }
