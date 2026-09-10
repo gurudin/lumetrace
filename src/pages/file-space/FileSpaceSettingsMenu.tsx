@@ -36,7 +36,7 @@ import lumeTraceLogo from "../../../src-tauri/icons/icon.png";
 import { usePresence } from "../../shared/ui/usePresence";
 import { FileSpacePreferences } from "./FileSpacePreferences";
 import { FileSpaceFeedback } from "./FileSpaceFeedback";
-import { ApplicationExtensionEntry } from "../../shared/extensions/ApplicationExtension";
+import { ApplicationExtensionEntry, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import {
   FileSpaceWorkspaceSettings,
   type FileSpaceWorkspaceDirectory,
@@ -162,6 +162,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   onWorkspaceDirectoryChanged,
 }: FileSpaceSettingsMenuProps<TSnapshot>) {
   const invoke = useWorkspaceInvoke();
+  const backupAllowed = useWorkspaceExtension()?.source?.capabilities?.backup !== false;
   const { t, i18n } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -299,7 +300,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   };
 
   const exportBackup = async () => {
-    if (backupFeedback.status === "exporting") return;
+    if (!backupAllowed || backupFeedback.status === "exporting") return;
     setMenuOpen(false);
     try {
       const destinationPath = await save({
@@ -328,7 +329,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   };
 
   const chooseRestoreBackup = async () => {
-    if (restoreFeedback.status === "restoring") return;
+    if (!backupAllowed || restoreFeedback.status === "restoring") return;
     setMenuOpen(false);
     try {
       const backupPath = await open({
@@ -369,7 +370,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
 
   const confirmRestoreBackup = async () => {
     const { inspection, destinationDirectory } = restoreFeedback;
-    if (!inspection || !destinationDirectory || restoreFeedback.status !== "ready") return;
+    if (!backupAllowed || !inspection || !destinationDirectory || restoreFeedback.status !== "ready") return;
     setRestoreFeedback({ ...restoreFeedback, status: "restoring", error: undefined });
     try {
       const result = await invoke<RestoreResult>("restore_file_space_backup", {
@@ -554,7 +555,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
           aria-label={t("fileSpace.settings.menuLabel")}
           onKeyDown={handleMenuKeyDown}
         >
-          {menuItems.map((item) => {
+          {menuItems.filter(item => backupAllowed || (item !== "backup" && item !== "restore")).map((item) => {
             const Icon = item === "workspace"
               ? FolderCog
               : item === "about"

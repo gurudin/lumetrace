@@ -43,3 +43,20 @@ test("visible external actions remain source-bound instead of operating on perso
   await api.workspaceInvoke("get_ai_service_settings");
   assert.deepEqual(api.calls, ["get_ai_service_settings"]);
 });
+
+test("archive restrictions block all whole-space backup commands but preserve file recovery and other actions", async () => {
+  const api = harness(), requests: string[] = [];
+  const archives = ["export_file_space_backup", "inspect_file_space_backup", "restore_file_space_backup"];
+  api.setWorkspaceCommandSource({ key: "external", capabilities: { backup: false }, invoke: async (command: string) => { requests.push(command); return "external"; } });
+  for (const command of archives) await assert.rejects(api.workspaceInvoke(command), /backup and restore are disabled/);
+  assert.deepEqual(requests, []);
+  assert.deepEqual(api.calls, []);
+  for (const command of ["set_current_task_file_version", "get_task_file_timeline", "search_file_space_files", "ask_file_space_ai", "get_semantic_search_status", "create_file_space_text_file"]) {
+    assert.equal(await api.workspaceInvoke(command), "external");
+  }
+  assert.equal(requests.length, 6);
+  assert.deepEqual(api.calls, []);
+  api.setWorkspaceCommandSource(null);
+  for (const command of archives) assert.equal(await api.workspaceInvoke(command), "local");
+  assert.deepEqual(api.calls, archives);
+});

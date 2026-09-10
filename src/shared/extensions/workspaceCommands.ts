@@ -2,10 +2,14 @@ import { invoke as nativeInvoke, type InvokeArgs, type InvokeOptions } from "@ta
 
 export interface WorkspaceCommandSource {
   key: string;
-  capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean };
+  capabilities?: { write?: boolean; content?: boolean; history?: boolean; search?: boolean; ai?: boolean; backup?: boolean };
   invoke: <T>(command: string, args?: InvokeArgs) => Promise<T>;
 }
 let source: WorkspaceCommandSource | null = null;
+// Whole-space archives are separate from individual file-version recovery.
+const backupCommands = new Set([
+  "export_file_space_backup", "inspect_file_space_backup", "restore_file_space_backup",
+]);
 // These manage the application/local registry, not the selected space's files.
 const applicationCommands = new Set([
   "get_file_space_workspaces", "create_file_space_workspace", "switch_file_space_workspace",
@@ -26,6 +30,9 @@ export function bindWorkspaceInvoke(captured: WorkspaceCommandSource | null, mou
   return async <T>(command: string, args?: InvokeArgs, options?: InvokeOptions): Promise<T> => {
   const current = () => mounted() && source === captured;
   if (!current()) throw new Error("The active workspace changed. Please try again.");
+  if (captured?.capabilities?.backup === false && backupCommands.has(command)) {
+    throw new Error("Whole-workspace backup and restore are disabled for this workspace.");
+  }
   if (applicationCommands.has(command)) return nativeInvoke<T>(command, args, options);
   const result = captured ? await captured.invoke<T>(command, args) : await nativeInvoke<T>(command, args, options);
   if (!current()) throw new Error("The active workspace changed. Please try again.");
