@@ -114,7 +114,15 @@ Claude Code and OpenCode are available to try, but are not yet fully validated f
 
 ## Get started
 
-LumeTrace is a free, single-user macOS app. The [v1.0.0 source release](https://github.com/gurudin/lumetrace/releases/tag/v1.0.0) is available; no packaged installer is attached to that release yet. For now, [run from source](#development).
+### Download LumeTrace for macOS
+
+LumeTrace v1.0.1 is available for Apple Silicon Macs. Download the `.dmg` from the latest GitHub Release.
+
+**[Download for macOS](https://github.com/gurudin/lumetrace/releases/latest)**
+
+See the Release's installation instructions before opening the app. The current build uses an Apple Development certificate and is not notarized by Apple.
+
+After installing:
 
 1. **Create a workspace.** Give it a name and choose a new or existing folder. For an existing folder, let file registration finish first.
 2. **Make a change.** Create or open a Markdown or text file, edit it, and save — in LumeTrace or your usual editor.
@@ -145,7 +153,7 @@ No. Local history helps undo changes, but it is not an independent backup of you
 
 **Does it sync or migrate another app's library?**
 
-Not in v1.0.0. LumeTrace is a local, single-user workspace, without team sharing, NAS/cloud sync, or cross-device conflict resolution. You can import physical folders and restore LumeTrace backups; app-specific library migrations, such as Eagle, are not supported. Dot-prefixed hidden directories are excluded during folder initialization. See [import and backup details](docs/MIGRATION.md).
+LumeTrace is a local, single-user workspace, without team sharing, NAS/cloud sync, or cross-device conflict resolution. You can import physical folders and restore LumeTrace backups; app-specific library migrations, such as Eagle, are not supported. Dot-prefixed hidden directories are excluded during folder initialization. See [import and backup details](docs/MIGRATION.md).
 
 Windows and Linux installers are not currently available.
 
