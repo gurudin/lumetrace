@@ -824,6 +824,8 @@ export const en = {
       userEdit: "User edit",
       round: "Round {{count}}",
       setCurrent: "Set current",
+      restoring: "Restoring…",
+      editedBy: "Edited by {{name}}",
       historicalContent: "Historical content",
       loading: "Loading…",
       noTextPreview: "Select a text version to view its content. Binary files keep full history but have no text preview.",

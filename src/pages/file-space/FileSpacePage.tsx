@@ -67,6 +67,7 @@ import {
 } from "./FileSpaceWorkspaceMenu";
 import { FileVersionDiff, type VersionDiffStatus } from "./FileVersionDiff";
 import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
+import { VersionAuthor } from "./VersionAuthor";
 import { VersionHistoryBadge, type VersionSummary } from "./VersionHistoryBadge";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
@@ -165,6 +166,7 @@ interface FileSpaceFileRecord {
 }
 
 interface TaskFileVersionRecord {
+  authorName?: string | null;
   note?: string;
   isMilestone?: boolean;
   id: string;
@@ -1326,6 +1328,8 @@ export function FileSpacePage() {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const [versionPreview, setVersionPreview] = useState<string | null>(null);
   const [timelineBusy, setTimelineBusy] = useState(false);
+  const [restoringVersionId, setRestoringVersionId] = useState<string | null>(null);
+  const restoringVersionRef = useRef<string | null>(null);
   const [isTimelinePanelOpen, setTimelinePanelOpen] = useState(false);
   const [openingTimelineFileId, setOpeningTimelineFileId] = useState<string | null>(null);
   const [diffBeforeVersionId, setDiffBeforeVersionId] = useState<string | null>(null);
@@ -3209,7 +3213,11 @@ export function FileSpacePage() {
   };
 
   const setCurrentTimelineVersion = async (versionId: string) => {
-    if (!timeline || !isTauri()) return;
+    if (!timeline || !isTauri() || timelineBusy || restoringVersionRef.current) return;
+    if (!timeline.versions.some(version => version.id === versionId && !version.isCurrent)) return;
+    // Synchronous guard also covers repeated events before React commits disabled.
+    restoringVersionRef.current = versionId;
+    setRestoringVersionId(versionId);
     const fileId = timeline.fileId;
     const requestId = timelineRequestRef.current + 1;
     const mutationRequestId = timelineMutationRequestRef.current + 1;
@@ -3254,6 +3262,10 @@ export function FileSpacePage() {
         setError(errorText(versionError));
       }
     } finally {
+      if (mutationRequestId === timelineMutationRequestRef.current) {
+        restoringVersionRef.current = null;
+        if (lifecycleRef.current.mounted) setRestoringVersionId(null);
+      }
       if (requestId === timelineRequestRef.current && lifecycleRef.current.mounted) {
         setTimelineBusy(false);
       }
@@ -6438,13 +6450,16 @@ export function FileSpacePage() {
                   >
                     <button type="button" disabled={timelineBusy} onClick={() => void selectTimelineVersion(version)}>
                       <strong><VersionName number={version.versionNumber} />{version.isCurrent ? ` · ${t("fileSpace.timeline.current")}` : ""}</strong>
-                      <span>{version.origin === "task" ? version.taskTitle : t("fileSpace.timeline.userEdit")}</span>
+                      <span>{version.origin === "task" ? version.taskTitle : <VersionAuthor name={version.authorName} />}</span>
                       {version.roundNumber ? <span>{t("fileSpace.timeline.round", { count: version.roundNumber })} · {version.cellName}</span> : null}
                       <small>{new Intl.DateTimeFormat(locale, { dateStyle: "medium", timeStyle: "short" }).format(version.producedAt)}</small>
                     </button>
                     <VersionAnnotation workspaceId={timeline.workspaceId} fileId={timeline.fileId} version={version} disabled={timelineBusy} />
                     {!version.isCurrent ? (
-                      <button type="button" disabled={timelineBusy} onClick={() => void setCurrentTimelineVersion(version.id)}>{t("fileSpace.timeline.setCurrent")}</button>
+                      <button className="file-version-restore" type="button" disabled={timelineBusy || restoringVersionId !== null}
+                        aria-busy={restoringVersionId === version.id} onClick={() => void setCurrentTimelineVersion(version.id)}>
+                        {restoringVersionId === version.id ? <><LoaderCircle size={14} className="is-spinning" aria-hidden="true" />{t("fileSpace.timeline.restoring")}</> : t("fileSpace.timeline.setCurrent")}
+                      </button>
                     ) : null}
                   </div>
                 ))}

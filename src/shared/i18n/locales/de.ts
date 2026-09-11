@@ -759,6 +759,8 @@ export const de = {
       userEdit: "Benutzeränderung",
       round: "Durchgang {{count}}",
       setCurrent: "Als aktuell festlegen",
+      restoring: "Wird wiederhergestellt…",
+      editedBy: "Bearbeitet von {{name}}",
       historicalContent: "Historischer Inhalt",
       loading: "Wird geladen…",
       noTextPreview: "Wählen Sie eine Textversion aus, um ihren Inhalt anzuzeigen. Binärdateien behalten den vollständigen Verlauf, bieten aber keine Textvorschau.",

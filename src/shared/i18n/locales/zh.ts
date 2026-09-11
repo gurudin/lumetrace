@@ -824,6 +824,8 @@ export const zh = {
       userEdit: "用户修改",
       round: "第 {{count}} 轮",
       setCurrent: "设为当前版本",
+      restoring: "正在恢复…",
+      editedBy: "{{name}} 修改",
       historicalContent: "历史内容",
       loading: "加载中…",
       noTextPreview: "选择文本版本可查看内容。二进制文件会保留完整历史，但不提供文本预览。",

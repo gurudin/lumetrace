@@ -759,6 +759,8 @@ export const ko = {
       userEdit: "사용자 편집",
       round: "{{count}}회차",
       setCurrent: "현재 버전으로 설정",
+      restoring: "복원 중…",
+      editedBy: "{{name}}님이 수정",
       historicalContent: "이전 버전 내용",
       loading: "불러오는 중…",
       noTextPreview: "내용을 보려면 텍스트 버전을 선택하세요. 바이너리 파일은 전체 기록을 유지하지만 텍스트 미리보기는 제공하지 않습니다.",

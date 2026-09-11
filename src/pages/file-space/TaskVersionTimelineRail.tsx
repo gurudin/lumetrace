@@ -1,8 +1,10 @@
 import { AlertTriangle, History, LoaderCircle } from "lucide-react";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { VersionAnnotation } from "./VersionAnnotation";
+import { VersionAuthor } from "./VersionAuthor";
 
 export interface PreviewTaskFileVersion {
+  authorName?: string | null;
   note?: string;
   isMilestone?: boolean;
   id: string;
@@ -76,7 +78,7 @@ export function TaskVersionTimelineRail({
               <button type="button" aria-pressed={selectedVersionId === version.id} disabled={disabled} onClick={() => onSelect(version)}>
                 <time dateTime={new Date(version.producedAt).toISOString()}>{new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(version.producedAt)}</time>
                 <strong><VersionName number={version.versionNumber} />{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
-                <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
+                <span>{version.origin === "user_edit" ? <VersionAuthor name={version.authorName} /> : (version.cellName ?? version.taskTitle)}</span>
                 {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
               </button>
               <VersionAnnotation workspaceId={workspaceId} fileId={fileId} version={version} />

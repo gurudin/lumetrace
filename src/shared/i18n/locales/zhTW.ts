@@ -759,6 +759,8 @@ export const zhTW = {
       userEdit: "使用者編輯",
       round: "第 {{count}} 回合",
       setCurrent: "設為目前版本",
+      restoring: "正在復原…",
+      editedBy: "{{name}} 修改",
       historicalContent: "歷史內容",
       loading: "正在載入…",
       noTextPreview: "選擇文字版本即可查看內容。二進位檔案會保留完整歷程，但無法顯示文字預覽。",

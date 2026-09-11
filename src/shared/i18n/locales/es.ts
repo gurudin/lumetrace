@@ -759,6 +759,8 @@ export const es = {
       userEdit: "Edición del usuario",
       round: "Ronda {{count}}",
       setCurrent: "Establecer como actual",
+      restoring: "Restaurando…",
+      editedBy: "Editado por {{name}}",
       historicalContent: "Contenido histórico",
       loading: "Cargando…",
       noTextPreview: "Selecciona una versión de texto para ver su contenido. Los archivos binarios conservan todo el historial, pero no ofrecen previsualización de texto.",

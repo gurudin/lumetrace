@@ -1535,6 +1535,31 @@ body.is-folder-tree-dragging * {
   margin-top: 9px;
 }
 
+.file-space-version-list .file-version-restore {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 28px;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
+}
+.file-space-version-list > div:hover .file-version-restore,
+.file-space-version-list > div:focus-within .file-version-restore,
+.file-space-version-list .file-version-restore[aria-busy="true"] {
+  opacity: 1;
+  pointer-events: auto;
+}
+.file-space-version-list .file-version-restore[aria-busy="true"] { color: var(--text); }
+.file-space-version-list .file-version-restore .is-spinning { animation: file-version-badge-spin 900ms linear infinite; }
+@media (hover: none) {
+  .file-space-version-list .file-version-restore { opacity: 1; pointer-events: auto; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .file-space-version-list .file-version-restore { transition: none; }
+  .file-space-version-list .file-version-restore .is-spinning { animation: none; }
+}
+
 .file-space-version-preview pre {
   padding: 14px;
   overflow: visible;

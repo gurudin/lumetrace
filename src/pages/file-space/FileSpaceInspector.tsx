@@ -3,6 +3,7 @@ import type { ReactNode } from "react";
 import { useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { useTranslation } from "react-i18next";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
+import { VersionAuthor } from "./VersionAuthor";
 
 export interface InspectorFileRecord {
   id: string;
@@ -20,6 +21,7 @@ export interface InspectorFileRecord {
 export interface InspectorTimelineRecord {
   fileId: string;
   versions: Array<{
+    authorName?: string | null;
     id: string;
     versionNumber: number;
     origin: "task" | "user_edit";
@@ -171,7 +173,7 @@ export function FileSpaceInspector({
                   <li key={version.id}>
                     <Clock3 size={15} />
                     <span>
-                      <strong><VersionName number={version.versionNumber} /> · {version.origin === "task" ? (version.taskTitle ?? t("fileSpace.content.taskArtifact")) : t("fileSpace.timeline.userEdit")}</strong>
+                      <strong><VersionName number={version.versionNumber} /> · {version.origin === "task" ? (version.taskTitle ?? t("fileSpace.content.taskArtifact")) : <VersionAuthor name={version.authorName} />}</strong>
                       <small>{dateFormatter.format(version.producedAt)}</small>
                     </span>
                   </li>

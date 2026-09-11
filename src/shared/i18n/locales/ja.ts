@@ -759,6 +759,8 @@ export const ja = {
       userEdit: "ユーザーによる編集",
       round: "ラウンド{{count}}",
       setCurrent: "現在のバージョンに設定",
+      restoring: "復元中…",
+      editedBy: "{{name}} が編集",
       historicalContent: "過去の内容",
       loading: "読み込み中…",
       noTextPreview: "内容を表示するテキストバージョンを選択してください。バイナリファイルでは完全な履歴が保持されますが、テキストプレビューは表示されません。",

@@ -1,4 +1,5 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { VersionAuthor } from "./VersionAuthor";
 import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, Eye, History, LoaderCircle, Pencil, Save, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -25,6 +26,7 @@ interface MarkdownPreviewRequest {
 }
 
 interface TaskFileVersionRecord {
+  authorName?: string | null;
   note?: string;
   isMilestone?: boolean;
   id: string;
@@ -648,7 +650,7 @@ export function MarkdownPreviewOverlay() {
                         <VersionName number={version.versionNumber} />
                         {version.isCurrent ? <span>{copy.currentVersion}</span> : null}
                       </strong>
-                      <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
+                      <span>{version.origin === "user_edit" ? <VersionAuthor name={version.authorName} /> : (version.cellName ?? version.taskTitle)}</span>
                       {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
                     </button>
                     <VersionAnnotation workspaceId={timeline.workspaceId} fileId={request.fileId} version={version} disabled={dirty || saving} />

@@ -759,6 +759,8 @@ export const fr = {
       userEdit: "Modification utilisateur",
       round: "Cycle {{count}}",
       setCurrent: "Définir comme actuelle",
+      restoring: "Restauration…",
+      editedBy: "Modifié par {{name}}",
       historicalContent: "Contenu historique",
       loading: "Chargement…",
       noTextPreview: "Sélectionnez une version textuelle pour afficher son contenu. Les fichiers binaires conservent tout leur historique, mais ne proposent pas d’aperçu du texte.",

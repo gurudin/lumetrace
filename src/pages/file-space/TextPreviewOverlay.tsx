@@ -1,4 +1,5 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { VersionAuthor } from "./VersionAuthor";
 import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, History, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -20,6 +21,7 @@ interface TextPreviewRequest {
 }
 
 interface TaskFileVersionRecord {
+  authorName?: string | null;
   note?: string;
   isMilestone?: boolean;
   id: string;
@@ -256,7 +258,7 @@ export function TextPreviewOverlay() {
                         <button type="button" aria-pressed={selectedVersionId === version.id} disabled={loading} onClick={() => void selectVersion(version)}>
                           <time dateTime={new Date(version.producedAt).toISOString()}>{new Intl.DateTimeFormat(locale, { year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" }).format(version.producedAt)}</time>
                           <strong><VersionName number={version.versionNumber} />{version.isCurrent ? <span>{copy.current}</span> : null}</strong>
-                          <span>{version.cellName ?? (version.origin === "user_edit" ? copy.userEdit : version.taskTitle)}</span>
+                          <span>{version.origin === "user_edit" ? <VersionAuthor name={version.authorName} /> : (version.cellName ?? version.taskTitle)}</span>
                           {version.roundNumber ? <small>{copy.round(version.roundNumber)}</small> : null}
                         </button>
                         <VersionAnnotation workspaceId={timeline.workspaceId} fileId={request.fileId} version={version} />
