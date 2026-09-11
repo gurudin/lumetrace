@@ -25,6 +25,7 @@ use std::{
 use tauri::{Emitter, Manager, State};
 use usearch::{Index, IndexOptions, MetricKind, ScalarKind};
 use uuid::Uuid;
+pub mod isolated;
 
 pub const SEMANTIC_MODEL_ID: &str = "multilingual-e5-small-int8-v1";
 const SEMANTIC_MODEL_NAME: &str = "Multilingual E5 Small";
@@ -204,11 +205,11 @@ impl Default for RuntimeProgress {
 
 pub struct SemanticSearchRuntime {
     model_directory: PathBuf,
-    model: Mutex<Option<TextEmbedding>>,
-    progress: Mutex<RuntimeProgress>,
-    download_running: AtomicBool,
-    cancel_download: AtomicBool,
-    index_generation: AtomicU64,
+    model: Arc<Mutex<Option<TextEmbedding>>>,
+    progress: Arc<Mutex<RuntimeProgress>>,
+    download_running: Arc<AtomicBool>,
+    cancel_download: Arc<AtomicBool>,
+    index_generation: Arc<AtomicU64>,
     ann_snapshot: Mutex<Option<SemanticAnnSnapshot>>,
 }
 
@@ -216,11 +217,11 @@ impl SemanticSearchRuntime {
     pub fn new(app_data_directory: &Path) -> Self {
         Self {
             model_directory: app_data_directory.join(SEMANTIC_MODEL_DIRECTORY),
-            model: Mutex::new(None),
-            progress: Mutex::new(RuntimeProgress::default()),
-            download_running: AtomicBool::new(false),
-            cancel_download: AtomicBool::new(false),
-            index_generation: AtomicU64::new(0),
+            model: Arc::new(Mutex::new(None)),
+            progress: Arc::new(Mutex::new(RuntimeProgress::default())),
+            download_running: Arc::new(AtomicBool::new(false)),
+            cancel_download: Arc::new(AtomicBool::new(false)),
+            index_generation: Arc::new(AtomicU64::new(0)),
             ann_snapshot: Mutex::new(None),
         }
     }

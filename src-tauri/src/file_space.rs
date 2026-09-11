@@ -10896,7 +10896,6 @@ fn search_file_space_matches_with_generation(
     )
 }
 
-#[cfg(test)]
 pub(crate) fn search_file_space_matches(
     database: &Database,
     semantic_runtime: Option<&crate::semantic_search::SemanticSearchRuntime>,

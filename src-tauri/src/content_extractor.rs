@@ -128,6 +128,10 @@ fn content_kind(name: &str) -> Option<ContentKind> {
     }
 }
 
+pub(crate) fn supports_content(name: &str) -> bool {
+    content_kind(name).is_some()
+}
+
 pub(crate) fn extract_file_content(path: &Path, name: &str) -> ContentExtraction {
     let Some(kind) = content_kind(name) else {
         return ContentExtraction::unsupported();
