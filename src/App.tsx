@@ -1,3 +1,4 @@
+import { HelpCenter } from "./shared/help/HelpCenter";
 import { Fragment, useEffect, useLayoutEffect } from "react";
 import { ExternalDocumentOpenBridge } from "./pages/file-space/ExternalDocumentOpenBridge";
 import { FileSpacePage } from "./pages/file-space/FileSpacePage";
@@ -39,6 +40,7 @@ export default function App({ extension }: { extension?: ApplicationExtension })
     <ThemeProvider>
       <ApplicationExtensionHost extension={extension}>
         <WorkspaceView />
+        <HelpCenter />
       </ApplicationExtensionHost>
     </ThemeProvider>
   );

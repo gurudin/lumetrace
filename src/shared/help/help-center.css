@@ -1,0 +1,49 @@
+.help-center { font-family: inherit; color: var(--text); }
+.help-center-launcher { position: fixed; right: 18px; bottom: 18px; z-index: 420; }
+.help-center button, .help-center input { font: inherit; }
+.help-center-trigger { width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--border); color: var(--text-muted); background: var(--surface); box-shadow: 0 2px 8px #0002; cursor: pointer; }
+.help-center button:focus-visible, .help-center input:focus-visible, .help-center-reader:focus-visible { outline: 2px solid var(--highlight); outline-offset: 2px; }
+.help-center-trigger:hover, .help-center-trigger[aria-expanded="true"] { color: var(--highlight); background: var(--surface-subtle); }
+.help-center-tooltip { position: absolute; bottom: calc(100% + 9px); right: 0; padding: 5px 9px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface); color: var(--text); box-shadow: 0 3px 10px #0002; font-size: 12px; white-space: nowrap; pointer-events: none; visibility: hidden; }
+.help-center-trigger:hover + .help-center-tooltip, .help-center-trigger:focus-visible + .help-center-tooltip { visibility: visible; }
+.help-center-panel { position: fixed; z-index: 430; right: 18px; bottom: 66px; width: min(820px, calc(100vw - 36px)); height: min(650px, calc(100dvh - 104px)); display: flex; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); box-shadow: 0 16px 60px #0003, 0 2px 8px #0002; }
+.help-center-panel[hidden] { display: none; }
+.help-center-header { display: flex; flex: none; align-items: center; gap: 11px; padding: 16px 18px 12px; }
+.help-center-header > svg { color: var(--highlight); flex: none; }
+.help-center-header > div { flex: 1; min-width: 0; }
+.help-center-header h1 { margin: 0; font-size: 15px; font-weight: 650; }
+.help-center-header p { margin: 3px 0 0; color: var(--text-muted); font-size: 12px; }
+.help-center-header button, .help-center-search button { display: grid; place-items: center; flex: none; width: 28px; height: 28px; border: 0; border-radius: 6px; color: var(--text-muted); background: transparent; cursor: pointer; }
+.help-center-header button:hover, .help-center-search button:hover { background: var(--control-hover); color: var(--text); }
+.help-center-search { display: flex; flex: none; gap: 8px; align-items: center; min-height: 34px; margin: 0 18px 14px; padding: 0 8px; border: 1px solid var(--border); border-radius: 7px; background: var(--surface-subtle); color: var(--text-muted); }
+.help-center-search:focus-within { outline: 2px solid var(--highlight); outline-offset: 1px; }
+.help-center-search input { width: 100%; min-width: 0; min-height: 32px; border: 0; color: var(--text); background: transparent; font-size: 13px; outline: none !important; }
+.help-center-search input::-webkit-search-cancel-button { display: none; }
+.help-center-body { display: grid; grid-template-columns: 205px minmax(0, 1fr); flex: 1; min-height: 0; border-top: 1px solid var(--separator); }
+.help-center-topics { min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 12px 8px; background: var(--surface-subtle); border-right: 1px solid var(--separator); }
+.help-center-topics > p { margin: 0 10px 9px; color: var(--text-muted); font-size: 11px; }
+.help-center-topics > button { display: block; width: 100%; padding: 9px 10px; margin: 2px 0; min-height: 34px; text-align: left; font-size: 12px; line-height: 1.4; border: 0; border-radius: 6px; background: transparent; color: var(--text); cursor: pointer; overflow-wrap: anywhere; }
+.help-center-topics > button:hover { background: var(--control-hover); }
+.help-center-topics > button[aria-current="page"] { color: var(--highlight); background: var(--highlight-soft); font-weight: 600; }
+.help-center-reader { min-width: 0; overflow-y: auto; overscroll-behavior: contain; padding: 24px 28px 30px; user-select: text; font-size: 13px; line-height: 1.8; overflow-wrap: anywhere; scroll-padding: 20px; }
+.help-center-reader:focus-visible { outline-offset: -3px; }
+.help-center-reader h2 { font-size: 22px; line-height: 1.35; letter-spacing: -.3px; margin: 0 0 12px; font-weight: 650; }
+.help-center-summary { margin: 0 0 24px; color: var(--text-muted); }
+.help-center-reader h3 { font-size: 14px; font-weight: 650; margin: 24px 0 10px; }
+.help-center-reader ol { list-style: decimal; padding-left: 22px; margin: 0; }
+.help-center-reader li { padding-left: 4px; margin-bottom: 12px; }
+.help-center-reader li::marker { color: var(--text-muted); }
+.help-center-language { padding: 8px 10px; margin: 0 0 18px; border-radius: 6px; background: var(--surface-subtle); color: var(--text-muted); font-size: 12px; }
+.help-center-empty { padding-top: 36px; text-align: center; color: var(--text-muted); }
+.help-center-empty h2 { margin-top: 14px; font-size: 18px; color: var(--text); }
+.help-center-empty button { border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; background: var(--surface-subtle); color: var(--text); cursor: pointer; }
+.help-center-footer { display: flex; flex: none; justify-content: space-between; padding: 8px 18px; border-top: 1px solid var(--separator); color: var(--text-muted); font-size: 11px; }
+/* Modal workflows retain exclusive focus and remain above the guide. */
+body:has([aria-modal="true"]) .help-center { visibility: hidden; }
+@media (max-width: 600px) {
+  .help-center-panel { right: 10px; width: calc(100vw - 20px); }
+  .help-center-body { grid-template-columns: minmax(115px, 32%) minmax(0, 1fr); }
+  .help-center-reader { padding: 18px 15px; }
+  .help-center-reader h2 { font-size: 19px; }
+  .help-center-topics { padding: 10px 5px; }
+}

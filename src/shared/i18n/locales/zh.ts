@@ -1,4 +1,18 @@
 export const zh = {
+  help: {
+    "title": "帮助中心",
+    "subtitle": "LumeTrace 使用手册",
+    "search": "搜索帮助",
+    "placeholder": "试试“AI”“向量”或“导入”",
+    "topics": "操作目录",
+    "close": "关闭帮助",
+    "clear": "清空搜索",
+    "empty": "没有找到相关内容",
+    "emptyHint": "换个关键词，或清空搜索查看全部目录。",
+    "offline": "离线手册",
+    "languageNote": "完整手册提供简体中文与英文。",
+    "count": "{{count}} 个主题"
+},
   fileSpace: {
     versionSummary: {
       title: "最近版本",

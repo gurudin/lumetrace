@@ -53,3 +53,9 @@ For every material UI or interaction change:
 - Commit only the intended project changes. Exclude credentials, local user files, generated artifacts, and unrelated work. Never force-push or rewrite published history without explicit authorization.
 - If verification, commit, or push fails, report the exact failure and do not claim that delivery is complete.
 - 每次提交完成后，最终回复末尾必须单独输出固定格式：提交：社区版 `<本次实际提交短哈希>`，专业版 `<本次实际提交短哈希>`。仅提交社区版时只写“提交：社区版 `<本次实际提交短哈希>`”，仅提交专业版时只写“提交：专业版 `<本次实际提交短哈希>`”；不得列出本次未提交的版本或沿用历史哈希，推送失败须另外明确说明。
+
+## Mandatory Community-to-Pro synchronization
+
+- Pro includes every Community capability. Every completed Community change must also be delivered to Pro; a Community-only push is not completion.
+- Test, commit and push the Community change on `develop`, then update Pro’s pinned `vendor/lumetrace` revision to that verified commit. Run Pro integration checks, commit the dependency update and push Pro `develop`.
+- Never copy shared implementation into Pro or edit tracked submodule files. Preserve unrelated local work. If synchronization or verification is blocked, report it explicitly and do not claim both editions are complete.

@@ -1,4 +1,18 @@
 export const zhTW = {
+  help: {
+    "title": "幫助中心",
+    "subtitle": "LumeTrace 使用手冊",
+    "search": "搜尋說明",
+    "placeholder": "試試「AI」「vectors」或「import」",
+    "topics": "操作目錄",
+    "close": "關閉說明",
+    "clear": "清除搜尋",
+    "empty": "沒有符合的主題",
+    "emptyHint": "請更換關鍵字或清除搜尋。",
+    "offline": "離線手冊",
+    "languageNote": "完整手冊目前提供英文與簡體中文；此處顯示英文。",
+    "count": "{{count}} 個主題"
+},
   fileSpace: {
     versionSummary: {
       title: "最近版本",

@@ -162,6 +162,7 @@ export function FileSpaceSearchPanel({
   useEffect(() => {
     const handleShortcut = (event: KeyboardEvent) => {
       if (applicationExtension?.active) return;
+      if (event.target instanceof Element && event.target.closest("[data-help-center]")) return;
       if (!isGlobalSearchShortcut(event)) return;
       const activeModal = document.querySelector<HTMLElement>('[aria-modal="true"]');
       if (activeModal && !activeModal.classList.contains("file-space-global-search-panel")) return;

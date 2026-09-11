@@ -1,4 +1,18 @@
 export const ja = {
+  help: {
+    "title": "ヘルプセンター",
+    "subtitle": "LumeTrace の使い方",
+    "search": "ヘルプを検索",
+    "placeholder": "「AI」「vectors」「import」など",
+    "topics": "トピック",
+    "close": "ヘルプを閉じる",
+    "clear": "検索をクリア",
+    "empty": "一致するトピックがありません",
+    "emptyHint": "別のキーワードを試すか、検索をクリアしてください。",
+    "offline": "オフラインガイド",
+    "languageNote": "ガイド本文は英語と簡体字中国語に対応しています。ここでは英語を表示します。",
+    "count": "{{count}} 件のトピック"
+},
   fileSpace: {
     versionSummary: {
       title: "最近のバージョン",

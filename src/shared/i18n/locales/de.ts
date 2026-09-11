@@ -1,4 +1,18 @@
 export const de = {
+  help: {
+    "title": "Hilfe",
+    "subtitle": "LumeTrace kennenlernen",
+    "search": "Hilfe durchsuchen",
+    "placeholder": "Zum Beispiel „AI“, „vectors“ oder „import“",
+    "topics": "Themen",
+    "close": "Hilfe schließen",
+    "clear": "Suche löschen",
+    "empty": "Keine passenden Themen",
+    "emptyHint": "Anderen Suchbegriff verwenden oder Suche löschen.",
+    "offline": "Offline-Handbuch",
+    "languageNote": "Das Handbuch ist auf Englisch und vereinfachtem Chinesisch verfügbar. Hier wird Englisch angezeigt.",
+    "count": "{{count}} Themen"
+},
   fileSpace: {
     versionSummary: {
       title: "Letzte Versionen",

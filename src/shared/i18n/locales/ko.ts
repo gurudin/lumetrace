@@ -1,4 +1,18 @@
 export const ko = {
+  help: {
+    "title": "도움말 센터",
+    "subtitle": "LumeTrace 사용 방법",
+    "search": "도움말 검색",
+    "placeholder": "“AI”, “vectors”, “import” 검색",
+    "topics": "주제",
+    "close": "도움말 닫기",
+    "clear": "검색 지우기",
+    "empty": "일치하는 주제가 없습니다",
+    "emptyHint": "다른 검색어를 입력하거나 검색을 지우세요.",
+    "offline": "오프라인 설명서",
+    "languageNote": "설명서는 영어와 중국어 간체로 제공됩니다. 여기서는 영어로 표시됩니다.",
+    "count": "주제 {{count}}개"
+},
   fileSpace: {
     versionSummary: {
       title: "최근 버전",
