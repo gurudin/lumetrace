@@ -116,6 +116,10 @@ mod tests {
         a.prepare(&[source(2)]).unwrap();
         assert!(query(&a, "How can I change my password?").is_empty());
         assert!(!query(&b, "How can I change my password?").is_empty());
+        b.clear_vectors().unwrap();
+        assert!(query(&b, "How can I change my password?").is_empty());
+        assert!(b.step().unwrap());
+        assert!(!query(&b, "How can I change my password?").is_empty());
         drop(b);
         let b = fixture(&root.join("member"), &SemanticSearchRuntime::new(&model));
         assert!(!query(&b, "How can I change my password?").is_empty());
@@ -286,6 +290,24 @@ impl Workspace {
         self.database.0.lock().map_err(|_|"Index database busy")?.execute("UPDATE file_space_search_documents SET extraction_status='pending',extraction_error=NULL WHERE extraction_status='failed'",[]).map_err(|e|e.to_string())?;
         retry_failed_index_jobs(&self.database)
     }
+    /// Removing the model from this space also removes its disposable local
+    /// vectors, but retains extracted text and sources for a later reinstall.
+    pub fn clear_vectors(&self) -> Result<(), String> {
+        let mut db = self.database.0.lock().map_err(|_| "Index database busy")?;
+        let tx = db.transaction().map_err(|e| e.to_string())?;
+        tx.execute("DELETE FROM file_space_search_chunks", [])
+            .map_err(|e| e.to_string())?;
+        tx.execute("UPDATE file_space_index_jobs SET status='pending',retry_count=0,error=NULL,started_at=NULL,completed_at=NULL",[]).map_err(|e|e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        self.runtime.clear_ann_snapshot();
+        let path = semantic_ann_index_path_for_database(&self.database.location()?.database_path);
+        if let Err(e) = std::fs::remove_file(path) {
+            if e.kind() != std::io::ErrorKind::NotFound {
+                return Err(e.to_string());
+            }
+        }
+        Ok(())
+    }
     pub fn status(&self) -> Result<Status, String> {
         let mut status = status_record(&self.database, &self.runtime);
         let (pending,failed):(i64,i64)=self.database.0.lock().map_err(|_|"Index database busy")?.query_row(
@@ -293,6 +315,9 @@ impl Workspace {
         status.total_files += pending + failed;
         status.pending_files += pending;
         status.failed_files += failed;
+        if failed > 0 && status.error.is_none() {
+            status.error=self.database.0.lock().map_err(|_|"Index database busy")?.query_row("SELECT extraction_error FROM file_space_search_documents WHERE extraction_status='failed' ORDER BY indexed_at LIMIT 1",[],|r|r.get(0)).optional().map_err(|e|e.to_string())?.flatten();
+        }
         if self.installed() && status.failed_files > 0 && status.pending_files == 0 {
             status.state = "failed".into();
         } else if self.installed() && status.pending_files > 0 {
