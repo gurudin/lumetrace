@@ -8249,6 +8249,12 @@ button.file-space-ai-header-service:hover {
   pointer-events: auto;
 }
 
+/* Operation errors must remain readable above the sheet's blurred backdrop.
+   Keep the existing placement and do not raise the underlying file workbench. */
+.file-space-feedback-stack.is-above-dialog {
+  z-index: 710;
+}
+
 .file-space-feedback-stack .file-space-import-feedback,
 .file-space-feedback-stack .file-space-version-notification {
   position: relative;

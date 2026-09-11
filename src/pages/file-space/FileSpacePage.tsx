@@ -6260,7 +6260,7 @@ export function FileSpacePage() {
           </div>
         ) : null}
         {error || importFeedback || fileMoveFeedback || trashFeedback || importConflictFeedback || versionNotification ? (
-          <div className="file-space-feedback-stack" role="region" aria-label={t("fileSpace.feedback.regionLabel")}>
+          <div className={`file-space-feedback-stack${isFileSpaceDialogMounted ? " is-above-dialog" : ""}`} role="region" aria-label={t("fileSpace.feedback.regionLabel")}>
         {error ? (
           <div className="file-space-import-feedback is-failed" role="alert" aria-live="assertive">
             <span className="file-space-import-feedback-icon"><CircleAlert size={16} /></span>
