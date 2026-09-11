@@ -62,6 +62,104 @@ mod tests {
         })
         .unwrap()
     }
+    fn mixed_sources(w: &Workspace) -> Vec<Source> {
+        let mut sources = vec![source(1)];
+        for n in 0..468 {
+            let mut s = source(n + 2);
+            s.id = format!("file-{n:03}");
+            s.name = if n == 467 {
+                "second.txt".into()
+            } else {
+                format!("image-{n:03}.png")
+            };
+            w.database.0.lock().unwrap().execute(
+                "INSERT INTO files(id,original_name,storage_path,created_at) VALUES(?1,?2,?2,1)",
+                params![s.id,s.name]).unwrap();
+            sources.push(s);
+        }
+        sources
+    }
+    #[test]
+    fn hundreds_of_metadata_only_files_complete_without_download_or_model_jobs() {
+        let root = std::env::temp_dir().join(format!("lumetrace-skip-index-{}", Uuid::new_v4()));
+        let w = fixture(&root, &SemanticSearchRuntime::new(&root));
+        let mut sources = mixed_sources(&w);
+        w.prepare(&sources).unwrap();
+        let status = w.status().unwrap();
+        assert_eq!(
+            (
+                status.indexed_files,
+                status.total_files,
+                status.pending_files
+            ),
+            (467, 469, 2)
+        );
+        assert_eq!(w.next_source().unwrap(), Some(("one".into(), 1)));
+        // Upgrade an existing queue, including the exact old lock error. No
+        // source revision changes or remote content reads are needed to repair it.
+        w.database.0.lock().unwrap().execute("UPDATE file_space_index_jobs SET status='failed',error='Unable to replace semantic chunks: database is locked',retry_count=1",[]).unwrap();
+        w.prepare(&sources).unwrap();
+        let status = w.status().unwrap();
+        assert_eq!((status.indexed_files, status.failed_files), (467, 0));
+        let states: (i64,i64) = w.database.0.lock().unwrap().query_row(
+            "SELECT count(*),sum(length(body_text)) FROM file_space_search_documents WHERE extraction_status='unsupported'",[],|r|Ok((r.get(0)?,r.get(1)?))).unwrap();
+        assert_eq!(states, (467, 0));
+        let hits = w
+            .search(&SearchRequest {
+                query: "image-000".into(),
+                scopes: vec!["name".into()],
+            })
+            .unwrap();
+        assert!(hits.iter().any(|h| h.file_id == "file-000"));
+        // An empty supported file is also complete without a pointless GET.
+        sources[0].size = 0;
+        sources[0].revision = 1000;
+        w.prepare(&sources).unwrap();
+        assert_eq!(w.status().unwrap().indexed_files, 468);
+        w.clear_vectors().unwrap();
+        assert_eq!(w.status().unwrap().indexed_files, 468);
+        assert_eq!(w.next_source().unwrap(), Some(("file-467".into(), 469)));
+        drop(w);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
+    fn index_job_claim_waits_for_replica_writer_without_read_to_write_upgrade_failure() {
+        let root = std::env::temp_dir().join(format!("lumetrace-index-lock-{}", Uuid::new_v4()));
+        let w = fixture(&root, &SemanticSearchRuntime::new(&root));
+        w.prepare(&[source(1)]).unwrap();
+        supply(&w, 1, "synthetic searchable text");
+        let mut other = rusqlite::Connection::open(root.join("index.sqlite3")).unwrap();
+        other.pragma_update(None, "journal_mode", "WAL").unwrap();
+        let tx = other
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .unwrap();
+        tx.execute("UPDATE files SET updated_at=99", []).unwrap();
+        std::thread::scope(|scope| {
+            let (sent, received) = std::sync::mpsc::channel();
+            let database = &w.database;
+            scope.spawn(move || {
+                sent.send(read_next_document(database).map(|d| d.map(|v| v.file_id)))
+                    .unwrap();
+            });
+            assert!(
+                matches!(
+                    received.recv_timeout(Duration::from_millis(80)),
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+                ),
+                "claim must wait, not fail immediately upgrading a stale read snapshot"
+            );
+            tx.commit().unwrap();
+            assert_eq!(
+                received
+                    .recv_timeout(Duration::from_secs(5))
+                    .unwrap()
+                    .unwrap(),
+                Some("one".into())
+            );
+        });
+        drop((other, w));
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     fn isolated_sources_invalidate_stale_content_and_do_not_repeat_unchanged_extraction() {
         let root =
@@ -99,14 +197,30 @@ mod tests {
         let a = fixture(&root.join("owner"), &owner_model);
         let b = fixture(&root.join("member"), &member_model);
         for w in [&a, &b] {
-            w.prepare(&[source(1)]).unwrap();
+            let sources = mixed_sources(w);
+            w.prepare(&sources).unwrap();
+            assert_eq!(w.status().unwrap().indexed_files, 467);
             supply(
                 w,
                 1,
                 "You can reset your account password from the security settings page.",
             );
             assert!(w.step().unwrap());
-            assert_eq!(w.status().unwrap().indexed_files, 1);
+            assert_eq!(w.status().unwrap().indexed_files, 468);
+            assert_eq!(w.next_source().unwrap(), Some(("file-467".into(), 469)));
+            assert!(w
+                .store_extraction(
+                    "file-467",
+                    469,
+                    ContentExtraction {
+                        text: "A second synthetic document about team collaboration.".into(),
+                        status: ExtractionStatus::Extracted,
+                        error: None
+                    }
+                )
+                .unwrap());
+            assert!(w.step().unwrap());
+            assert_eq!(w.status().unwrap().indexed_files, 469);
             let hits = query(w, "How can I change my password?");
             assert!(
                 hits.iter().any(|h| h.semantic_similarity.is_some()),
@@ -133,6 +247,29 @@ mod tests {
 pub struct Workspace {
     database: Database,
     runtime: SemanticSearchRuntime,
+}
+
+// Metadata-only documents need neither a remote read nor E5 work. Complete them
+// in one local transaction, including jobs left pending/failed by older builds.
+// Keep their extraction status truthful; "ready" means the index is up to date,
+// not that unsupported files acquired extracted body text or vectors.
+fn complete_metadata_only(tx: &Transaction<'_>) -> Result<(), String> {
+    tx.execute("UPDATE file_space_search_documents SET extraction_status='empty',body_text='',extraction_error=NULL
+        WHERE size_bytes=0 AND extraction_status IN ('pending','failed')", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("DELETE FROM file_space_search_chunks WHERE file_id IN
+        (SELECT file_id FROM file_space_search_documents WHERE extraction_status IN ('unsupported','empty'))", [])
+        .map_err(|e| e.to_string())?;
+    tx.execute("INSERT INTO file_space_index_jobs
+        (file_id,requested_document_indexed_at,status,retry_count,error,requested_at,started_at,completed_at)
+        SELECT file_id,indexed_at,'ready',0,NULL,?1,NULL,?1 FROM file_space_search_documents
+        WHERE extraction_status IN ('unsupported','empty')
+        ON CONFLICT(file_id) DO UPDATE SET requested_document_indexed_at=excluded.requested_document_indexed_at,
+        status='ready',retry_count=0,error=NULL,started_at=NULL,completed_at=excluded.completed_at
+        WHERE file_space_index_jobs.status<>'ready' OR file_space_index_jobs.error IS NOT NULL
+        OR file_space_index_jobs.requested_document_indexed_at<>excluded.requested_document_indexed_at",
+        [now_millis()]).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 /// Model lifecycle belongs to this device, not to an individual file space.
@@ -189,7 +326,9 @@ impl Workspace {
     /// removed in the same transaction, so an old version is never searchable.
     pub fn prepare(&self, sources: &[Source]) -> Result<(), String> {
         let mut db = self.database.0.lock().map_err(|_| "Index database busy")?;
-        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         let mut old: HashMap<String, i64> = tx
             .prepare("SELECT file_id,indexed_at FROM file_space_search_documents")
             .map_err(|e| e.to_string())?
@@ -215,17 +354,16 @@ impl Workspace {
                 [&s.id],
             )
             .map_err(|e| e.to_string())?;
-            let state = if Self::supports(&s.name) {
-                "pending"
-            } else {
+            let state = if !Self::supports(&s.name) {
                 "unsupported"
+            } else if s.size == 0 {
+                "empty"
+            } else {
+                "pending"
             };
             tx.execute("INSERT INTO file_space_search_documents(file_id,file_name,body_text,extraction_status,extraction_error,extraction_version,tag_text,task_text,cell_text,file_updated_at,size_bytes,indexed_at)
                 VALUES(?1,?2,'',?3,NULL,?4,?5,'','',?6,?7,?8) ON CONFLICT(file_id) DO UPDATE SET file_name=excluded.file_name,body_text='',extraction_status=excluded.extraction_status,extraction_error=NULL,extraction_version=excluded.extraction_version,tag_text=excluded.tag_text,task_text='',cell_text='',file_updated_at=excluded.file_updated_at,size_bytes=excluded.size_bytes,indexed_at=excluded.indexed_at",
                 params![s.id,s.name,state,content_extractor::EXTRACTION_VERSION,s.tags,s.updated_at,s.size,s.revision]).map_err(|e|e.to_string())?;
-            if state == "unsupported" {
-                schedule_search_documents_in_transaction(&tx, &[s.id.clone()], now_millis())?;
-            }
         }
         for id in old.keys() {
             for table in [
@@ -237,6 +375,13 @@ impl Workspace {
                     .map_err(|e| e.to_string())?;
             }
         }
+        complete_metadata_only(&tx)?;
+        // Recover transient lock failures from previous builds without retrying
+        // corrupt documents/model failures or looping forever on a locked DB.
+        tx.execute("UPDATE file_space_index_jobs SET status='pending',error=NULL,started_at=NULL,completed_at=NULL,requested_at=?1
+            WHERE status='failed' AND retry_count<3 AND
+            (error LIKE '%database is locked' OR error LIKE '%database table is locked')", [now_millis()])
+            .map_err(|e| e.to_string())?;
         tx.commit().map_err(|e| e.to_string())
     }
     pub fn next_source(&self) -> Result<Option<(String, i64)>, String> {
@@ -268,11 +413,14 @@ impl Workspace {
         value: ContentExtraction,
     ) -> Result<bool, String> {
         let mut db = self.database.0.lock().map_err(|_| "Index database busy")?;
-        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         let changed=tx.execute("UPDATE file_space_search_documents SET body_text=?3,extraction_status=?4,extraction_error=?5 WHERE file_id=?1 AND indexed_at=?2 AND extraction_status='pending'",
             params![id,revision,value.text,value.status.as_str(),value.error]).map_err(|e|e.to_string())?;
         if changed > 0 {
             schedule_search_documents_in_transaction(&tx, &[id.into()], now_millis())?;
+            complete_metadata_only(&tx)?;
         }
         tx.commit().map_err(|e| e.to_string())?;
         Ok(changed > 0)
@@ -294,10 +442,13 @@ impl Workspace {
     /// vectors, but retains extracted text and sources for a later reinstall.
     pub fn clear_vectors(&self) -> Result<(), String> {
         let mut db = self.database.0.lock().map_err(|_| "Index database busy")?;
-        let tx = db.transaction().map_err(|e| e.to_string())?;
+        let tx = db
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|e| e.to_string())?;
         tx.execute("DELETE FROM file_space_search_chunks", [])
             .map_err(|e| e.to_string())?;
         tx.execute("UPDATE file_space_index_jobs SET status='pending',retry_count=0,error=NULL,started_at=NULL,completed_at=NULL",[]).map_err(|e|e.to_string())?;
+        complete_metadata_only(&tx)?;
         tx.commit().map_err(|e| e.to_string())?;
         self.runtime.clear_ann_snapshot();
         let path = semantic_ann_index_path_for_database(&self.database.location()?.database_path);

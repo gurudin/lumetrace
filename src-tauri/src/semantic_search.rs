@@ -7,7 +7,9 @@ use fastembed::{
     UserDefinedEmbeddingModel,
 };
 use reqwest::blocking::Client;
-use rusqlite::{params, params_from_iter, types::Value, OptionalExtension, Transaction};
+use rusqlite::{
+    params, params_from_iter, types::Value, OptionalExtension, Transaction, TransactionBehavior,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
@@ -1156,7 +1158,7 @@ fn read_next_document(database: &Database) -> Result<Option<SearchDocument>, Str
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
     let transaction = connection
-        .transaction()
+        .transaction_with_behavior(TransactionBehavior::Immediate)
         .map_err(|error| format!("Unable to begin semantic indexing: {error}"))?;
     let file_id = transaction
         .query_row(
@@ -1291,7 +1293,10 @@ fn process_next_document(
             .lock()
             .map_err(|_| "Unable to access Lume Trace database".to_owned())?;
         let transaction = connection
-            .transaction()
+            // Reserve the writer before checking the revision. A deferred read
+            // transaction cannot upgrade after another replica connection writes.
+            // Extraction and E5 inference have already finished outside this lock.
+            .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| format!("Unable to save semantic indexing: {error}"))?;
         if runtime.index_generation.load(AtomicOrdering::SeqCst) != index_generation
             || !runtime.is_installed()
