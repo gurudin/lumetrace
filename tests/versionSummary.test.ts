@@ -31,6 +31,7 @@ test("summary requests metadata only, has stale-response cleanup, and is nonmoda
   const page = source("FileSpacePage.tsx");
   const loader = page.slice(page.indexOf("loadSummary={async"), page.indexOf("onContextMenu=", page.indexOf("loadSummary={async")));
   assert.match(loader, /get_file_version_summary/);
+  assert.match(loader, /externalWorkspace\?\.source\?\.workspaceId \?\? workspaceDirectory\?\.currentWorkspaceId/);
   assert.doesNotMatch(loader, /get_task_file_timeline|read_task_file_version/);
   assert.match(loader, /summary.workspaceId !== workspaceId \|\| summary.fileId !== file.id/);
 });

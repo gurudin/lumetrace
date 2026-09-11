@@ -6150,7 +6150,7 @@ export function FileSpacePage() {
                               const fixture = createVisualTimeline(file)!;
                               return { ...fixture, workspaceId: "visual-preview", versions: fixture.versions.slice(0, 5) };
                             }
-                            const workspaceId = workspaceDirectory?.currentWorkspaceId;
+                            const workspaceId = externalWorkspace?.source?.workspaceId ?? workspaceDirectory?.currentWorkspaceId;
                             if (!workspaceId) throw new Error("The workspace is unavailable");
                             const summary = await invoke<VersionSummary>("get_file_version_summary", { workspaceId, fileId: file.id });
                             if (summary.workspaceId !== workspaceId || summary.fileId !== file.id) throw new Error("The workspace changed");

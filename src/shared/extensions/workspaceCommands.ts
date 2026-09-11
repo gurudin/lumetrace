@@ -3,6 +3,8 @@ import type { ImagePreviewStore } from "./imagePreviewStore";
 
 export interface WorkspaceCommandSource {
   key: string;
+  /** Stable identity for version metadata; external spaces never borrow a local registry ID. */
+  workspaceId?: string;
   /** Edition-owned, authenticated image transport; independent of version history. */
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
   /** Present only when the displayed preview is processed and an original can be fetched on demand. */
