@@ -13,6 +13,13 @@ test("keeps loading and ready workspace states distinct", () => {
   assert.equal(fileSpaceRootView(false, null, "ready"), "workspace");
 });
 
+test("successful snapshot delivery clears a stale initial error without reloading the workspace", () => {
+  const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
+  const receiver = page.slice(page.indexOf("const applySavedMarkdownSnapshot"), page.indexOf('window.addEventListener("lumetrace:file-space-snapshot"'));
+  assert.match(receiver, /if \(next\)\s*\{[\s\S]*setSnapshot\(next\);[\s\S]*setInitialLoadError\(null\)/);
+  assert.doesNotMatch(receiver, /loadSnapshot\(|setLoading\(true\)/);
+});
+
 test("first-run workspace actions stay neutral while retaining hover and keyboard focus", () => {
   const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
   const css = readFileSync(new URL("../src/styles.css", import.meta.url), "utf8");

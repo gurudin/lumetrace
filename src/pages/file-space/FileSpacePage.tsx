@@ -2147,6 +2147,8 @@ export function FileSpacePage() {
       const next = (event as CustomEvent<FileSpaceSnapshot>).detail;
       if (next) {
         setSnapshot(next);
+        // A successfully delivered snapshot resolves an earlier load failure.
+        setInitialLoadError(null);
         if (isTauri()) {
           void invoke<FileSpaceWorkspaceDirectory>("get_file_space_workspaces")
             .then(setWorkspaceDirectory)
