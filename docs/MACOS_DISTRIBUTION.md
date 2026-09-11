@@ -4,7 +4,26 @@
 
 The next Community version is 1.0.1. Keep the existing v1.0.0 tag unchanged. The user-facing Release notes live in [releases/v1.0.1.md](releases/v1.0.1.md); download and installation text must be finalized against the actual installer before publication. Developer verification belongs here or in CI, not in the user-facing Release notes.
 
-On 2026-09-11, the system keychain exposed an Apple Development identity but no Developer ID Application identity. Xcode's notarytool and stapler are available. Apple Development is not a replacement for direct-distribution Developer ID signing. No signed/notarized 1.0.1 installer has been produced or published by this preparation.
+On 2026-09-11, the system keychain exposed an Apple Development identity but no Developer ID Application identity. Xcode's notarytool and stapler are available. Apple Development is not a replacement for direct-distribution Developer ID signing. The owner has chosen the existing Apple Development certificate for the initial 1.0.1 build because a paid Apple Developer Program membership is not currently available. This build is not Developer ID signed or notarized, and must not be described as an Apple-verified public distribution.
+
+## Interim Apple Development build
+
+Use the existing valid Apple Development identity from the signing Mac's keychain. Keep its personal name and identifier out of tracked configuration:
+
+```sh
+env -u APPLE_ID -u APPLE_PASSWORD -u APPLE_TEAM_ID \
+  -u APPLE_API_ISSUER -u APPLE_API_KEY -u APPLE_API_KEY_PATH \
+  APPLE_SIGNING_IDENTITY='Apple Development: YOUR NAME (IDENTIFIER)' \
+  npm run tauri:build -- --target aarch64-apple-darwin --bundles dmg
+```
+
+This deliberately omits notarization credentials. The private key stays in Keychain; approve a signing-key access prompt locally if macOS requests it. Do not commit the certificate/private key or account credentials.
+
+Check the artifact's version, architecture, signature integrity and DMG integrity using the commands below. For this interim build, the expected authority is Apple Development. Gatekeeper rejection and the absence of a notarization ticket are expected and must be disclosed; they are not successful public-distribution verification. Do not replace the development signature with ad-hoc signing silently if it fails.
+
+Before publication, test the downloaded artifact on an isolated Mac/account and document the actual first-launch behavior. macOS may require an explicit exception in System Settings → Privacy & Security → Open Anyway. Do not claim this works until tested, and do not instruct users to disable Gatekeeper globally. Certificate validity and provisioning restrictions can affect whether a development-signed app runs on another Mac.
+
+The following Developer ID instructions remain the upgrade path when membership is available.
 
 ## Obtain the correct certificate
 
@@ -65,9 +84,9 @@ hdiutil verify 'path/to/LumeTrace_1.0.1_aarch64.dmg'
 shasum -a 256 'path/to/LumeTrace_1.0.1_aarch64.dmg'
 ```
 
-The signature must show Developer ID Application and hardened runtime. Check Apple's notarization result and the stapled app ticket; do not infer success from the presence of a DMG. If the DMG itself is separately notarized/stapled, validate its ticket too. Inspect the app version, arm64 architecture, bundle identity, and actual minimum macOS version.
+For the Developer ID distribution path, the signature must show Developer ID Application and hardened runtime. Check Apple's notarization result and the stapled app ticket; do not infer success from the presence of a DMG. If the DMG itself is separately notarized/stapled, validate its ticket too. Inspect the app version, arm64 architecture, bundle identity, and actual minimum macOS version.
 
-On an isolated test account/Mac, verify the downloaded DMG opens, the app can be copied and launched, and macOS recognizes its verified publisher without disabling security protections. Test with synthetic files. Include checks for preview, saving, file history, search, and the new Help Center. Signed release execution and bundled runtime dependencies require this acceptance even after debug and unit tests pass.
+On an isolated test account/Mac, verify the downloaded DMG opens and the app can be copied and launched. For the Developer ID path, also verify macOS recognizes its verified publisher without disabling security protections; for the interim development build, record the actual warning and required exception instead. Test with synthetic files. Include checks for preview, saving, file history, search, and the new Help Center. Signed release execution and bundled runtime dependencies require this acceptance even after debug and unit tests pass.
 
 ## Prepare the GitHub Release
 
