@@ -459,6 +459,14 @@ impl Workspace {
         }
         Ok(())
     }
+    /// Local extraction counters, independent of vector job progress.
+    pub fn extraction_progress(&self) -> Result<(i64, i64, i64), String> {
+        self.database.0.lock().map_err(|_| "Index database busy")?.query_row(
+            "SELECT count(*),COALESCE(SUM(extraction_status='pending'),0),COALESCE(SUM(extraction_status='failed'),0) FROM file_space_search_documents",
+            [], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        ).map_err(|e| e.to_string())
+    }
+
     pub fn status(&self) -> Result<Status, String> {
         let mut status = status_record(&self.database, &self.runtime);
         let (pending,failed):(i64,i64)=self.database.0.lock().map_err(|_|"Index database busy")?.query_row(

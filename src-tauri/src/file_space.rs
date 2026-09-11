@@ -9501,7 +9501,7 @@ fn process_error(action: &str, output: std::process::Output) -> Result<(), Strin
     }
 }
 
-fn reveal_file_path(path: &Path) -> Result<(), String> {
+pub fn reveal_file_path(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let output = ProcessCommand::new("open")
         .arg("-R")
@@ -9540,7 +9540,7 @@ fn external_default_document_path(database: &Database, file_id: &str) -> Result<
     active_file_path(database, file_id)
 }
 
-fn open_file_with_default_application(path: &Path) -> Result<(), String> {
+pub fn open_file_with_default_application(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let output = ProcessCommand::new("open")
         .arg(path)
@@ -9566,7 +9566,7 @@ fn open_file_with_default_application(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("DEFAULT_APPLICATION_UNAVAILABLE:{error}"))
 }
 
-fn open_file_with_application(path: &Path, application: &Path) -> Result<(), String> {
+pub fn open_file_with_application(path: &Path, application: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(application)
         .map_err(|error| format!("Unable to inspect the selected application: {error}"))?;
     if metadata.file_type().is_symlink() {
@@ -9608,7 +9608,7 @@ fn open_file_with_application(path: &Path, application: &Path) -> Result<(), Str
     ));
 }
 
-fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
+pub fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let output = ProcessCommand::new("osascript")
         .args([
@@ -9650,7 +9650,7 @@ fn copy_file_to_clipboard(path: &Path) -> Result<(), String> {
     process_error("copy the file", output)
 }
 
-fn copy_path_to_clipboard(path: &Path) -> Result<(), String> {
+pub fn copy_path_to_clipboard(path: &Path) -> Result<(), String> {
     #[cfg(target_os = "macos")]
     let mut child = ProcessCommand::new("pbcopy")
         .stdin(Stdio::piped())
@@ -11474,6 +11474,16 @@ pub async fn start_file_space_drag_out<R: tauri::Runtime>(
         reconcile_before_file_action(database.inner(), &app, &file_id)?;
         active_file_path(database.inner(), &file_id)?
     };
+    start_path_drag_out(path, preview_bytes, skip_generated_preview, window, app).await
+}
+
+pub async fn start_path_drag_out<R: tauri::Runtime>(
+    path: PathBuf,
+    preview_bytes: Option<Vec<u8>>,
+    skip_generated_preview: Option<bool>,
+    window: tauri::Window<R>,
+    app: tauri::AppHandle<R>,
+) -> Result<(), String> {
     let (drag_image, preview_cleanup) = file_drag_image(
         &path,
         preview_bytes,
@@ -11535,6 +11545,19 @@ pub async fn choose_application_for_file_space_file<R: tauri::Runtime>(
     app: tauri::AppHandle<R>,
     database: State<'_, Database>,
 ) -> Result<bool, String> {
+    let Some(application) = choose_file_application(&app).await? else {
+        return Ok(false);
+    };
+    let _operation = lock_file_space_operations()?;
+    reconcile_before_file_action(database.inner(), &app, &file_id)?;
+    let file_path = external_default_document_path(database.inner(), &file_id)?;
+    open_file_with_application(&file_path, &application)?;
+    Ok(true)
+}
+
+pub async fn choose_file_application<R: tauri::Runtime>(
+    app: &tauri::AppHandle<R>,
+) -> Result<Option<PathBuf>, String> {
     #[cfg(target_os = "macos")]
     let picker = app
         .dialog()
@@ -11556,7 +11579,7 @@ pub async fn choose_application_for_file_space_file<R: tauri::Runtime>(
             .await
             .map_err(|error| format!("Unable to open the application chooser: {error}"))?
     else {
-        return Ok(false);
+        return Ok(None);
     };
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let application = application
@@ -11564,11 +11587,7 @@ pub async fn choose_application_for_file_space_file<R: tauri::Runtime>(
         .map_err(|error| format!("Unable to resolve the selected application: {error}"))?;
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     {
-        let _operation = lock_file_space_operations()?;
-        reconcile_before_file_action(database.inner(), &app, &file_id)?;
-        let file_path = external_default_document_path(database.inner(), &file_id)?;
-        open_file_with_application(&file_path, &application)?;
-        Ok(true)
+        Ok(Some(application))
     }
 }
 

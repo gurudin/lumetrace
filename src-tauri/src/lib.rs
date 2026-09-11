@@ -14,6 +14,16 @@ mod version_comparison;
 mod workspace;
 pub mod workspace_database;
 
+/// Internal native integration for caller-authorized, materialized files.
+/// These are not IPC commands and do not resolve an active workspace database.
+pub mod workspace_file_actions {
+    pub use crate::file_space::{
+        choose_file_application, copy_file_to_clipboard, copy_path_to_clipboard,
+        open_file_with_application, open_file_with_default_application, reveal_file_path,
+        start_path_drag_out,
+    };
+}
+
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
