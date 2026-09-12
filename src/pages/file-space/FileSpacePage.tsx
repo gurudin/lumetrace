@@ -4969,15 +4969,28 @@ export function FileSpacePage() {
 
   const renameFile = async () => {
     if (!renameFileId || !renameFileName.trim()) return;
+    const renamedName = renameFileName.trim();
+    const previousFile = snapshot.files.find((file) => file.id === renameFileId) ?? null;
     const operation = beginOperation("rename");
     if (!operation) return;
     setError(null);
     try {
       const updated = await invoke<FileSpaceSnapshot>("rename_file_space_file", {
         fileId: renameFileId,
-        name: renameFileName.trim(),
+        name: renamedName,
       });
       if (!canCommitOperation(operation)) return;
+      const renamedFile = updated.files.find((file) => (
+        file.folderId === previousFile?.folderId && file.name === renamedName
+      )) ?? null;
+      deferFilePaginationUntilInteractionRef.current = false;
+      if (renamedFile) {
+        fileRevealNavigationRef.current.start(renamedFile);
+        updateSelectedFiles(new Set([renamedFile.id]), renamedFile.id);
+        setFilePageTotal(updated.fileCount);
+        setFilePageCursor(null);
+        setFilePageRevision((revision) => revision + 1);
+      }
       setSnapshot(updated);
       setRenameFileId(null);
     } catch (renameError) {
