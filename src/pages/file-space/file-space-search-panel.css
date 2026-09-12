@@ -517,7 +517,14 @@
   }
 
   .file-space-global-search-results > button {
-    grid-template-columns: 36px minmax(0, 1fr);
+    grid-template-columns: 32px minmax(0, 1fr);
+  }
+
+  .file-space-global-search-open-file {
+    width: 28px;
+    padding: 0;
+    gap: 0;
+    font-size: 0;
   }
 
   .file-space-global-search-footer {
@@ -529,14 +536,12 @@
 @media (max-width: 860px) {
   .file-space-global-search-content {
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(180px, 42%) minmax(220px, 1fr);
   }
 
   .file-space-global-search-result-column {
     border-right: 0;
-  }
-
-  .file-space-global-search-preview {
-    display: none;
+    border-bottom: 1px solid var(--separator);
   }
 }
 
