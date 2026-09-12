@@ -2,9 +2,9 @@
 
 ## Current preparation
 
-The next Community version is 1.0.1. Keep the existing v1.0.0 tag unchanged. The user-facing Release notes live in [releases/v1.0.1.md](releases/v1.0.1.md); download and installation text must be finalized against the actual installer before publication. Developer verification belongs here or in CI, not in the user-facing Release notes.
+The next Community version is 1.0.2. Keep the existing release tags unchanged. The user-facing Release notes live in [releases/v1.0.2.md](releases/v1.0.2.md); download and installation text must be finalized against the actual installer before publication. Developer verification belongs here or in CI, not in the user-facing Release notes.
 
-On 2026-09-11, the system keychain exposed an Apple Development identity but no Developer ID Application identity. Xcode's notarytool and stapler are available. Apple Development is not a replacement for direct-distribution Developer ID signing. The owner has chosen the existing Apple Development certificate for the initial 1.0.1 build because a paid Apple Developer Program membership is not currently available. This build is not Developer ID signed or notarized, and must not be described as an Apple-verified public distribution.
+On 2026-09-12, the system keychain exposed an Apple Development identity but no Developer ID Application identity. Xcode's notarytool and stapler are available. Apple Development is not a replacement for direct-distribution Developer ID signing. The owner has chosen the existing Apple Development certificate for the 1.0.2 build because a paid Apple Developer Program membership is not currently available. This build is not Developer ID signed or notarized, and must not be described as an Apple-verified public distribution.
 
 ## Interim Apple Development build
 
@@ -66,10 +66,10 @@ The explicit target requires the `aarch64-apple-darwin` Rust target. Tauri signs
 
 ```text
 src-tauri/target/aarch64-apple-darwin/release/bundle/macos/LumeTrace.app
-src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/LumeTrace_1.0.1_aarch64.dmg
+src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/LumeTrace_1.0.2_aarch64.dmg
 ```
 
-Confirm actual output paths. Do not rename an older-version binary to make it look like 1.0.1. Do not install development builds into `/Applications` or launch automated acceptance against the user's live workspace.
+Confirm actual output paths. Do not rename an older-version binary to make it look like 1.0.2. Do not install development builds into `/Applications` or launch automated acceptance against the user's live workspace.
 
 ## Verify the final artifacts
 
@@ -80,8 +80,8 @@ codesign --verify --deep --strict --verbose=2 'path/to/LumeTrace.app'
 codesign -dv --verbose=4 'path/to/LumeTrace.app'
 xcrun stapler validate 'path/to/LumeTrace.app'
 spctl --assess --type execute --verbose=4 'path/to/LumeTrace.app'
-hdiutil verify 'path/to/LumeTrace_1.0.1_aarch64.dmg'
-shasum -a 256 'path/to/LumeTrace_1.0.1_aarch64.dmg'
+hdiutil verify 'path/to/LumeTrace_1.0.2_aarch64.dmg'
+shasum -a 256 'path/to/LumeTrace_1.0.2_aarch64.dmg'
 ```
 
 For the Developer ID distribution path, the signature must show Developer ID Application and hardened runtime. Check Apple's notarization result and the stapled app ticket; do not infer success from the presence of a DMG. If the DMG itself is separately notarized/stapled, validate its ticket too. Inspect the app version, arm64 architecture, bundle identity, and actual minimum macOS version.
@@ -90,8 +90,8 @@ On an isolated test account/Mac, verify the downloaded DMG opens and the app can
 
 ## Prepare the GitHub Release
 
-- Retain v1.0.0 unchanged. Agree on the exact v1.0.1 commit and tag before creating a new tag. Do not switch or merge main automatically.
-- Prepare a draft Release with [v1.0.1 notes](releases/v1.0.1.md), the verified DMG, and its SHA-256 checksum. Verify the artifact name matches Download.
+- Retain existing release tags unchanged. Agree on the exact v1.0.2 commit and tag before creating a new tag. Do not switch or merge main automatically.
+- Prepare a draft Release with [v1.0.2 notes](releases/v1.0.2.md), the verified DMG, and its SHA-256 checksum. Verify the artifact name matches Download.
 - Replace the Installation placeholder with the actual tested installation and first-launch steps. State the verified minimum macOS version. Do not advertise signing or notarization if either is unfinished.
 - Obtain final publication approval after the concrete draft and installer are reviewable. Public release creation is separate from ordinary develop commits.
 - After publication, verify public downloads and update README/website download links. Any Community repository changes must also be pinned and verified in Pro; this does not authorize a paid Pro release.
