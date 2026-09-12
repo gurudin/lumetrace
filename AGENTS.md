@@ -27,11 +27,17 @@ For every material UI or interaction change:
 7. Verify with realistic maximum-density content at the default window size and minimum supported size. Check light and dark appearances, scrolling, selection, menus, Popovers, Panels, Sheets, empty states, loading states, errors, and disabled states.
 8. Compare the rendered result with the approved reference at the level of hierarchy, grouping, spacing, disclosure, and control placement, not only colors and corner radii.
 
-## Community / professional ownership
+## Product editions and repository boundary
 
-- Everything implemented at the edition split remains free and open source here: file spaces, monitoring, Timeline, Diff, restore, previews, trash, search, semantic indexing, AI providers/chat, settings and localization.
-- Shared bug fixes, security fixes, performance improvements and UI/UX polish belong here, not in a professional-only fork. Professional integration uses a pinned commit of this repository.
-- New paid product capabilities belong in the private `lumetrace-pro` repository. Do not add payment checks or remove existing functionality here. Clarify ambiguous new feature ownership with the user.
+- Maintain only two repositories: public `lumetrace` for Community and private `lumetrace-pro` for the Official/Commercial product. The commercial repository contains both Pro and Team capabilities; do not create a third codebase.
+- Keep the product hierarchy `Free ⊂ Pro ⊂ Team`. Free equals Community. Pro equals Free plus personal professional capabilities. Team equals Free plus all Pro capabilities plus collaboration. A Team license must always grant Pro capabilities.
+- Community is a complete, usable local-first personal product, not a trial or crippled demo. All currently released Community capabilities remain free, including workspaces, file management, previews, trash, backup/restore, file-name and full-text search, optional semantic/vector search, SQLite indexing, AI providers and file Q&A, automatic history, Timeline, Diff and restore.
+- Community receives bug fixes, security fixes, performance and compatibility improvements, UI/UX polish, and work required for existing capabilities to function correctly. Never remove or gate an existing Community capability to manufacture Pro value.
+- Pro is for new advanced single-user workflows, such as professional file processing, advanced Diff, automation, batch workflows, saved searches, deep integrations and other power-user features. These are candidates until the user explicitly approves them; do not invent Pro features merely to fill the tier.
+- Team is for multi-user collaboration, shared workspaces, self-owned NAS/S3/OSS/object storage, connection and sync, permissions, roles, activity/audit logs and team administration. LumeTrace coordinates these capabilities but does not make official cloud file hosting the default model.
+- Classify each requested change before implementation. Existing-feature fixes and improvements belong to Community and must sync to Commercial. New advanced personal workflows are Pro candidates. Multi-user, shared-storage, permission, audit and administration capabilities belong to Team.
+- If ownership between Community, Pro or Team is not unambiguous, stop and ask the user before editing code. Never infer the paid boundary merely because a feature appears monetizable.
+- Commercial licensing must resolve through `LicenseProvider -> LicenseTier -> Entitlements -> Capabilities`, not scattered `isPro` or `isTeam` checks. Support future website/CDK, Mac App Store and team-license providers through this abstraction.
 - Shared frontend initialization is `src/bootstrap.tsx`; shared build configuration is `build/createViteConfig.ts`. The Rust library takes its caller's Tauri context; each edition owns its binary/configuration. Never duplicate the common command handler, worker lifecycle or migrations in Pro.
 - See `docs/EDITIONS.md` for repository boundaries, dependency updates, data isolation and licensing constraints. Do not publish private modules or local competitor research into this repository.
 
