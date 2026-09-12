@@ -134,6 +134,7 @@ pub fn run_with_plugins(
             file_space::set_file_space_background_paused,
             file_space::retry_file_space_background_failures,
             file_space::search_file_space_files,
+            file_space::get_file_space_search_preview,
             file_space::set_file_space_file_tags,
             file_space::reorder_file_space_files,
             file_space::configure_file_space_root,

@@ -1,6 +1,9 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
 import { isTauri } from "@tauri-apps/api/core";
 import {
+  ChevronDown,
+  ChevronUp,
+  ExternalLink,
   File,
   FileImage,
   FileSpreadsheet,
@@ -17,6 +20,7 @@ import { usePresence } from "../../shared/ui/usePresence";
 import { globalSearchShortcutLabel, isGlobalSearchShortcut } from "./globalSearchShortcut";
 import "./file-space-search-panel.css";
 import { useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
+import { splitSearchText } from "./searchTextHighlight";
 
 export type FileSpaceSearchScope = "name" | "content" | "tag";
 
@@ -49,6 +53,22 @@ export interface FileSpaceSearchMatch {
   fileId: string;
   lexicalMatch: boolean;
   semanticSimilarity: number | null;
+  contentMatch?: boolean;
+  snippet?: string | null;
+}
+
+interface FileSpaceSearchPreviewSection {
+  text: string;
+  lineNumber: number | null;
+  pageNumber: number | null;
+}
+
+interface FileSpaceSearchPreview {
+  fileId: string;
+  sections: FileSpaceSearchPreviewSection[];
+  matchCount: number;
+  truncated: boolean;
+  extractionStatus: string;
 }
 
 interface FileSpaceSearchPanelProps {
@@ -96,6 +116,19 @@ function relevancePercent(similarity: number) {
   return Math.round(Math.min(1, Math.max(0, similarity)) * 100);
 }
 
+function HighlightedText({ text, query, enabled = true }: {
+  text: string;
+  query: string;
+  enabled?: boolean;
+}) {
+  if (!enabled) return text;
+  return splitSearchText(text, query).map((part, index) => (
+    part.highlighted
+      ? <mark key={`${index}-${part.text}`}>{part.text}</mark>
+      : <span key={`${index}-${part.text}`}>{part.text}</span>
+  ));
+}
+
 export function FileSpaceSearchPanel({
   open,
   files,
@@ -114,10 +147,15 @@ export function FileSpaceSearchPanel({
   const [loading, setLoading] = useState(false);
   const [failed, setFailed] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
+  const [preview, setPreview] = useState<FileSpaceSearchPreview | null>(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  const [previewFailed, setPreviewFailed] = useState(false);
+  const [activeHitIndex, setActiveHitIndex] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
   const panelRef = useRef<HTMLDivElement>(null);
   const resultRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const searchSequenceRef = useRef(0);
+  const previewSequenceRef = useRef(0);
   const filesRef = useRef(files);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const restoreFocusRef = useRef(true);
@@ -144,6 +182,9 @@ export function FileSpaceSearchPanel({
     }),
     [filesById, searchMatches],
   );
+  const activeFile = results[activeIndex] ?? null;
+  const activeMatch = activeFile ? matchesByFileId.get(activeFile.id) ?? null : null;
+  const activeSection = preview?.sections[activeHitIndex] ?? null;
 
   const closePanel = (restoreFocus = true) => {
     restoreFocusRef.current = restoreFocus;
@@ -271,6 +312,50 @@ export function FileSpaceSearchPanel({
   }, [open, query, scopes]);
 
   useEffect(() => {
+    const sequence = previewSequenceRef.current + 1;
+    previewSequenceRef.current = sequence;
+    setActiveHitIndex(0);
+    setPreviewFailed(false);
+    if (!open || !activeFile || !activeMatch || !query.trim()) {
+      setPreview(null);
+      setPreviewLoading(false);
+      return undefined;
+    }
+    const semanticFallback = (): FileSpaceSearchPreview | null => activeMatch.snippet
+      ? {
+          fileId: activeFile.id,
+          sections: [{ text: activeMatch.snippet, lineNumber: null, pageNumber: null }],
+          matchCount: activeMatch.contentMatch ? 1 : 0,
+          truncated: false,
+          extractionStatus: "extracted",
+        }
+      : null;
+    if (!isTauri()) {
+      setPreview(semanticFallback());
+      setPreviewLoading(false);
+      return undefined;
+    }
+    setPreview(null);
+    setPreviewLoading(true);
+    void invoke<FileSpaceSearchPreview>("get_file_space_search_preview", {
+      request: { fileId: activeFile.id, query: query.trim(), scopes },
+    }).then((value) => {
+      if (sequence !== previewSequenceRef.current) return;
+      setPreview(value.sections.length > 0 ? value : semanticFallback() ?? value);
+    }).catch(() => {
+      if (sequence !== previewSequenceRef.current) return;
+      const fallback = semanticFallback();
+      setPreview(fallback);
+      setPreviewFailed(!fallback);
+    }).finally(() => {
+      if (sequence === previewSequenceRef.current) setPreviewLoading(false);
+    });
+    return () => {
+      if (previewSequenceRef.current === sequence) previewSequenceRef.current += 1;
+    };
+  }, [activeFile, activeMatch, invoke, open, query, scopes]);
+
+  useEffect(() => {
     if (!open) return undefined;
     const handlePanelKeyboard = (event: KeyboardEvent) => {
       if (event.isComposing) return;
@@ -291,6 +376,14 @@ export function FileSpaceSearchPanel({
           window.requestAnimationFrame(() => resultRefs.current[next]?.scrollIntoView({ block: "nearest" }));
           return next;
         });
+        return;
+      }
+      if ((event.key === "PageDown" || event.key === "PageUp") && (preview?.sections.length ?? 0) > 1) {
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        setActiveHitIndex((current) => event.key === "PageDown"
+          ? (current + 1) % preview!.sections.length
+          : (current - 1 + preview!.sections.length) % preview!.sections.length);
         return;
       }
       if (event.key === "Enter" && results[activeIndex]) {
@@ -316,7 +409,7 @@ export function FileSpaceSearchPanel({
     };
     window.addEventListener("keydown", handlePanelKeyboard, true);
     return () => window.removeEventListener("keydown", handlePanelKeyboard, true);
-  }, [activeIndex, onClose, onOpenFile, open, results]);
+  }, [activeIndex, onClose, onOpenFile, open, preview, results]);
 
   if (!presence.mounted) return null;
 
@@ -385,12 +478,13 @@ export function FileSpaceSearchPanel({
               <p>{t("fileSpace.globalSearch.noResultsDescription")}</p>
             </div>
           ) : (
-            <>
-              <div className="file-space-global-search-results-heading">
-                <span>{t("fileSpace.globalSearch.resultCount", { count: results.length })}</span>
-              </div>
-              <div id="file-space-global-search-results" className="file-space-global-search-results" role="listbox">
-                {results.map((file, index) => {
+            <div className="file-space-global-search-content">
+              <section className="file-space-global-search-result-column">
+                <div className="file-space-global-search-results-heading">
+                  <span>{t("fileSpace.globalSearch.resultCount", { count: results.length })}</span>
+                </div>
+                <div id="file-space-global-search-results" className="file-space-global-search-results" role="listbox">
+                  {results.map((file, index) => {
                   const Icon = fileIcon(file);
                   const match = matchesByFileId.get(file.id);
                   const extension = fileExtension(file.name) || t("fileSpace.globalSearch.fileType");
@@ -406,14 +500,19 @@ export function FileSpaceSearchPanel({
                       role="option"
                       aria-selected={index === activeIndex}
                       key={file.id}
-                      onPointerMove={() => setActiveIndex(index)}
                       onFocus={() => setActiveIndex(index)}
-                      onClick={() => openFile(file)}
+                      onClick={() => setActiveIndex(index)}
+                      onDoubleClick={() => openFile(file)}
                     >
                       <span className="file-space-global-search-file-icon"><Icon size={19} /></span>
                       <span className="file-space-global-search-result-copy">
-                        <strong>{file.name}</strong>
+                        <strong><HighlightedText text={file.name} query={query} enabled={Boolean(match?.lexicalMatch)} /></strong>
                         <small><FolderOpen size={12} />{location}</small>
+                        {match?.snippet ? (
+                          <span className="file-space-global-search-result-snippet">
+                            <HighlightedText text={match.snippet} query={query} enabled={Boolean(match.contentMatch)} />
+                          </span>
+                        ) : null}
                       </span>
                       <span className="file-space-global-search-result-meta">
                         <small>{extension} · {formatFileSize(file.sizeBytes)}</small>
@@ -422,7 +521,9 @@ export function FileSpaceSearchPanel({
                             className="file-space-global-search-match-meta"
                             title={t("fileSpace.globalSearch.relevanceDescription")}
                           >
-                            {match.semanticSimilarity !== null
+                            {match.contentMatch
+                              ? t("fileSpace.globalSearch.contentMatch")
+                              : match.semanticSimilarity !== null
                               ? t(match.lexicalMatch
                                   ? "fileSpace.globalSearch.hybridRelevance"
                                   : "fileSpace.globalSearch.semanticRelevance", {
@@ -439,9 +540,89 @@ export function FileSpaceSearchPanel({
                       </span>
                     </button>
                   );
-                })}
-              </div>
-            </>
+                  })}
+                </div>
+              </section>
+
+              <section className="file-space-global-search-preview" aria-live="polite">
+                <header className="file-space-global-search-preview-toolbar">
+                  <div>
+                    <strong>{activeFile?.name}</strong>
+                    <small>{activeFile?.relativePath}</small>
+                  </div>
+                  {preview && preview.sections.length > 1 ? (
+                    <div className="file-space-global-search-hit-navigation">
+                      <button
+                        type="button"
+                        onClick={() => setActiveHitIndex((current) => (
+                          current - 1 + preview.sections.length
+                        ) % preview.sections.length)}
+                        aria-label={t("fileSpace.globalSearch.previousMatch")}
+                      >
+                        <ChevronUp size={15} />
+                      </button>
+                      <span>{t("fileSpace.globalSearch.matchPosition", {
+                        current: activeHitIndex + 1,
+                        count: preview.sections.length,
+                      })}</span>
+                      <button
+                        type="button"
+                        onClick={() => setActiveHitIndex((current) => (
+                          current + 1
+                        ) % preview.sections.length)}
+                        aria-label={t("fileSpace.globalSearch.nextMatch")}
+                      >
+                        <ChevronDown size={15} />
+                      </button>
+                    </div>
+                  ) : null}
+                  {activeFile ? (
+                    <button className="file-space-global-search-open-file" type="button" onClick={() => openFile(activeFile)}>
+                      <ExternalLink size={14} />
+                      {t("fileSpace.globalSearch.openFile")}
+                    </button>
+                  ) : null}
+                </header>
+                <div className="file-space-global-search-preview-body">
+                  {previewLoading ? (
+                    <div className="file-space-global-search-preview-state" role="status">
+                      <LoaderCircle className="is-spinning" size={20} />
+                      <span>{t("fileSpace.globalSearch.loadingPreview")}</span>
+                    </div>
+                  ) : previewFailed ? (
+                    <div className="file-space-global-search-preview-state" role="alert">
+                      <span>{t("fileSpace.globalSearch.previewError")}</span>
+                    </div>
+                  ) : activeSection ? (
+                    <article className="file-space-global-search-preview-document">
+                      <div className="file-space-global-search-preview-location">
+                        {activeSection.pageNumber
+                          ? t("fileSpace.globalSearch.pageLocation", { page: activeSection.pageNumber })
+                          : activeSection.lineNumber
+                            ? t("fileSpace.globalSearch.lineLocation", { line: activeSection.lineNumber })
+                            : activeMatch?.contentMatch
+                              ? t("fileSpace.globalSearch.contentLocation")
+                              : t("fileSpace.globalSearch.semanticLocation")}
+                      </div>
+                      <p>
+                        <HighlightedText
+                          text={activeSection.text}
+                          query={query}
+                          enabled={Boolean(activeMatch?.contentMatch)}
+                        />
+                      </p>
+                      {preview?.truncated ? (
+                        <small>{t("fileSpace.globalSearch.moreMatches", { count: preview.matchCount })}</small>
+                      ) : null}
+                    </article>
+                  ) : (
+                    <div className="file-space-global-search-preview-state">
+                      <span>{t("fileSpace.globalSearch.previewUnavailable")}</span>
+                    </div>
+                  )}
+                </div>
+              </section>
+            </div>
           )}
         </div>
 

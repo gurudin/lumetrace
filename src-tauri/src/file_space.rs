@@ -50,6 +50,11 @@ const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
 const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
 const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v1";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
+const SEARCH_RESULT_SNIPPET_TOKENS: i64 = 42;
+const SEARCH_PREVIEW_CONTEXT_BEFORE: usize = 140;
+const SEARCH_PREVIEW_CONTEXT_AFTER: usize = 260;
+const SEARCH_PREVIEW_SECTION_LIMIT: usize = 50;
+const SEARCH_PREVIEW_MATCH_LIMIT: usize = 2_000;
 static FILE_SPACE_OPERATION_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 static FILE_SPACE_IMPORT_CANCELLATIONS: OnceLock<Mutex<HashSet<String>>> = OnceLock::new();
 static FILE_SPACE_SEARCH_GENERATION: AtomicU64 = AtomicU64::new(0);
@@ -288,12 +293,41 @@ pub struct FileSpaceSearchRequest {
     pub scopes: Vec<String>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSpaceSearchPreviewRequest {
+    pub file_id: String,
+    pub query: String,
+    #[serde(default)]
+    pub scopes: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSpaceSearchPreviewSection {
+    pub text: String,
+    pub line_number: Option<usize>,
+    pub page_number: Option<usize>,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct FileSpaceSearchPreview {
+    pub file_id: String,
+    pub sections: Vec<FileSpaceSearchPreviewSection>,
+    pub match_count: usize,
+    pub truncated: bool,
+    pub extraction_status: String,
+}
+
 #[derive(Debug, Clone, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct FileSpaceSearchMatch {
     pub file_id: String,
     pub lexical_match: bool,
     pub semantic_similarity: Option<f32>,
+    pub content_match: bool,
+    pub snippet: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
@@ -10778,6 +10812,178 @@ fn fts_term(value: &str) -> String {
     format!("\"{}\"*", value.replace('"', "\"\""))
 }
 
+fn normalized_search_terms(query: &str) -> Vec<Vec<char>> {
+    let mut seen = HashSet::new();
+    query
+        .split_whitespace()
+        .filter_map(|value| {
+            let folded = value
+                .chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>();
+            if folded.is_empty() || !seen.insert(folded.clone()) {
+                None
+            } else {
+                Some(folded.chars().collect())
+            }
+        })
+        .take(16)
+        .collect()
+}
+
+fn search_text_occurrences(text: &[char], terms: &[Vec<char>]) -> (Vec<(usize, usize)>, bool) {
+    let mut folded = Vec::with_capacity(text.len());
+    let mut source_indexes = Vec::with_capacity(text.len());
+    for (source_index, character) in text.iter().enumerate() {
+        for folded_character in character.to_lowercase() {
+            folded.push(folded_character);
+            source_indexes.push(source_index);
+        }
+    }
+    let mut occurrences = Vec::new();
+    let mut truncated = false;
+    'terms: for term in terms {
+        if term.is_empty() || term.len() > folded.len() {
+            continue;
+        }
+        for start in 0..=folded.len() - term.len() {
+            if folded[start..start + term.len()] != term[..] {
+                continue;
+            }
+            occurrences.push((
+                source_indexes[start],
+                source_indexes[start + term.len() - 1] + 1,
+            ));
+            if occurrences.len() >= SEARCH_PREVIEW_MATCH_LIMIT {
+                truncated = true;
+                break 'terms;
+            }
+        }
+    }
+    occurrences.sort_unstable();
+    occurrences.dedup();
+    (occurrences, truncated)
+}
+
+fn page_markers(text: &[char]) -> Vec<(usize, usize)> {
+    const PREFIX: &[char] = &['[', 'P', 'a', 'g', 'e', ' '];
+    let mut markers = Vec::new();
+    let mut index = 0;
+    while index + PREFIX.len() < text.len() {
+        if text[index..].starts_with(PREFIX) {
+            let mut cursor = index + PREFIX.len();
+            let start = cursor;
+            while cursor < text.len() && text[cursor].is_ascii_digit() {
+                cursor += 1;
+            }
+            if cursor > start && cursor < text.len() && text[cursor] == ']' {
+                let number = text[start..cursor]
+                    .iter()
+                    .collect::<String>()
+                    .parse::<usize>();
+                if let Ok(number) = number {
+                    markers.push((index, number));
+                }
+            }
+        }
+        index += 1;
+    }
+    markers
+}
+
+fn search_preview_record(
+    database: &Database,
+    request: &FileSpaceSearchPreviewRequest,
+) -> Result<FileSpaceSearchPreview, String> {
+    let query = request.query.trim();
+    if query.is_empty() || query.chars().count() > 512 || request.file_id.chars().count() > 2_048 {
+        return Err("Invalid File Space search preview request".to_owned());
+    }
+    let (file_name, body_text, extraction_status) = database
+        .0
+        .lock()
+        .map_err(|_| "Unable to access Lume Trace database".to_owned())?
+        .query_row(
+            "SELECT documents.file_name, documents.body_text, documents.extraction_status
+             FROM file_space_search_documents documents
+             JOIN files ON files.id = documents.file_id
+             WHERE documents.file_id = ?1
+               AND files.trashed_at IS NULL
+               AND files.storage_path IS NOT NULL",
+            [&request.file_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, String>(2)?,
+                ))
+            },
+        )
+        .optional()
+        .map_err(|error| format!("Unable to read File Space search preview: {error}"))?
+        .ok_or_else(|| "File Space search preview is unavailable".to_owned())?;
+    if !request.scopes.is_empty() && !request.scopes.iter().any(|scope| scope == "content") {
+        return Ok(FileSpaceSearchPreview {
+            file_id: request.file_id.clone(),
+            sections: Vec::new(),
+            match_count: 0,
+            truncated: false,
+            extraction_status,
+        });
+    }
+    let terms = normalized_search_terms(query);
+    let characters = body_text.chars().collect::<Vec<_>>();
+    let (occurrences, truncated) = search_text_occurrences(&characters, &terms);
+    let newline_indexes = characters
+        .iter()
+        .enumerate()
+        .filter_map(|(index, character)| (*character == '\n').then_some(index))
+        .collect::<Vec<_>>();
+    let extension = file_name
+        .rsplit_once('.')
+        .map(|(_, extension)| extension.to_ascii_lowercase())
+        .unwrap_or_default();
+    let markers = (extension == "pdf").then(|| page_markers(&characters));
+    let sections = occurrences
+        .iter()
+        .take(SEARCH_PREVIEW_SECTION_LIMIT)
+        .map(|(match_start, match_end)| {
+            let start = match_start.saturating_sub(SEARCH_PREVIEW_CONTEXT_BEFORE);
+            let end = (*match_end + SEARCH_PREVIEW_CONTEXT_AFTER).min(characters.len());
+            let text = characters[start..end]
+                .iter()
+                .collect::<String>()
+                .trim()
+                .to_owned();
+            let page_number = markers.as_ref().and_then(|values| {
+                let marker_index = values.partition_point(|(position, _)| position <= match_start);
+                marker_index.checked_sub(1).map(|index| values[index].1)
+            });
+            let line_number = matches!(extension.as_str(), "md" | "markdown" | "txt")
+                .then(|| newline_indexes.partition_point(|position| position < match_start) + 1);
+            FileSpaceSearchPreviewSection {
+                text,
+                line_number,
+                page_number,
+            }
+        })
+        .collect();
+    Ok(FileSpaceSearchPreview {
+        file_id: request.file_id.clone(),
+        sections,
+        match_count: occurrences.len(),
+        truncated: truncated || occurrences.len() > SEARCH_PREVIEW_SECTION_LIMIT,
+        extraction_status,
+    })
+}
+
+pub(crate) fn search_file_space_preview(
+    database: &Database,
+    request: &FileSpaceSearchPreviewRequest,
+) -> Result<FileSpaceSearchPreview, String> {
+    search_preview_record(database, request)
+}
+
 fn search_file_space_matches_with_generation(
     database: &Database,
     semantic_runtime: Option<&crate::semantic_search::SemanticSearchRuntime>,
@@ -10811,6 +11017,7 @@ fn search_file_space_matches_with_generation(
         .collect::<Vec<_>>();
     let mut matches = HashSet::new();
     let mut lexical = Vec::new();
+    let mut content_snippets = HashMap::new();
     let connection = database
         .0
         .lock()
@@ -10838,6 +11045,39 @@ fn search_file_space_matches_with_generation(
             for file_id in rows.flatten() {
                 if matches.insert(file_id.clone()) {
                     lexical.push(file_id);
+                }
+            }
+        }
+
+        if fts_scopes.contains(&"body_text") {
+            let body_expression = format!("body_text : ({})", terms.join(" AND "));
+            let mut statement = connection
+                .prepare(
+                    "SELECT documents.file_id,
+                            snippet(file_space_search_fts, 1, '', '', ' … ', ?2)
+                     FROM file_space_search_fts
+                     JOIN file_space_search_documents documents
+                       ON documents.rowid = file_space_search_fts.rowid
+                     JOIN files ON files.id = documents.file_id
+                     WHERE file_space_search_fts MATCH ?1
+                       AND files.trashed_at IS NULL
+                       AND files.storage_path IS NOT NULL
+                     ORDER BY bm25(file_space_search_fts, 8.0, 1.0, 3.0, 1.0, 1.0)
+                     LIMIT 200",
+                )
+                .map_err(|error| {
+                    format!("Unable to prepare File Space search excerpts: {error}")
+                })?;
+            let rows = statement.query_map(
+                params![body_expression, SEARCH_RESULT_SNIPPET_TOKENS],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            );
+            if let Ok(rows) = rows {
+                for (file_id, snippet) in rows.flatten() {
+                    let snippet = snippet.trim();
+                    if !snippet.is_empty() {
+                        content_snippets.insert(file_id, snippet.to_owned());
+                    }
                 }
             }
         }
@@ -10888,6 +11128,8 @@ fn search_file_space_matches_with_generation(
         crate::semantic_search::merge_hybrid_matches(lexical, semantic)
             .into_iter()
             .map(|result| FileSpaceSearchMatch {
+                content_match: content_snippets.contains_key(&result.file_id),
+                snippet: content_snippets.get(&result.file_id).cloned(),
                 file_id: result.file_id,
                 lexical_match: result.lexical_match,
                 semantic_similarity: result.semantic_similarity,
@@ -11115,6 +11357,20 @@ pub async fn search_file_space_files<R: tauri::Runtime>(
     })
     .await
     .map_err(|error| format!("Unable to search File Space: {error}"))?
+}
+
+#[tauri::command]
+pub async fn get_file_space_search_preview<R: tauri::Runtime>(
+    request: FileSpaceSearchPreviewRequest,
+    app: tauri::AppHandle<R>,
+) -> Result<FileSpaceSearchPreview, String> {
+    let worker_app = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let database = worker_app.state::<Database>();
+        search_file_space_preview(database.inner(), &request)
+    })
+    .await
+    .map_err(|error| format!("Unable to load File Space search preview: {error}"))?
 }
 
 #[tauri::command]
@@ -12991,6 +13247,56 @@ mod tests {
         .unwrap();
 
         assert_eq!(matches, vec![file_id]);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn search_returns_safe_excerpt_and_bounded_match_locations() {
+        let (root, _storage, versions, database) = test_workspace("search-preview");
+        let source = root.join("release-notes.md");
+        fs::write(
+            &source,
+            "Release notes\nFirst milestone is ready.\nDetails\nSecond MILESTONE ships next.",
+        )
+        .unwrap();
+        let imported =
+            import_files_record(&database, None, &[source.to_string_lossy().into_owned()]).unwrap();
+        capture_initial_user_versions(&database, &versions).unwrap();
+        assert!(process_next_content_extraction(&database).unwrap());
+        let file_id = imported.files[0].id.clone();
+        let matches = search_file_space_matches(
+            &database,
+            None,
+            &FileSpaceSearchRequest {
+                query: "milestone".to_owned(),
+                scopes: vec!["content".to_owned()],
+            },
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert!(matches[0].content_match);
+        assert!(matches[0]
+            .snippet
+            .as_deref()
+            .is_some_and(|snippet| snippet.to_lowercase().contains("milestone")));
+
+        let preview = search_preview_record(
+            &database,
+            &FileSpaceSearchPreviewRequest {
+                file_id,
+                query: "milestone".to_owned(),
+                scopes: vec!["content".to_owned()],
+            },
+        )
+        .unwrap();
+        assert_eq!(preview.match_count, 2);
+        assert_eq!(preview.sections.len(), 2);
+        assert_eq!(preview.sections[0].line_number, Some(2));
+        assert_eq!(preview.sections[1].line_number, Some(4));
+        assert!(preview
+            .sections
+            .iter()
+            .all(|section| section.page_number.is_none()));
         fs::remove_dir_all(root).unwrap();
     }
 

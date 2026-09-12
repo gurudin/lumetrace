@@ -6,7 +6,8 @@ pub const MODEL_ID: &str = SEMANTIC_MODEL_ID;
 use super::*;
 use crate::content_extractor::{self, ContentExtraction, ExtractionStatus};
 pub use crate::file_space::{
-    FileSpaceSearchMatch as SearchMatch, FileSpaceSearchRequest as SearchRequest,
+    FileSpaceSearchMatch as SearchMatch, FileSpaceSearchPreview as SearchPreview,
+    FileSpaceSearchPreviewRequest as SearchPreviewRequest, FileSpaceSearchRequest as SearchRequest,
 };
 
 #[derive(Clone, Debug)]
@@ -494,11 +495,19 @@ impl Workspace {
         if request.query.chars().count() > 512 || request.scopes.len() > 8 {
             return Err("Search query is too long".into());
         }
-        let lexical = crate::file_space::search_file_space_matches(&self.database, None, request)?
+        let lexical_matches =
+            crate::file_space::search_file_space_matches(&self.database, None, request)?;
+        let lexical_by_id = lexical_matches
+            .iter()
+            .cloned()
+            .map(|value| (value.file_id.clone(), value))
+            .collect::<HashMap<_, _>>();
+        let lexical = lexical_matches
             .into_iter()
-            .map(|v| v.file_id)
+            .map(|value| value.file_id)
             .collect();
         let mut scores = HashMap::<String, f32>::new();
+        let mut semantic_snippets = HashMap::<String, String>::new();
         if self.installed()
             && !request.query.trim().is_empty()
             && (request.scopes.is_empty() || request.scopes.iter().any(|s| s == "content"))
@@ -512,10 +521,17 @@ impl Workspace {
                 for (chunk, score) in
                     dense_ai_context_chunks_for_vector(&self.database, &self.runtime, &vector)?
                 {
+                    let file_id = chunk.file_id.clone();
+                    let replace_snippet = scores
+                        .get(&file_id)
+                        .is_none_or(|existing_score| score > *existing_score);
                     scores
-                        .entry(chunk.file_id)
-                        .and_modify(|s| *s = s.max(score))
+                        .entry(file_id.clone())
+                        .and_modify(|existing_score| *existing_score = existing_score.max(score))
                         .or_insert(score);
+                    if replace_snippet {
+                        semantic_snippets.insert(file_id, chunk.body_text.trim().to_owned());
+                    }
                 }
             }
         }
@@ -523,11 +539,22 @@ impl Workspace {
         semantic.sort_by(|a, b| b.1.total_cmp(&a.1).then(a.0.cmp(&b.0)));
         Ok(merge_hybrid_matches(lexical, semantic)
             .into_iter()
-            .map(|v| SearchMatch {
-                file_id: v.file_id,
-                lexical_match: v.lexical_match,
-                semantic_similarity: v.semantic_similarity,
+            .map(|value| {
+                let lexical_match = lexical_by_id.get(&value.file_id);
+                SearchMatch {
+                    content_match: lexical_match.is_some_and(|entry| entry.content_match),
+                    snippet: lexical_match
+                        .and_then(|entry| entry.snippet.clone())
+                        .or_else(|| semantic_snippets.get(&value.file_id).cloned()),
+                    file_id: value.file_id,
+                    lexical_match: value.lexical_match,
+                    semantic_similarity: value.semantic_similarity,
+                }
             })
             .collect())
+    }
+
+    pub fn preview(&self, request: &SearchPreviewRequest) -> Result<SearchPreview, String> {
+        crate::file_space::search_file_space_preview(&self.database, request)
     }
 }
