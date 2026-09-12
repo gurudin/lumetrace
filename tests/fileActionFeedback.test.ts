@@ -12,6 +12,9 @@ test("system opening remains mounted for capable external workspaces", () => {
   assert.match(bridge, /if \(pendingFileRef.current === target.fileId\) return/);
   assert.match(bridge, /finally \{\s+if \(pendingFileRef.current === target.fileId\)/);
   assert.match(bridge, /\[closeNotice, copy.desktopOnly, invoke\]/);
+  assert.match(bridge, /listen<ExternalDocumentEditEvent>\("file-space-external-edit-state"/);
+  assert.match(bridge, /payload.state === "saved"/);
+  assert.match(bridge, /payload.reason === "conflict"/);
 });
 
 test("notification feedback covers lookup and history read with a synchronous duplicate guard", () => {

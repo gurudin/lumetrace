@@ -1,6 +1,7 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
 import { isTauri } from "@tauri-apps/api/core";
-import { AlertTriangle, LoaderCircle, X } from "lucide-react";
+import { listen } from "@tauri-apps/api/event";
+import { AlertTriangle, Check, LoaderCircle, X } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
@@ -10,7 +11,14 @@ import "./external-document-open-bridge.css";
 interface ExternalDocumentRequest {
   fileId: string;
   name: string;
-  action: "open" | "reveal";
+  action: "open" | "reveal" | "save";
+}
+
+interface ExternalDocumentEditEvent {
+  fileId: string;
+  name: string;
+  state: "saving" | "saved" | "failed";
+  reason?: "conflict" | "missing" | "unavailable";
 }
 
 function errorText(error: unknown) {
@@ -56,6 +64,12 @@ export function ExternalDocumentOpenBridge() {
     failed: (name: string) => t("fileSpace.externalDocument.failed", { name }),
     choose: t("fileSpace.externalDocument.choose"),
     choosing: t("fileSpace.externalDocument.choosing"),
+    saving: (name: string) => t("fileSpace.externalDocument.saving", { name }),
+    saved: (name: string) => t("fileSpace.externalDocument.saved", { name }),
+    saveFailed: (name: string) => t("fileSpace.externalDocument.saveFailed", { name }),
+    saveConflict: t("fileSpace.externalDocument.saveConflict"),
+    saveMissing: t("fileSpace.externalDocument.saveMissing"),
+    saveUnavailable: t("fileSpace.externalDocument.saveUnavailable"),
     dismiss: t("fileSpace.externalDocument.dismiss"),
     desktopOnly: t("fileSpace.externalDocument.desktopOnly"),
   };
@@ -64,6 +78,7 @@ export function ExternalDocumentOpenBridge() {
   const [error, setError] = useState<string | null>(null);
   const [canChooseApplication, setCanChooseApplication] = useState(false);
   const [choosing, setChoosing] = useState(false);
+  const [completed, setCompleted] = useState(false);
   const clearRequestTimerRef = useRef<number | null>(null);
   const operationRef = useRef(0);
   const pendingFileRef = useRef<string | null>(null);
@@ -84,6 +99,7 @@ export function ExternalDocumentOpenBridge() {
     setChoosing(false);
     setError(null);
     setCanChooseApplication(false);
+    setCompleted(false);
     closeNotice();
     window.setTimeout(() => returnFocusRef.current?.focus(), 220);
   }, [closeNotice]);
@@ -102,6 +118,7 @@ export function ExternalDocumentOpenBridge() {
     setError(null);
     setCanChooseApplication(false);
     setChoosing(false);
+    setCompleted(false);
     try {
       if (!isTauri()) throw new Error(copy.desktopOnly);
       await invoke(target.action === "open" ? "open_file_space_file" : "reveal_file_space_file", { fileId: target.fileId });
@@ -160,6 +177,41 @@ export function ExternalDocumentOpenBridge() {
   }, [openDocument]);
 
   useEffect(() => {
+    if (!isTauri()) return undefined;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    void listen<ExternalDocumentEditEvent>("file-space-external-edit-state", ({ payload }) => {
+      if (disposed || !payload?.fileId || !payload.name) return;
+      operationRef.current += 1;
+      returnFocusRef.current = null;
+      if (clearRequestTimerRef.current !== null) window.clearTimeout(clearRequestTimerRef.current);
+      clearRequestTimerRef.current = null;
+      setRequest({ fileId: payload.fileId, name: payload.name, action: "save" });
+      setCanChooseApplication(false);
+      setChoosing(false);
+      setCompleted(payload.state === "saved");
+      setError(payload.state === "failed"
+        ? payload.reason === "conflict"
+          ? copy.saveConflict
+          : payload.reason === "missing"
+            ? copy.saveMissing
+            : copy.saveUnavailable
+        : null);
+      setOpen(true);
+      if (payload.state === "saved") {
+        clearRequestTimerRef.current = window.setTimeout(closeNotice, 1800);
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else stop = unlisten;
+    });
+    return () => {
+      disposed = true;
+      stop?.();
+    };
+  }, [closeNotice, copy.saveConflict, copy.saveMissing, copy.saveUnavailable]);
+
+  useEffect(() => {
     if (!request) return undefined;
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "Escape") return;
@@ -180,16 +232,24 @@ export function ExternalDocumentOpenBridge() {
       aria-live={error ? "assertive" : "polite"}
     >
       <span className="external-document-notice-icon" aria-hidden="true">
-        {error ? <AlertTriangle size={17} /> : <LoaderCircle className="is-spinning" size={17} />}
+        {error
+          ? <AlertTriangle size={17} />
+          : completed
+            ? <Check size={17} />
+            : <LoaderCircle className="is-spinning" size={17} />}
       </span>
       <span className="external-document-notice-copy">
         <strong>{error
-          ? copy.failed(request.name)
+          ? request.action === "save" ? copy.saveFailed(request.name) : copy.failed(request.name)
+          : completed
+            ? copy.saved(request.name)
           : choosing
             ? copy.choosing
             : request.action === "open"
               ? copy.opening(request.name)
-              : copy.revealing(request.name)}</strong>
+              : request.action === "save"
+                ? copy.saving(request.name)
+                : copy.revealing(request.name)}</strong>
         {error ? <small>{error}</small> : null}
       </span>
       {error && canChooseApplication ? (

@@ -1412,6 +1412,7 @@ export function FileSpacePage() {
   const measuredFileLayoutRef = useRef<JustifiedFileLayout | null>(null);
   const fileVirtualViewportFrameRef = useRef<number | null>(null);
   const fileRevealNavigationRef = useRef(new FileRevealNavigation<FileSpaceSearchFile>());
+  const deferFilePaginationUntilInteractionRef = useRef(false);
   const aiSourceNavigationSequenceRef = useRef(0);
   const importRequestRef = useRef<string | null>(null);
   const autoTrashCleanupRetryAtRef = useRef(0);
@@ -1747,6 +1748,7 @@ export function FileSpacePage() {
   };
 
   const revealFileInWorkspace = (file: FileSpaceSearchFile, openAfterReveal = false) => {
+    deferFilePaginationUntilInteractionRef.current = false;
     fileRevealNavigationRef.current.start(file, openAfterReveal, !isTauri());
     setGlobalSearchOpen(false);
     setActiveCollection("files");
@@ -2888,7 +2890,9 @@ export function FileSpacePage() {
         ? current
         : { top, bottom }
     ));
-    if (scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= fileVirtualOverscan * 1.5) {
+    if (!fileRevealNavigationRef.current.pending
+      && !deferFilePaginationUntilInteractionRef.current
+      && scroll.scrollHeight - scroll.scrollTop - scroll.clientHeight <= fileVirtualOverscan * 1.5) {
       loadMoreFilePage();
     }
   }, [loadMoreFilePage]);
@@ -2945,7 +2949,7 @@ export function FileSpacePage() {
     const cardButton = grid.querySelector<HTMLButtonElement>(
       `.file-space-file-card[data-file-id="${CSS.escape(revealFile.id)}"] > button:first-child`,
     );
-    navigation.completeWithTarget(
+    const completed = navigation.completeWithTarget(
       request,
       cardButton,
       (button) => button.focus({ preventScroll: true }),
@@ -2958,6 +2962,7 @@ export function FileSpacePage() {
         }));
       },
     );
+    if (completed) deferFilePaginationUntilInteractionRef.current = true;
   }, [currentFolderId, fileJustifiedLayout, fileRevealRevision, renderedFiles, updateFileVirtualViewport]);
 
   useEffect(() => {
@@ -3469,6 +3474,7 @@ export function FileSpacePage() {
         format: createFileFormat,
       });
       if (!canCommitOperation(operation)) return;
+      deferFilePaginationUntilInteractionRef.current = false;
       fileRevealNavigationRef.current.start(result.file);
       setSnapshot(result.snapshot);
       setFilePageTotal(result.snapshot.fileCount);
@@ -6001,12 +6007,19 @@ export function FileSpacePage() {
           ref={contentDropZoneRef}
           tabIndex={-1}
           aria-busy={busyAction === "import"}
-          onKeyDown={handleFileGridKeyDown}
+          onKeyDown={(event) => {
+            deferFilePaginationUntilInteractionRef.current = false;
+            handleFileGridKeyDown(event);
+          }}
           onDragEnter={handleExternalDragEnter}
           onDragOver={handleExternalDragOver}
           onDragLeave={handleExternalDragLeave}
           onDrop={handleExternalDrop}
-          onPointerDown={beginMarqueeSelection}
+          onPointerDown={(event) => {
+            deferFilePaginationUntilInteractionRef.current = false;
+            beginMarqueeSelection(event);
+          }}
+          onWheelCapture={() => { deferFilePaginationUntilInteractionRef.current = false; }}
           onPointerMove={continueMarqueeSelection}
           onPointerUp={(event) => finishMarqueeSelection(event.pointerId)}
           onPointerCancel={(event) => finishMarqueeSelection(event.pointerId, true)}
