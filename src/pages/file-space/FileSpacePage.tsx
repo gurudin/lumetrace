@@ -1347,6 +1347,8 @@ export function FileSpacePage() {
   const [importConflictFeedback, setImportConflictFeedback] = useState<IdenticalImportNotice | null>(null);
   const [versionNotifications, setVersionNotifications] = useState<FileSpaceVersionNotification[]>([]);
   const versionNotification = versionNotifications[0] ?? null;
+  const [openingNotificationId, setOpeningNotificationId] = useState<string | null>(null);
+  const openingNotificationRef = useRef<string | null>(null);
   const [firstVersionNotificationId, setFirstVersionNotificationId] = useState<string | null>(null);
   const [restoreConfirmationEntryId, setRestoreConfirmationEntryId] = useState<string | null>(null);
   const [isEmptyTrashConfirmationOpen, setEmptyTrashConfirmationOpen] = useState(false);
@@ -3125,26 +3127,33 @@ export function FileSpacePage() {
   };
 
   const viewVersionNotification = async (notification = versionNotifications[0]) => {
-    if (!notification) return;
-    let file = snapshot.files.find((candidate) => candidate.id === notification.fileId);
-    if (!file && isTauri()) {
-      try {
-        const page = await invoke<FileSpaceFilePage>("list_file_space_files", {
-          request: { folderId: null, sort: "updatedDesc", typeFilter: "all", tagFilter: null,
-            updatedAfter: null, matchIds: [notification.fileId], cursor: null, limit: 1 },
-        });
-        [file] = page.files;
-      } catch {
-        file = undefined;
+    if (!notification || openingNotificationRef.current) return;
+    openingNotificationRef.current = notification.versionId;
+    setOpeningNotificationId(notification.versionId);
+    try {
+      let file = snapshot.files.find((candidate) => candidate.id === notification.fileId);
+      if (!file && isTauri()) {
+        try {
+          const page = await invoke<FileSpaceFilePage>("list_file_space_files", {
+            request: { folderId: null, sort: "updatedDesc", typeFilter: "all", tagFilter: null,
+              updatedAfter: null, matchIds: [notification.fileId], cursor: null, limit: 1 },
+          });
+          [file] = page.files;
+        } catch {
+          file = undefined;
+        }
       }
-    }
-    if (!file) {
-      setError(t("fileSpace.versionNotification.unavailable"));
-      return;
-    }
-    revealFileInWorkspace(file);
-    if (await openTimeline(file, notification.versionId)) {
-      setVersionNotifications((current) => current.filter((item) => item.versionId !== notification.versionId));
+      if (!file) {
+        setError(t("fileSpace.versionNotification.unavailable"));
+        return;
+      }
+      revealFileInWorkspace(file);
+      if (await openTimeline(file, notification.versionId)) {
+        setVersionNotifications((current) => current.filter((item) => item.versionId !== notification.versionId));
+      }
+    } finally {
+      openingNotificationRef.current = null;
+      if (lifecycleRef.current.mounted) setOpeningNotificationId(null);
     }
   };
 
@@ -6382,11 +6391,13 @@ export function FileSpacePage() {
               })}</p>
             </div>
             <div className="file-space-version-notification-actions">
-              <button type="button" onClick={dismissVersionNotification}>
+              <button type="button" disabled={openingNotificationId !== null} onClick={dismissVersionNotification}>
                 {t("fileSpace.versionNotification.acknowledge")}
               </button>
-              <button className="is-primary" type="button" onClick={() => void viewVersionNotification()}>
-                {t("fileSpace.versionNotification.viewChanges")}
+              <button className="is-primary" type="button" disabled={openingNotificationId !== null}
+                aria-busy={openingNotificationId === versionNotification.versionId} onClick={() => void viewVersionNotification()}>
+                {openingNotificationId === versionNotification.versionId ? <LoaderCircle size={14} className="is-spinning" aria-hidden="true" /> : null}
+                {t(openingNotificationId === versionNotification.versionId ? "fileSpace.timeline.loading" : "fileSpace.versionNotification.viewChanges")}
               </button>
             </div>
           </div>

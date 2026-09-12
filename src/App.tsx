@@ -17,7 +17,7 @@ function WorkspaceView() {
   if (workspace?.initializing) return <section className="file-space-page file-space-page--loading" aria-busy="true"><div className="file-space-loading-state" role="status">LumeTrace</div></section>;
   return <Fragment key={`${workspace?.selectionKey ?? "local"}:${workspace?.source?.key ?? "native"}`}>
     {workspace?.source?.capabilities?.content !== false ? <><PdfPreviewOverlay /><ImagePreviewOverlay /><MarkdownPreviewOverlay /><TextPreviewOverlay /></> : null}
-    {!workspace?.active ? <ExternalDocumentOpenBridge /> : null}
+    {workspace?.source?.capabilities?.content !== false ? <ExternalDocumentOpenBridge /> : null}
     <FileSpacePage />
   </Fragment>;
 }

@@ -66,6 +66,7 @@ export function ExternalDocumentOpenBridge() {
   const [choosing, setChoosing] = useState(false);
   const clearRequestTimerRef = useRef<number | null>(null);
   const operationRef = useRef(0);
+  const pendingFileRef = useRef<string | null>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const presence = usePresence(open);
 
@@ -88,6 +89,8 @@ export function ExternalDocumentOpenBridge() {
   }, [closeNotice]);
 
   const openDocument = useCallback(async (target: ExternalDocumentRequest) => {
+    if (pendingFileRef.current === target.fileId) return;
+    pendingFileRef.current = target.fileId;
     const operation = operationRef.current + 1;
     operationRef.current = operation;
     if (clearRequestTimerRef.current !== null) {
@@ -109,8 +112,10 @@ export function ExternalDocumentOpenBridge() {
       const failure = openFailure(openError);
       setError(failure.message);
       setCanChooseApplication(target.action === "open" && failure.canChooseApplication);
+    } finally {
+      if (pendingFileRef.current === target.fileId) pendingFileRef.current = null;
     }
-  }, [closeNotice, copy.desktopOnly]);
+  }, [closeNotice, copy.desktopOnly, invoke]);
 
   const chooseApplication = useCallback(async () => {
     if (!request || choosing) return;
@@ -134,7 +139,7 @@ export function ExternalDocumentOpenBridge() {
       setError(errorText(chooseError));
       setCanChooseApplication(true);
     }
-  }, [choosing, closeNotice, copy, error, request]);
+  }, [choosing, closeNotice, copy, error, request, invoke]);
 
   useEffect(() => {
     const handleDoubleClick = (event: MouseEvent) => {
