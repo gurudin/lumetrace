@@ -10,6 +10,7 @@ use crate::{
     database::{self, Database},
     file_space::lock_file_space_operations,
     semantic_search::{retrieve_ai_context_chunks, AiContextChunk, SemanticSearchRuntime},
+    version_comparison,
 };
 use rusqlite::{params, OptionalExtension};
 use serde::{Deserialize, Serialize};
@@ -1596,9 +1597,12 @@ fn history_before_retry(
     history
 }
 
-fn ask_file_space_ai_blocking(
-    app: tauri::AppHandle,
-    location: database::DatabaseLocation,
+fn ask_file_space_ai_with_databases(
+    app: &tauri::AppHandle,
+    settings_database: &Database,
+    workspace_database: &Database,
+    semantic_runtime: &SemanticSearchRuntime,
+    version_provider: Option<&dyn isolated::VersionContentProvider>,
     question: String,
     retry_turn_id: Option<String>,
     request_id: String,
@@ -1606,16 +1610,7 @@ fn ask_file_space_ai_blocking(
 ) -> Result<FileSpaceAiTurn, String> {
     let question = validated_question(question)?;
     let request_id = validated_request_id(request_id)?;
-    let database = {
-        let _operation =
-            lock_file_space_operations().map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
-        database::open_workspace_database(
-            location.database_path,
-            location.artifact_store_path,
-            location.workspace_id,
-        )?
-    };
-    let executor = match load_active_ai_service_record(&database)? {
+    let executor = match load_active_ai_service_record(settings_database)? {
         Some(ActiveAiService::AgentCli(settings)) => {
             validate_agent_cli_settings(Some(&settings))?;
             let executable = resolve_agent_cli_executable(&settings.cli)
@@ -1627,14 +1622,40 @@ fn ask_file_space_ai_blocking(
         None => return Err(ERROR_SERVICE_NOT_CONFIGURED.to_owned()),
     };
     let history = history_before_retry(
-        load_ai_history_record(&database, HISTORY_RETURN_LIMIT)
+        load_ai_history_record(workspace_database, HISTORY_RETURN_LIMIT)
             .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?,
         retry_turn_id.as_deref(),
     );
-    let mut turn = begin_ai_turn_record(&database, &question, retry_turn_id.as_deref())
+    let mut turn = begin_ai_turn_record(workspace_database, &question, retry_turn_id.as_deref())
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())?;
-    let result = query::answer_question(
-        &database,
+    let mut external_versions = |file_id: &str,
+                                 relative_path: &str,
+                                 versions: &[version_comparison::SnapshotVersion],
+                                 cancelled: &AtomicBool|
+     -> Result<Vec<Vec<u8>>, version_comparison::ComparisonError> {
+        let provider = version_provider.ok_or(version_comparison::ComparisonError::Unavailable)?;
+        let requests = versions
+            .iter()
+            .map(|version| isolated::VersionContentRequest {
+                version_id: version.id.clone(),
+                expected_size: version.size.max(0) as u64,
+                expected_sha256: version.sha256.clone(),
+            })
+            .collect::<Vec<_>>();
+        provider
+            .read_versions(file_id, relative_path, &requests, cancelled)
+            .map_err(|_| {
+                if cancelled.load(Ordering::Acquire) {
+                    version_comparison::ComparisonError::Cancelled
+                } else {
+                    version_comparison::ComparisonError::Unavailable
+                }
+            })
+    };
+    let version_reader = version_provider
+        .map(|_| &mut external_versions as &mut version_comparison::SnapshotReader<'_>);
+    let result = query::answer_question_with_versions(
+        workspace_database,
         &question,
         &history,
         &cancellation,
@@ -1648,10 +1669,9 @@ fn ask_file_space_ai_blocking(
             // restrictive, not merely a ranking hint for unrelated files.
             let plan = build_retrieval_plan(query, &[]);
             let preferred = target.map(|f| vec![f.file_id.clone()]).unwrap_or_default();
-            let runtime = app.state::<SemanticSearchRuntime>();
             let chunks = retrieve_ai_context_chunks(
-                &database,
-                runtime.inner(),
+                workspace_database,
+                semantic_runtime,
                 &plan.query,
                 &plan.search_queries,
                 &preferred,
@@ -1663,17 +1683,49 @@ fn ask_file_space_ai_blocking(
                 .collect();
             Ok(prepare_sources(chunks))
         },
+        version_reader,
         &mut |phase| emit_file_space_ai_progress(&app, &request_id, phase, ""),
     );
     match result {
         Ok(result) => {
             turn.context = Some(result.context);
-            complete_ai_turn_record(&database, turn, result.answer, result.sources)
+            complete_ai_turn_record(workspace_database, turn, result.answer, result.sources)
                 .map_err(|_| ERROR_HISTORY_FAILED.to_owned())
         }
-        Err(error_code) => fail_ai_turn_record(&database, turn, &error_code)
+        Err(error_code) => fail_ai_turn_record(workspace_database, turn, &error_code)
             .map_err(|_| ERROR_HISTORY_FAILED.to_owned()),
     }
+}
+
+fn ask_file_space_ai_blocking(
+    app: tauri::AppHandle,
+    location: database::DatabaseLocation,
+    question: String,
+    retry_turn_id: Option<String>,
+    request_id: String,
+    cancellation: Arc<AtomicBool>,
+) -> Result<FileSpaceAiTurn, String> {
+    let database = {
+        let _operation =
+            lock_file_space_operations().map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
+        database::open_workspace_database(
+            location.database_path,
+            location.artifact_store_path,
+            location.workspace_id,
+        )?
+    };
+    let runtime = app.state::<SemanticSearchRuntime>();
+    ask_file_space_ai_with_databases(
+        &app,
+        &database,
+        &database,
+        runtime.inner(),
+        None,
+        question,
+        retry_turn_id,
+        request_id,
+        cancellation,
+    )
 }
 
 #[tauri::command]
@@ -1721,6 +1773,86 @@ pub fn get_file_space_ai_history(
 ) -> Result<Vec<FileSpaceAiTurn>, String> {
     load_ai_history_record(database.inner(), HISTORY_RETURN_LIMIT)
         .map_err(|_| ERROR_HISTORY_FAILED.to_owned())
+}
+
+/// Internal integration for caller-authorized isolated workspaces. The caller
+/// owns transport and authorization; this module reuses the configured local AI
+/// service, local conversation history, retrieval and version-query behavior.
+pub mod isolated {
+    use super::*;
+    use crate::semantic_search::isolated::Workspace;
+
+    pub use super::FileSpaceAiTurn as Turn;
+
+    #[derive(Clone, Debug, PartialEq, Eq)]
+    pub struct VersionContentRequest {
+        pub version_id: String,
+        pub expected_size: u64,
+        pub expected_sha256: String,
+    }
+
+    pub trait VersionContentProvider: Send + Sync {
+        fn read_versions(
+            &self,
+            file_id: &str,
+            relative_path: &str,
+            versions: &[VersionContentRequest],
+            cancelled: &AtomicBool,
+        ) -> Result<Vec<Vec<u8>>, String>;
+    }
+
+    pub async fn ask(
+        app: tauri::AppHandle,
+        workspace: Arc<Workspace>,
+        versions: Arc<dyn VersionContentProvider>,
+        question: String,
+        retry_turn_id: Option<String>,
+        request_id: String,
+    ) -> Result<Turn, String> {
+        let request_id = validated_request_id(request_id)?;
+        let settings = app.state::<Database>().location()?;
+        let cancellation = app.state::<FileSpaceAiRuntime>().register(&request_id)?;
+        let cleanup_app = app.clone();
+        let cleanup_request_id = request_id.clone();
+        tauri::async_runtime::spawn_blocking(move || {
+            let settings_database = {
+                let _operation =
+                    lock_file_space_operations().map_err(|_| ERROR_SEARCH_FAILED.to_owned())?;
+                database::open_workspace_database(
+                    settings.database_path,
+                    settings.artifact_store_path,
+                    settings.workspace_id,
+                )?
+            };
+            let result = ask_file_space_ai_with_databases(
+                &app,
+                &settings_database,
+                workspace.ai_database(),
+                workspace.ai_runtime(),
+                Some(versions.as_ref()),
+                question,
+                retry_turn_id,
+                request_id,
+                cancellation,
+            );
+            cleanup_app
+                .state::<FileSpaceAiRuntime>()
+                .finish(&cleanup_request_id);
+            result
+        })
+        .await
+        .map_err(|_| ERROR_HERMES_FAILED.to_owned())?
+    }
+
+    pub fn cancel(app: &tauri::AppHandle, request_id: String) -> Result<bool, String> {
+        app.state::<FileSpaceAiRuntime>()
+            .cancel(&validated_request_id(request_id)?)
+    }
+
+    pub fn history(workspace: &Workspace) -> Result<Vec<Turn>, String> {
+        load_ai_history_record(workspace.ai_database(), HISTORY_RETURN_LIMIT)
+            .map_err(|_| ERROR_HISTORY_FAILED.to_owned())
+    }
 }
 
 #[cfg(test)]

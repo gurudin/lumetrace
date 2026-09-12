@@ -54,11 +54,11 @@ pub(crate) struct SnapshotVersion {
     pub id: String,
     pub number: i64,
     #[serde(skip)]
-    path: String,
+    pub(crate) path: String,
     #[serde(skip)]
-    sha256: String,
+    pub(crate) sha256: String,
     #[serde(skip)]
-    size: i64,
+    pub(crate) size: i64,
 }
 
 #[derive(Debug, Serialize)]
@@ -350,11 +350,36 @@ fn text_diff(before: &str, after: &str, cancelled: &AtomicBool) -> Result<String
     Ok(output)
 }
 
-pub(crate) fn compare_versions(
+pub(crate) type SnapshotReader<'a> = dyn FnMut(&str, &str, &[SnapshotVersion], &AtomicBool) -> Result<Vec<Vec<u8>>, ComparisonError>
+    + 'a;
+
+fn decode_snapshot(
+    version: &SnapshotVersion,
+    bytes: Vec<u8>,
+    cancelled: &AtomicBool,
+) -> Result<String, ComparisonError> {
+    active(cancelled)?;
+    if bytes.len() != version.size as usize
+        || format!("{:x}", Sha256::digest(&bytes)) != version.sha256
+    {
+        return Err(ComparisonError::Unavailable);
+    }
+    let text = String::from_utf8(bytes).map_err(|_| ComparisonError::NotText)?;
+    if text
+        .chars()
+        .any(|c| c.is_control() && !matches!(c, '\n' | '\r' | '\t'))
+    {
+        return Err(ComparisonError::NotText);
+    }
+    Ok(text)
+}
+
+pub(crate) fn compare_versions_with_reader(
     database: &Database,
     file_id: &str,
     selection: &VersionSelection,
     cancelled: &AtomicBool,
+    mut reader: Option<&mut SnapshotReader<'_>>,
 ) -> Result<Vec<VersionDiff>, ComparisonError> {
     active(cancelled)?;
     let target = resolve_file_target(database, file_id)
@@ -372,11 +397,26 @@ pub(crate) fn compare_versions(
         return Err(ComparisonError::NotText);
     }
     let versions = load_versions(database, file_id, selection)?;
-    let mut previous = read_text(&versions[0], cancelled)?;
+    let mut texts = if let Some(reader) = reader.as_mut() {
+        let bodies = reader(file_id, &target.relative_path, &versions, cancelled)?;
+        if bodies.len() != versions.len() {
+            return Err(ComparisonError::Unavailable);
+        }
+        versions
+            .iter()
+            .zip(bodies)
+            .map(|(version, bytes)| decode_snapshot(version, bytes, cancelled))
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        versions
+            .iter()
+            .map(|version| read_text(version, cancelled))
+            .collect::<Result<Vec<_>, _>>()?
+    };
+    let mut previous = texts.remove(0);
     let mut result = Vec::new();
     let mut total = 0;
-    for pair in versions.windows(2) {
-        let current = read_text(&pair[1], cancelled)?;
+    for (pair, current) in versions.windows(2).zip(texts) {
         let diff = text_diff(&previous, &current, cancelled)?;
         total += diff.chars().count();
         if total > MAX_DIFF_CHARACTERS {
@@ -391,6 +431,15 @@ pub(crate) fn compare_versions(
     }
     active(cancelled)?;
     Ok(result)
+}
+
+pub(crate) fn compare_versions(
+    database: &Database,
+    file_id: &str,
+    selection: &VersionSelection,
+    cancelled: &AtomicBool,
+) -> Result<Vec<VersionDiff>, ComparisonError> {
+    compare_versions_with_reader(database, file_id, selection, cancelled, None)
 }
 
 /// Local-only backend operation. It neither writes chat history nor constructs
@@ -488,6 +537,61 @@ mod tests {
         .unwrap();
         assert_eq!(result.len(), 1);
         assert!(!result[0].diff.contains("version two"));
+    }
+
+    #[test]
+    fn caller_supplied_versions_are_batched_and_verified() {
+        let fixture = Fixture::new();
+        let cancelled = AtomicBool::new(false);
+        let mut calls = 0;
+        let mut reader =
+            |file_id: &str, relative_path: &str, versions: &[SnapshotVersion], _: &AtomicBool| {
+                calls += 1;
+                assert_eq!(file_id, "synthetic");
+                assert_eq!(relative_path, "synthetic.txt");
+                assert_eq!(
+                    versions
+                        .iter()
+                        .map(|version| version.id.as_str())
+                        .collect::<Vec<_>>(),
+                    vec!["v1", "v2", "v3"]
+                );
+                Ok(vec![
+                    b"version one".to_vec(),
+                    b"version two".to_vec(),
+                    b"version three".to_vec(),
+                ])
+            };
+        let result = compare_versions_with_reader(
+            &fixture.database,
+            "synthetic",
+            &VersionSelection::All,
+            &cancelled,
+            Some(&mut reader),
+        )
+        .unwrap();
+        assert_eq!(calls, 1);
+        assert_eq!(result.len(), 2);
+        assert!(result[0].diff.contains("+version two\n"));
+
+        let mut corrupted_reader = |_: &str, _: &str, _: &[SnapshotVersion], _: &AtomicBool| {
+            Ok(vec![
+                b"wrong".to_vec(),
+                b"version two".to_vec(),
+                b"version three".to_vec(),
+            ])
+        };
+        assert_eq!(
+            compare_versions_with_reader(
+                &fixture.database,
+                "synthetic",
+                &VersionSelection::All,
+                &cancelled,
+                Some(&mut corrupted_reader),
+            )
+            .unwrap_err(),
+            ComparisonError::Unavailable
+        );
     }
 
     #[test]

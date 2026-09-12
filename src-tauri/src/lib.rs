@@ -8,6 +8,7 @@ mod file_query;
 mod file_space;
 mod pdf_preview;
 mod semantic_search;
+pub use ai_qa::isolated as workspace_ai;
 pub use semantic_search::isolated as workspace_search;
 mod version_annotation;
 mod version_comparison;

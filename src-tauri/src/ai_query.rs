@@ -249,6 +249,7 @@ fn count_answer(language: &str, name: &str, count: i64, current: Option<i64>) ->
     }
 }
 
+#[cfg(test)]
 pub(super) fn answer_question(
     database: &Database,
     question: &str,
@@ -256,6 +257,21 @@ pub(super) fn answer_question(
     cancelled: &AtomicBool,
     generate: &mut dyn FnMut(&str) -> Result<String, String>,
     retrieve: &mut dyn FnMut(&str, Option<&FileTarget>) -> Result<Vec<FileSpaceAiSource>, String>,
+    phase: &mut dyn FnMut(&str),
+) -> Result<RoutedAnswer, String> {
+    answer_question_with_versions(
+        database, question, history, cancelled, generate, retrieve, None, phase,
+    )
+}
+
+pub(super) fn answer_question_with_versions(
+    database: &Database,
+    question: &str,
+    history: &[FileSpaceAiTurn],
+    cancelled: &AtomicBool,
+    generate: &mut dyn FnMut(&str) -> Result<String, String>,
+    retrieve: &mut dyn FnMut(&str, Option<&FileTarget>) -> Result<Vec<FileSpaceAiSource>, String>,
+    version_reader: Option<&mut version_comparison::SnapshotReader<'_>>,
     phase: &mut dyn FnMut(&str),
 ) -> Result<RoutedAnswer, String> {
     ensure_ai_request_active(cancelled)?;
@@ -395,11 +411,12 @@ pub(super) fn answer_question(
             phase("comparing");
             let file = target.unwrap();
             let selection = plan.versions.unwrap_or(VersionSelection::LatestPair);
-            let diffs = match version_comparison::compare_versions(
+            let diffs = match version_comparison::compare_versions_with_reader(
                 database,
                 &file.file_id,
                 &selection,
                 cancelled,
+                version_reader,
             ) {
                 Ok(diffs) => diffs,
                 Err(version_comparison::ComparisonError::Cancelled) => {

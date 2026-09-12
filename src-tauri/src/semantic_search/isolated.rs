@@ -315,6 +315,12 @@ impl Workspace {
         reset_interrupted_jobs(&database)?;
         Ok(Self { database, runtime })
     }
+    pub(crate) fn ai_database(&self) -> &Database {
+        &self.database
+    }
+    pub(crate) fn ai_runtime(&self) -> &SemanticSearchRuntime {
+        &self.runtime
+    }
     pub fn installed(&self) -> bool {
         self.runtime.is_installed() && !self.runtime.download_running.load(AtomicOrdering::Relaxed)
     }
