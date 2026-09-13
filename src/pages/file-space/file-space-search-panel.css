@@ -20,9 +20,9 @@
 
 .file-space-global-search-panel {
   display: grid;
-  width: min(1120px, calc(100vw - 40px));
-  height: min(720px, calc(100vh - 116px));
-  min-height: 420px;
+  width: min(660px, calc(100vw - 40px));
+  max-height: min(660px, calc(100vh - 116px));
+  min-height: 260px;
   grid-template-rows: auto minmax(0, 1fr) auto;
   overflow: hidden;
   border: 1px solid color-mix(in srgb, var(--separator) 88%, transparent);
@@ -35,7 +35,16 @@
   transform: translateY(-10px) scale(0.985);
   transition:
     opacity var(--motion-duration-conceal) var(--motion-ease-conceal),
-    transform var(--motion-duration-conceal) var(--motion-ease-conceal);
+    transform var(--motion-duration-conceal) var(--motion-ease-conceal),
+    width var(--motion-duration-disclose) var(--motion-ease-disclose),
+    min-height var(--motion-duration-disclose) var(--motion-ease-disclose),
+    max-height var(--motion-duration-disclose) var(--motion-ease-disclose);
+}
+
+.file-space-global-search-panel.has-content-preview {
+  width: min(1120px, calc(100vw - 40px));
+  min-height: min(720px, calc(100vh - 116px));
+  max-height: min(720px, calc(100vh - 116px));
 }
 
 .file-space-global-search-panel[data-state="open"] {
@@ -200,18 +209,23 @@
 }
 
 .file-space-global-search-results {
+  max-height: min(500px, calc(100vh - 240px));
   padding: 0 7px 8px;
   overflow: auto;
   scrollbar-gutter: stable;
 }
 
+.file-space-global-search-content.has-content-preview .file-space-global-search-results {
+  max-height: none;
+}
+
 .file-space-global-search-results > button {
   display: grid;
   width: 100%;
-  min-height: 64px;
-  padding: 9px;
-  grid-template-columns: 32px minmax(0, 1fr) auto;
-  align-items: start;
+  min-height: 58px;
+  padding: 7px 9px;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  align-items: center;
   gap: 9px;
   border: 0;
   border-radius: 8px;
@@ -222,6 +236,18 @@
 }
 
 .file-space-global-search-results > button.is-active {
+  color: var(--highlight-foreground);
+  background: var(--highlight);
+}
+
+.file-space-global-search-content.has-content-preview .file-space-global-search-results > button {
+  min-height: 64px;
+  padding: 9px;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  align-items: start;
+}
+
+.file-space-global-search-content.has-content-preview .file-space-global-search-results > button.is-active {
   color: var(--text);
   background: color-mix(in srgb, var(--highlight) 15%, var(--surface));
 }
@@ -233,8 +259,8 @@
 
 .file-space-global-search-file-icon {
   display: grid;
-  width: 30px;
-  height: 30px;
+  width: 34px;
+  height: 34px;
   place-items: center;
   border: 1px solid color-mix(in srgb, var(--border) 82%, transparent);
   border-radius: 7px;
@@ -243,6 +269,17 @@
 }
 
 .file-space-global-search-results > button.is-active .file-space-global-search-file-icon {
+  border-color: color-mix(in srgb, var(--highlight-foreground) 28%, transparent);
+  color: var(--highlight-foreground);
+  background: color-mix(in srgb, var(--highlight-foreground) 13%, transparent);
+}
+
+.file-space-global-search-content.has-content-preview .file-space-global-search-file-icon {
+  width: 30px;
+  height: 30px;
+}
+
+.file-space-global-search-content.has-content-preview .file-space-global-search-results > button.is-active .file-space-global-search-file-icon {
   border-color: color-mix(in srgb, var(--highlight) 34%, var(--border));
   color: var(--highlight);
   background: color-mix(in srgb, var(--highlight) 10%, var(--surface));
@@ -318,6 +355,11 @@
 
 .file-space-global-search-results > button.is-active .file-space-global-search-result-copy > small,
 .file-space-global-search-results > button.is-active .file-space-global-search-result-meta {
+  color: color-mix(in srgb, var(--highlight-foreground) 78%, transparent);
+}
+
+.file-space-global-search-content.has-content-preview .file-space-global-search-results > button.is-active .file-space-global-search-result-copy > small,
+.file-space-global-search-content.has-content-preview .file-space-global-search-results > button.is-active .file-space-global-search-result-meta {
   color: var(--text-muted);
 }
 
@@ -516,6 +558,12 @@
 
   .file-space-global-search-panel {
     width: calc(100vw - 24px);
+    max-height: calc(100vh - 74px);
+  }
+
+  .file-space-global-search-panel.has-content-preview {
+    width: calc(100vw - 24px);
+    min-height: calc(100vh - 74px);
     max-height: calc(100vh - 74px);
   }
 

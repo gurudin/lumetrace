@@ -13,7 +13,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
@@ -229,9 +229,8 @@ export function FileSpaceSearchPanel({
     return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [onOpen, open, applicationExtension?.active]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (open && !wasOpenRef.current) {
-      setQuery("");
       returnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
@@ -434,7 +433,7 @@ export function FileSpaceSearchPanel({
     >
       <div
         ref={panelRef}
-        className="file-space-global-search-panel"
+        className={`file-space-global-search-panel${showContentPreview ? " has-content-preview" : ""}`}
         role="dialog"
         aria-modal="true"
         aria-labelledby="file-space-global-search-title"

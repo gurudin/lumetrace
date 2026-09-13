@@ -24,9 +24,14 @@ test("global search opens the selected result after revealing its card", () => {
 
 test("global search reopens empty and shows the split preview only for body matches", () => {
   const panel = readFileSync(new URL("../src/pages/file-space/FileSpaceSearchPanel.tsx", import.meta.url), "utf8");
-  assert.match(panel, /useLayoutEffect\(\(\) => \{\s*if \(open && !wasOpenRef\.current\) \{\s*setQuery\(""\);/);
+  const styles = readFileSync(new URL("../src/pages/file-space/file-space-search-panel.css", import.meta.url), "utf8");
+  assert.match(panel, /useEffect\(\(\) => \{\s*if \(open && !wasOpenRef\.current\) \{\s*returnFocusRef\.current/);
   assert.match(panel, /const showContentPreview = activeMatch\?\.contentMatch === true;/);
+  assert.match(panel, /file-space-global-search-panel\$\{showContentPreview \? " has-content-preview" : ""\}/);
   assert.match(panel, /showContentPreview \? <section className="file-space-global-search-preview"/);
+  assert.match(styles, /\.file-space-global-search-panel \{[\s\S]*?width: min\(660px,/);
+  assert.match(styles, /\.file-space-global-search-panel\.has-content-preview \{[\s\S]*?width: min\(1120px,/);
+  assert.match(styles, /width var\(--motion-duration-disclose\) var\(--motion-ease-disclose\)/);
 });
 
 test("search context reaches only the matching file open event", () => {
