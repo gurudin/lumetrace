@@ -87,6 +87,7 @@ import {
   type FileKeyboardDirection,
 } from "./fileKeyboardNavigation";
 import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
+import { fileRenameSelectionEnd } from "./fileRenameSelection";
 import { FileRevealNavigation } from "./fileRevealNavigation";
 import {
   createFileOpenMouseEvent,
@@ -2384,10 +2385,13 @@ export function FileSpacePage() {
 
   useEffect(() => {
     if (!renameFileId || !renameFileDialogPresence.mounted) return;
-    window.requestAnimationFrame(() => {
-      renameFileNameRef.current?.focus();
-      renameFileNameRef.current?.select();
+    const frame = window.requestAnimationFrame(() => {
+      const input = renameFileNameRef.current;
+      if (!input) return;
+      input.focus();
+      input.setSelectionRange(0, fileRenameSelectionEnd(input.value));
     });
+    return () => window.cancelAnimationFrame(frame);
   }, [renameFileDialogPresence.mounted, renameFileId]);
 
   useEffect(() => {
