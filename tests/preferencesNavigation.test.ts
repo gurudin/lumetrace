@@ -34,7 +34,8 @@ test("settings shortcuts route to their unified preferences sections", () => {
 test("only an explicit archive restriction removes backup and restore without changing other settings", () => {
   const source = readFileSync(new URL("../src/pages/file-space/FileSpaceSettingsMenu.tsx", import.meta.url), "utf8");
   assert.ok(source.includes('menuItems.filter(item => backupAllowed || (item !== "backup" && item !== "restore")).map'));
-  assert.ok(source.includes('const backupAllowed = useWorkspaceExtension()?.source?.capabilities?.backup !== false'));
+  assert.ok(source.includes('const workspaceExtension = useWorkspaceExtension()'));
+  assert.ok(source.includes('const backupAllowed = workspaceExtension?.source?.capabilities?.backup !== false'));
   assert.doesNotMatch(source, /externalWorkspace/);
   const items = source.slice(source.indexOf("const menuItems:"), source.indexOf("const privacyUpdatedAt"));
   assert.deepEqual([...items.matchAll(/"([a-z]+)"/g)].map(match => match[1]), ["workspace", "preferences", "semantic", "backup", "restore", "feedback", "privacy", "about"]);

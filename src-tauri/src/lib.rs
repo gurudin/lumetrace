@@ -124,6 +124,7 @@ pub fn run_with_plugins(
             workspace::get_file_space_workspaces,
             workspace::switch_file_space_workspace,
             workspace::create_file_space_workspace,
+            workspace::restore_file_space_backup_as_new_workspace,
             workspace::rename_file_space_workspace,
             workspace::remove_file_space_workspace,
             file_space::get_file_space_snapshot,

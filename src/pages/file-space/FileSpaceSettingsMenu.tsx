@@ -86,6 +86,7 @@ interface RestoreFeedback {
 
 interface RestoreResult {
   rootPath: string | null;
+  workspaceId?: string;
 }
 
 interface SemanticSearchStatus {
@@ -162,7 +163,12 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   onWorkspaceDirectoryChanged,
 }: FileSpaceSettingsMenuProps<TSnapshot>) {
   const invoke = useWorkspaceInvoke();
-  const backupAllowed = useWorkspaceExtension()?.source?.capabilities?.backup !== false;
+  const workspaceExtension = useWorkspaceExtension();
+  const backupAllowed = workspaceExtension?.source?.capabilities?.backup !== false;
+  const restoreRunningRef = useRef(false);
+  const restoredBackupRef = useRef<RestoreResult | null>(null);
+  const mountedRef = useRef(true);
+  useEffect(() => { mountedRef.current = true; return () => { mountedRef.current = false; }; }, []);
   const { t, i18n } = useTranslation();
   const triggerRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
@@ -357,6 +363,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
         window.requestAnimationFrame(() => triggerRef.current?.focus());
         return;
       }
+      restoredBackupRef.current = null;
       setRestoreFeedback({ status: "ready", inspection, destinationDirectory });
       setActivePanel("restore");
     } catch (error) {
@@ -370,14 +377,24 @@ export function FileSpaceSettingsMenu<TSnapshot>({
 
   const confirmRestoreBackup = async () => {
     const { inspection, destinationDirectory } = restoreFeedback;
-    if (!backupAllowed || !inspection || !destinationDirectory || restoreFeedback.status !== "ready") return;
+    if (!backupAllowed || !inspection || !destinationDirectory || restoreFeedback.status !== "ready" || restoreRunningRef.current) return;
+    restoreRunningRef.current = true;
     setRestoreFeedback({ ...restoreFeedback, status: "restoring", error: undefined });
     try {
-      const result = await invoke<RestoreResult>("restore_file_space_backup", {
+      const result = restoredBackupRef.current ?? await invoke<RestoreResult>("restore_file_space_backup", {
         backupPath: inspection.path,
         destinationDirectory,
       });
-      window.dispatchEvent(new CustomEvent("lumetrace:file-space-snapshot", { detail: result }));
+      restoredBackupRef.current = result;
+      if (!mountedRef.current) return;
+      if (result.workspaceId) {
+        const mutation = await invoke<FileSpaceWorkspaceMutation<TSnapshot>>("switch_file_space_workspace", { workspaceId: result.workspaceId });
+        if (!mountedRef.current) return;
+        onWorkspaceChanged(mutation);
+        workspaceExtension?.onLocalSelect(result.workspaceId);
+      } else {
+        window.dispatchEvent(new CustomEvent("lumetrace:file-space-snapshot", { detail: result }));
+      }
       setRestoreFeedback({
         status: "success",
         inspection,
@@ -391,6 +408,8 @@ export function FileSpaceSettingsMenu<TSnapshot>({
         destinationDirectory,
         error: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      restoreRunningRef.current = false;
     }
   };
 

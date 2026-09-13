@@ -2838,7 +2838,7 @@ fn replace_file_space_records_from_backup(
     restore_result
 }
 
-fn restore_file_space_backup_record(
+pub(crate) fn restore_file_space_backup_record(
     database: &Database,
     artifact_store: &Path,
     backup_path: &str,
@@ -12669,6 +12669,77 @@ mod tests {
 
         fs::remove_dir_all(source_root).unwrap();
         fs::remove_dir_all(current_root).unwrap();
+    }
+
+    #[test]
+    fn isolated_backup_restore_preserves_active_database_and_rejects_broken_archives() {
+        let (root, storage, versions, database) = test_workspace("isolated-backup");
+        fs::write(root.join("plan.md"), b"first version").unwrap();
+        let files = import_files_record(
+            &database,
+            None,
+            &[root.join("plan.md").to_string_lossy().into_owned()],
+        )
+        .unwrap();
+        capture_initial_user_versions(&database, &versions).unwrap();
+        fs::write(storage.join("plan.md"), b"second version").unwrap();
+        reconcile_task_file(&database, &versions, &files.files[0].id).unwrap();
+        let backup = root.join("backup.lumetrace");
+        export_file_space_backup_record(&database, &versions, &backup.to_string_lossy()).unwrap();
+        let managed = root.join("new-app-data");
+        let destination = root.join("restored");
+        fs::create_dir(&destination).unwrap();
+        let before = serde_json::to_value(load_snapshot_record(&database).unwrap()).unwrap();
+        let history = serde_json::to_value(
+            load_task_file_timeline_record(&database, &files.files[0].id).unwrap(),
+        )
+        .unwrap();
+        let restored = crate::workspace_database::restore_backup_to_new_workspace(
+            &managed,
+            &backup,
+            &destination,
+        )
+        .unwrap();
+        assert_ne!(
+            restored.database_path,
+            database.location().unwrap().database_path
+        );
+        assert_eq!(restored.snapshot.files[0].version_count, 2);
+        assert_eq!(
+            fs::read(Path::new(restored.snapshot.root_path.as_ref().unwrap()).join("plan.md"))
+                .unwrap(),
+            b"second version"
+        );
+        assert_eq!(
+            serde_json::to_value(load_snapshot_record(&database).unwrap()).unwrap(),
+            before
+        );
+        assert_eq!(
+            serde_json::to_value(
+                load_task_file_timeline_record(&database, &files.files[0].id).unwrap()
+            )
+            .unwrap(),
+            history
+        );
+        assert!(
+            !managed.join("workspaces.json").exists(),
+            "restoring alone must not select or register a workspace"
+        );
+        fs::write(root.join("broken.lumetrace"), b"not a backup").unwrap();
+        let before_files = fs::read_dir(&destination).unwrap().count();
+        assert!(crate::workspace_database::restore_backup_to_new_workspace(
+            &managed,
+            &root.join("broken.lumetrace"),
+            &destination
+        )
+        .is_err());
+        assert_eq!(fs::read_dir(managed.join("workspaces")).unwrap().count(), 1);
+        assert_eq!(fs::read_dir(&destination).unwrap().count(), before_files);
+        assert_eq!(
+            serde_json::to_value(load_snapshot_record(&database).unwrap()).unwrap(),
+            before
+        );
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

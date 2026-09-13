@@ -361,6 +361,25 @@ impl WorkspaceRegistry {
         write_registry(&self.registry_path, &document)
     }
 
+    fn add_inactive(&self, workspace: StoredWorkspace) -> Result<(), String> {
+        let mut document = self
+            .document
+            .lock()
+            .map_err(|_| "Unable to access the workspace registry")?;
+        if document
+            .workspaces
+            .iter()
+            .any(|candidate| candidate.id == workspace.id)
+        {
+            return Err("The workspace is already registered".into());
+        }
+        let mut next = document.clone();
+        next.workspaces.push(workspace);
+        write_registry(&self.registry_path, &next)?;
+        *document = next;
+        Ok(())
+    }
+
     fn rename(&self, workspace_id: &str, name: String) -> Result<(), String> {
         let mut document = self
             .document
@@ -948,6 +967,58 @@ pub async fn create_file_space_workspace<R: tauri::Runtime>(
     .map_err(|error| format!("Unable to create the workspace: {error}"))?
 }
 
+/// Restore without switching or modifying any previously registered workspace.
+/// The caller selects the returned ID only after its own request is still current.
+#[tauri::command]
+pub async fn restore_file_space_backup_as_new_workspace<R: tauri::Runtime>(
+    app: tauri::AppHandle<R>,
+    backup_path: String,
+    destination_directory: String,
+) -> Result<crate::workspace_database::RestoredBackupWorkspace, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let registry = app.state::<WorkspaceRegistry>();
+        let result = crate::workspace_database::restore_backup_to_new_workspace(
+            &registry.data_directory,
+            Path::new(&backup_path),
+            Path::new(&destination_directory),
+        )?;
+        let now = now_millis();
+        let name = result
+            .snapshot
+            .root_name
+            .as_deref()
+            .unwrap_or("LumeTrace")
+            .chars()
+            .take(80)
+            .collect::<String>();
+        let workspace = StoredWorkspace {
+            id: result.workspace_id.clone(),
+            name,
+            kind: "local".into(),
+            root_path: result.snapshot.root_path.clone(),
+            database_path: result.database_path.clone(),
+            artifact_store_path: result.artifact_store_path.clone(),
+            member_count: 0,
+            created_at: now,
+            last_opened_at: now,
+        };
+        // Do not change the live database. Registry persistence is atomic.
+        registry.add_inactive(workspace).map_err(|error| {
+            format!(
+                "{error}. Restored files remain at {}",
+                result
+                    .snapshot
+                    .root_path
+                    .as_deref()
+                    .unwrap_or(&destination_directory)
+            )
+        })?;
+        Ok(result)
+    })
+    .await
+    .map_err(|error| format!("Unable to restore the workspace: {error}"))?
+}
+
 #[tauri::command]
 pub fn rename_file_space_workspace(
     workspace_id: String,
@@ -986,6 +1057,34 @@ pub async fn remove_file_space_workspace<R: tauri::Runtime>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restored_workspace_registration_is_inactive_and_atomic_on_failure() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-restore-registry-{}", Uuid::new_v4()));
+        let mut registry = WorkspaceRegistry::load_or_create(root.clone()).unwrap();
+        let first = registry.current_workspace().unwrap();
+        let mut second = first.clone();
+        second.id = Uuid::new_v4().to_string();
+        registry.add_inactive(second.clone()).unwrap();
+        assert_eq!(registry.current_workspace().unwrap(), first);
+        assert_eq!(
+            WorkspaceRegistry::load_or_create(root.clone())
+                .unwrap()
+                .workspaces()
+                .unwrap()
+                .len(),
+            2
+        );
+        let bad_path = root.join("registry-is-directory");
+        fs::create_dir(&bad_path).unwrap();
+        registry.registry_path = bad_path;
+        second.id = Uuid::new_v4().to_string();
+        assert!(registry.add_inactive(second).is_err());
+        assert_eq!(registry.workspaces().unwrap().len(), 2);
+        assert_eq!(registry.current_workspace().unwrap(), first);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     fn register_inactive_workspace(
         registry: &WorkspaceRegistry,

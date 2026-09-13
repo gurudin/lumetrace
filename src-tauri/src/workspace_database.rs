@@ -4,6 +4,73 @@
 //! filesystem watchers or run extraction/AI workers against remote paths.
 use std::path::Path;
 
+/// A portable backup restored into an entirely new, isolated database.
+/// Registration and selection are separate, so a delayed response cannot
+/// replace the database currently being used by another workspace.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RestoredBackupWorkspace {
+    pub workspace_id: String,
+    #[serde(skip)]
+    pub database_path: std::path::PathBuf,
+    #[serde(skip)]
+    pub artifact_store_path: std::path::PathBuf,
+    #[serde(flatten)]
+    pub snapshot: crate::file_space::FileSpaceSnapshot,
+}
+
+pub fn restore_backup_to_new_workspace(
+    managed_directory: &Path,
+    backup_path: &Path,
+    destination_directory: &Path,
+) -> Result<RestoredBackupWorkspace, String> {
+    if !managed_directory.is_absolute()
+        || !backup_path.is_absolute()
+        || !destination_directory.is_absolute()
+    {
+        return Err("Backup recovery requires absolute paths".into());
+    }
+    let workspace_id = uuid::Uuid::new_v4().to_string();
+    let parent = managed_directory.join("workspaces");
+    std::fs::create_dir_all(&parent)
+        .map_err(|e| format!("Unable to prepare workspace recovery: {e}"))?;
+    let directory = parent.join(&workspace_id);
+    std::fs::create_dir(&directory)
+        .map_err(|e| format!("Unable to prepare workspace recovery: {e}"))?;
+    let result = (|| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&directory, std::fs::Permissions::from_mode(0o700))
+                .map_err(|e| format!("Unable to protect workspace recovery: {e}"))?;
+        }
+        let database_path = directory.join("lumetrace.sqlite3");
+        let artifact_store_path = directory.join("file-space-versions");
+        let database = crate::database::open_workspace_database(
+            database_path.clone(),
+            artifact_store_path.clone(),
+            workspace_id.clone(),
+        )?;
+        let snapshot = crate::file_space::restore_file_space_backup_record(
+            &database,
+            &artifact_store_path,
+            &backup_path.to_string_lossy(),
+            &destination_directory.to_string_lossy(),
+        )?;
+        Ok(RestoredBackupWorkspace {
+            workspace_id,
+            database_path,
+            artifact_store_path,
+            snapshot,
+        })
+    })();
+    if result.is_err() {
+        // This is the unique directory created above, never an existing workspace.
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+    result
+}
+
 /// Apply the same filename MIME fallback as ordinary local file imports.
 pub fn file_mime_type(path: &Path) -> Option<String> {
     crate::file_space::mime_type_for(path)
