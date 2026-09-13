@@ -22,6 +22,13 @@ test("global search opens the selected result after revealing its card", () => {
   );
 });
 
+test("global search reopens empty and shows the split preview only for body matches", () => {
+  const panel = readFileSync(new URL("../src/pages/file-space/FileSpaceSearchPanel.tsx", import.meta.url), "utf8");
+  assert.match(panel, /useLayoutEffect\(\(\) => \{\s*if \(open && !wasOpenRef\.current\) \{\s*setQuery\(""\);/);
+  assert.match(panel, /const showContentPreview = activeMatch\?\.contentMatch === true;/);
+  assert.match(panel, /showContentPreview \? <section className="file-space-global-search-preview"/);
+});
+
 test("search context reaches only the matching file open event", () => {
   const context: FileOpenSearchContext = {
     fileId: file.id,

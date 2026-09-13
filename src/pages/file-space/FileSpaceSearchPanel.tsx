@@ -13,7 +13,7 @@ import {
   Search,
   X,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
 import { usePresence } from "../../shared/ui/usePresence";
@@ -186,6 +186,7 @@ export function FileSpaceSearchPanel({
   const activeFile = results[activeIndex] ?? null;
   const activeMatch = activeFile ? matchesByFileId.get(activeFile.id) ?? null : null;
   const activeSection = preview?.sections[activeHitIndex] ?? null;
+  const showContentPreview = activeMatch?.contentMatch === true;
 
   const closePanel = (restoreFocus = true) => {
     restoreFocusRef.current = restoreFocus;
@@ -228,8 +229,9 @@ export function FileSpaceSearchPanel({
     return () => window.removeEventListener("keydown", handleShortcut, true);
   }, [onOpen, open, applicationExtension?.active]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (open && !wasOpenRef.current) {
+      setQuery("");
       returnFocusRef.current = document.activeElement instanceof HTMLElement
         ? document.activeElement
         : null;
@@ -325,7 +327,7 @@ export function FileSpaceSearchPanel({
     previewSequenceRef.current = sequence;
     setActiveHitIndex(0);
     setPreviewFailed(false);
-    if (!open || !activeFile || !activeMatch || !query.trim()) {
+    if (!open || !activeFile || !activeMatch || !showContentPreview || !query.trim()) {
       setPreview(null);
       setPreviewLoading(false);
       return undefined;
@@ -362,7 +364,7 @@ export function FileSpaceSearchPanel({
     return () => {
       if (previewSequenceRef.current === sequence) previewSequenceRef.current += 1;
     };
-  }, [activeFile, activeMatch, invoke, open, query, scopes]);
+  }, [activeFile, activeMatch, invoke, open, query, scopes, showContentPreview]);
 
   useEffect(() => {
     if (!open) return undefined;
@@ -487,7 +489,7 @@ export function FileSpaceSearchPanel({
               <p>{t("fileSpace.globalSearch.noResultsDescription")}</p>
             </div>
           ) : (
-            <div className="file-space-global-search-content">
+            <div className={`file-space-global-search-content${showContentPreview ? " has-content-preview" : ""}`}>
               <section className="file-space-global-search-result-column">
                 <div className="file-space-global-search-results-heading">
                   <span>{t("fileSpace.globalSearch.resultCount", { count: results.length })}</span>
@@ -553,7 +555,7 @@ export function FileSpaceSearchPanel({
                 </div>
               </section>
 
-              <section className="file-space-global-search-preview" aria-live="polite">
+              {showContentPreview ? <section className="file-space-global-search-preview" aria-live="polite">
                 <header className="file-space-global-search-preview-toolbar">
                   <div>
                     <strong>{activeFile?.name}</strong>
@@ -630,7 +632,7 @@ export function FileSpaceSearchPanel({
                     </div>
                   )}
                 </div>
-              </section>
+              </section> : null}
             </div>
           )}
         </div>
