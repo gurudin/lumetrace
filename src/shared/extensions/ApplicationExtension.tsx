@@ -5,6 +5,7 @@ import "./application-extension.css";
 export interface ApplicationExtension {
   Entry: ComponentType<{ placement: "setup" | "settings"; onOpen: () => void; disabled: boolean }>;
   Page: ComponentType<{ active: boolean; onClose: () => void }>;
+  ToolbarEntry?: ComponentType;
   initiallyOpen?: boolean;
   onVisibilityChange?: (visible: boolean) => void;
   WorkspaceProvider?: ComponentType<PropsWithChildren>;
@@ -80,4 +81,11 @@ export function ApplicationExtensionEntry({ placement, disabled = false, beforeO
     beforeOpen?.();
     context.open(target);
   }} />;
+}
+
+/** Optional edition-owned action placed with the workbench's primary tools. */
+export function ApplicationExtensionToolbarEntry() {
+  const context = useApplicationExtension();
+  const ToolbarEntry = context?.extension.ToolbarEntry;
+  return ToolbarEntry ? <ToolbarEntry /> : null;
 }

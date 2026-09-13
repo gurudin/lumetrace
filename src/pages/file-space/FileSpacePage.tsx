@@ -71,7 +71,7 @@ import { VersionAuthor } from "./VersionAuthor";
 import { VersionHistoryBadge, type VersionSummary } from "./VersionHistoryBadge";
 import { ImportExistingFolderSheet } from "./ImportExistingFolderSheet";
 import { SetupPreferences } from "./SetupPreferences";
-import { ApplicationExtensionEntry, useApplicationExtension, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
+import { ApplicationExtensionEntry, ApplicationExtensionToolbarEntry, useApplicationExtension, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
 import { globalSearchShortcutLabel } from "./globalSearchShortcut";
 import {
   calculateFileListLayout,
@@ -5883,6 +5883,7 @@ export function FileSpacePage() {
               <Plus size={16} />
             </button>
           </div>
+          <ApplicationExtensionToolbarEntry />
           <div className="file-space-filter-menu" ref={filterMenuRef}>
             <button
               className={isFilterMenuOpen || hasActiveFilters ? "is-active" : ""}

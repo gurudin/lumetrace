@@ -13,13 +13,27 @@ const compiled = ts.transpileModule(source.replace('import "./application-extens
 }).outputText;
 const module = { exports: {} as Record<string, any> };
 new Function("require", "exports", compiled)(require, module.exports);
-const { ApplicationExtensionHost, ApplicationExtensionEntry } = module.exports;
+const { ApplicationExtensionHost, ApplicationExtensionEntry, ApplicationExtensionToolbarEntry } = module.exports;
 const { WorkspaceExtensionContext, useApplicationExtension } = module.exports;
 const workspace = createElement("div", { "data-workspace": "preserved" }, "Existing workspace");
 
 test("community without an extension renders its existing workspace unchanged", () => {
   assert.equal(renderToStaticMarkup(createElement(ApplicationExtensionHost, null, workspace)), renderToStaticMarkup(workspace));
   assert.equal(renderToStaticMarkup(createElement(ApplicationExtensionEntry, { placement: "setup" })), "");
+  assert.equal(renderToStaticMarkup(createElement(ApplicationExtensionToolbarEntry)), "");
+});
+
+test("commercial editions can add one optional primary toolbar action", () => {
+  const extension = {
+    Entry: () => null,
+    Page: () => null,
+    ToolbarEntry: () => createElement("button", { "aria-label": "Plugins" }, "Extension mark"),
+  };
+  const html = renderToStaticMarkup(createElement(ApplicationExtensionHost, { extension }, createElement(ApplicationExtensionToolbarEntry)));
+  assert.match(html, /aria-label="Plugins"/);
+  assert.match(html, /Extension mark/);
+  const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
+  assert.ok(page.indexOf("<ApplicationExtensionToolbarEntry />") < page.indexOf('className="file-space-filter-menu"'));
 });
 
 test("extension pages retain the mounted workspace and hide it from interaction", () => {
