@@ -1,8 +1,14 @@
-# Community and professional editions
+# Community, Pro and Team editions
 
 ## Boundary
 
-LumeTrace's existing functionality remains in the free, AGPL community edition. The split does not remove, limit or charge for any existing capability.
+LumeTrace uses one fixed commercial boundary:
+
+> **Free manages files on this computer. Pro manages files in my self-owned storage. Team manages files in our shared self-owned storage.**
+
+The short labels are **Free = Local**, **Pro = Personal Anywhere**, and **Team = Shared Anywhere**.
+
+Free and Pro have the same non-Plugin core feature set. The split must not remove, limit or charge for a local core capability merely to manufacture Pro value.
 
 | Ownership | Repository |
 | --- | --- |
@@ -10,10 +16,22 @@ LumeTrace's existing functionality remains in the free, AGPL community edition. 
 | Previews/editing, import/export, trash, tags and file operations | `lumetrace` |
 | Filename/full-text/semantic search; E5 management; current AI providers, chat and version queries | `lumetrace` |
 | Shared settings, localization, accessibility, UI/UX, bug/security/performance fixes | `lumetrace` |
-| Professional application entry, packaging and future paid extensions | Private `lumetrace-pro` |
-| Planned team permissions, collaboration, customer-owned storage connectors and licensing | Future work in `lumetrace-pro`; not implemented |
+| Official application entry, packaging and commercial licensing | Private `lumetrace-pro` |
+| Native personal NAS/S3/OSS/MinIO connections, remote access and multi-device coordination | Pro in private `lumetrace-pro` |
+| Team permissions, collaboration, shared customer-owned storage, members and audit | Team in private `lumetrace-pro` |
+| Planned Official Plugin system and tier-specific Plugin entitlements | Private `lumetrace-pro`; not implemented |
 
 Community is a complete application, not a trial. A new paid capability does not justify moving a pre-existing feature or its maintenance into Pro. Confirm unclear feature boundaries before implementation.
+
+Free can open an operating-system-mounted NAS, iCloud, Dropbox or similar directory as an ordinary local folder. This does not include LumeTrace-managed credentials, remote endpoints, failover, synchronization or a cross-device guarantee.
+
+Pro is a paid single-user license for one person using self-owned storage across devices. Its commercial model is a one-time purchase unless later changed; no exact price is fixed. Its only core product differences from Free are native connected-storage management and the Plugin entitlements declared for the Pro tier. Advanced Diff, automation, batch workflows and other ordinary built-in features do not form a Free/Pro boundary.
+
+Team is a subscription. It includes all Pro capabilities and adds multi-user shared workspaces, members/seats, invitations, permissions, roles, edit locks, conflict handling, modification identity, activity/audit logs and team administration.
+
+LumeTrace does not host user files or provide a NAS relay. Users own their storage, credentials and network reachability. Each device keeps its own SQLite database, cache, full-text index and vector index. Agreed `.lumetrace` metadata supports synchronization without turning LumeTrace's licensing service into file or credential hosting.
+
+The future Official Plugin system is planned but not implemented. Each Plugin declares its allowed tiers, such as `Free / Pro / Team` or `Pro / Team`. Never remove a Free core capability and repackage it as a Plugin.
 
 Version notes and milestone stars are explicitly shared Community/Pro features. Their UI, storage and migrations belong in Community and are reused by Pro, without payment checks.
 
