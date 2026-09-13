@@ -1,0 +1,13 @@
+.file-preview-search-highlight {
+  padding: 0 1px;
+  border-radius: 3px;
+  color: inherit;
+  background: color-mix(in srgb, #ffd84d 72%, var(--surface));
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+}
+
+.file-preview-search-highlight.is-current {
+  background: #ffd84d;
+  box-shadow: 0 0 0 2px color-mix(in srgb, #ffd84d 34%, transparent);
+}

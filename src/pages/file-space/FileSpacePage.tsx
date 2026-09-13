@@ -89,6 +89,10 @@ import {
 import { resolveFileDoubleClickRoute } from "./fileOpenRouting";
 import { FileRevealNavigation } from "./fileRevealNavigation";
 import {
+  createFileOpenMouseEvent,
+  type FileOpenSearchContext,
+} from "./fileOpenSearchContext";
+import {
   fileCardMetadataText,
   originalImageDimensions,
   fileDocumentArtworkFormat,
@@ -1411,7 +1415,9 @@ export function FileSpacePage() {
   const filePageLoadingRef = useRef(false);
   const measuredFileLayoutRef = useRef<JustifiedFileLayout | null>(null);
   const fileVirtualViewportFrameRef = useRef<number | null>(null);
-  const fileRevealNavigationRef = useRef(new FileRevealNavigation<FileSpaceSearchFile>());
+  const fileRevealNavigationRef = useRef(
+    new FileRevealNavigation<FileSpaceSearchFile, FileOpenSearchContext>(),
+  );
   const deferFilePaginationUntilInteractionRef = useRef(false);
   const aiSourceNavigationSequenceRef = useRef(0);
   const importRequestRef = useRef<string | null>(null);
@@ -1747,9 +1753,13 @@ export function FileSpacePage() {
     setInspectorTimeline(null);
   };
 
-  const revealFileInWorkspace = (file: FileSpaceSearchFile, openAfterReveal = false) => {
+  const revealFileInWorkspace = (
+    file: FileSpaceSearchFile,
+    openAfterReveal = false,
+    openContext?: FileOpenSearchContext,
+  ) => {
     deferFilePaginationUntilInteractionRef.current = false;
-    fileRevealNavigationRef.current.start(file, openAfterReveal, !isTauri());
+    fileRevealNavigationRef.current.start(file, openAfterReveal, !isTauri(), openContext);
     setGlobalSearchOpen(false);
     setActiveCollection("files");
     setCurrentFolderId(file.folderId);
@@ -1776,8 +1786,11 @@ export function FileSpacePage() {
     }
   };
 
-  const openFileFromGlobalSearch = (file: FileSpaceSearchFile) => {
-    revealFileInWorkspace(file, true);
+  const openFileFromGlobalSearch = (
+    file: FileSpaceSearchFile,
+    context: FileOpenSearchContext | null,
+  ) => {
+    revealFileInWorkspace(file, true, context ?? undefined);
   };
 
   const openFileFromAiSource = async (
@@ -2953,13 +2966,8 @@ export function FileSpacePage() {
       request,
       cardButton,
       (button) => button.focus({ preventScroll: true }),
-      (button) => {
-        button.dispatchEvent(new MouseEvent("dblclick", {
-          bubbles: true,
-          cancelable: true,
-          button: 0,
-          view: window,
-        }));
+      (button, context) => {
+        button.dispatchEvent(createFileOpenMouseEvent(context));
       },
     );
     if (completed) deferFilePaginationUntilInteractionRef.current = true;

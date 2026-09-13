@@ -15,7 +15,13 @@ import { claimFirstVersionChange, savedVersionNotification, viewVersionChangeEve
 import type { FileSpaceVersionNotification } from "./versionNotification";
 import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
 import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
+import {
+  fileOpenSearchContextFromEvent,
+  type FileOpenSearchContext,
+} from "./fileOpenSearchContext";
+import { useSearchResultHighlight } from "./searchResultHighlight";
 import "./markdown-preview-overlay.css";
+import "./search-result-highlight.css";
 
 interface MarkdownPreviewRequest {
   fileId: string;
@@ -53,6 +59,34 @@ interface TaskFileTimelineRecord {
 }
 
 type MarkdownMode = "preview" | "edit" | "diff";
+
+interface MarkdownAstNode {
+  type?: string;
+  position?: {
+    start?: { line?: number };
+    end?: { line?: number };
+  };
+  properties?: Record<string, unknown>;
+  children?: MarkdownAstNode[];
+}
+
+function rehypeSourceLines() {
+  return (tree: MarkdownAstNode) => {
+    const visit = (node: MarkdownAstNode) => {
+      const start = node.position?.start?.line;
+      const end = node.position?.end?.line;
+      if (node.type === "element" && start) {
+        node.properties = {
+          ...node.properties,
+          dataSourceStartLine: start,
+          dataSourceEndLine: end ?? start,
+        };
+      }
+      node.children?.forEach(visit);
+    };
+    visit(tree);
+  };
+}
 
 function errorText(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -191,6 +225,7 @@ export function MarkdownPreviewOverlay() {
     round: (count: number) => t("fileSpace.preview.common.round", { count }),
   };
   const [request, setRequest] = useState<MarkdownPreviewRequest | null>(null);
+  const [searchContext, setSearchContext] = useState<FileOpenSearchContext | null>(null);
   const [open, setOpen] = useState(false);
   const [mode, setMode] = useState<MarkdownMode>("preview");
   const [content, setContent] = useState("");
@@ -212,6 +247,7 @@ export function MarkdownPreviewOverlay() {
   const [versionError, setVersionError] = useState<string | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
   const editorRef = useRef<HTMLTextAreaElement>(null);
+  const documentRef = useRef<HTMLElement>(null);
   const discardButtonRef = useRef<HTMLButtonElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
@@ -225,6 +261,11 @@ export function MarkdownPreviewOverlay() {
   const historicalVersionSelected = Boolean(selectedVersion && !selectedVersion.isCurrent);
   const hasVersionTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
   const showVersionTimeline = hasVersionTimeline && timelineVisible;
+  useSearchResultHighlight(
+    documentRef,
+    mode === "preview" && !historicalVersionSelected ? searchContext : null,
+    draft,
+  );
   const readDiffSnapshot = useCallback(async (fileId: string, versionId: string) => {
     if (request && visualFixtureEnabled(request)) {
       const version = timeline?.versions.find((candidate) => candidate.id === versionId);
@@ -291,6 +332,7 @@ export function MarkdownPreviewOverlay() {
     const loadSequence = contentLoadSequenceRef.current + 1;
     contentLoadSequenceRef.current = loadSequence;
     setSelectedVersionId(version.id);
+    setSearchContext(null);
     setVersionLoading(true);
     setVersionError(null);
     setLoadError(null);
@@ -411,6 +453,7 @@ export function MarkdownPreviewOverlay() {
       event.stopImmediatePropagation();
       returnFocusRef.current = card.button;
       setRequest(card.request);
+      setSearchContext(fileOpenSearchContextFromEvent(event, card.request.fileId));
       setMode("preview");
       setContent("");
       setDraft("");
@@ -511,6 +554,7 @@ export function MarkdownPreviewOverlay() {
       contentLoadSequenceRef.current += 1;
       initialLoadSequenceRef.current += 1;
       setRequest(null);
+      setSearchContext(null);
       setConfirmClose(false);
       setTimeline(null);
       setTimelineError(null);
@@ -720,10 +764,11 @@ export function MarkdownPreviewOverlay() {
               aria-label={copy.editorLabel}
             />
           ) : (
-            <article className="file-markdown-document" data-native-context-menu="true">
+            <article ref={documentRef} className="file-markdown-document" data-native-context-menu="true">
               {draft ? (
                 <ReactMarkdown
                   remarkPlugins={[remarkGfm]}
+                  rehypePlugins={[rehypeSourceLines]}
                   components={{
                     a: ({ children, ...props }) => (
                       <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>

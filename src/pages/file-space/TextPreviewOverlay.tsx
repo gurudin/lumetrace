@@ -11,7 +11,13 @@ import { PreviewFileHeading } from "./PreviewFileHeading";
 import { InitialVersionHint, VersionName } from "./InitialVersionHint";
 import { PreviewDiffButton, PreviewVersionDiff } from "./PreviewVersionDiff";
 import { VersionAnnotation, useVersionAnnotationUpdates } from "./VersionAnnotation";
+import {
+  fileOpenSearchContextFromEvent,
+  type FileOpenSearchContext,
+} from "./fileOpenSearchContext";
+import { useSearchResultHighlight } from "./searchResultHighlight";
 import "./text-preview-overlay.css";
+import "./search-result-highlight.css";
 
 interface TextPreviewRequest {
   fileId: string;
@@ -69,6 +75,7 @@ export function TextPreviewOverlay() {
     timelineError: t("fileSpace.preview.common.timelineError"),
   };
   const [request, setRequest] = useState<TextPreviewRequest | null>(null);
+  const [searchContext, setSearchContext] = useState<FileOpenSearchContext | null>(null);
   const [open, setOpen] = useState(false);
   const [diffVisible, setDiffVisible] = useState(false);
   const [content, setContent] = useState("");
@@ -82,6 +89,7 @@ export function TextPreviewOverlay() {
   const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const dialogRef = useRef<HTMLDivElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const contentRef = useRef<HTMLPreElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const loadSequenceRef = useRef(0);
   const timelineLoadSequenceRef = useRef(0);
@@ -89,6 +97,7 @@ export function TextPreviewOverlay() {
   const selectedVersion = timeline?.versions.find((version) => version.id === selectedVersionId) ?? null;
   const hasTimeline = Boolean(request?.hasVersionHistory && request.versionCount > 0);
   const showTimeline = hasTimeline && timelineVisible;
+  useSearchResultHighlight(contentRef, diffVisible ? null : searchContext, content);
 
   const loadCurrent = useCallback(async (target: TextPreviewRequest) => {
     const sequence = loadSequenceRef.current + 1;
@@ -129,6 +138,7 @@ export function TextPreviewOverlay() {
     const sequence = loadSequenceRef.current + 1;
     loadSequenceRef.current = sequence;
     setSelectedVersionId(version.id);
+    setSearchContext(null);
     setLoading(true);
     setLoadError(null);
     try {
@@ -172,6 +182,7 @@ export function TextPreviewOverlay() {
       timelineLoadSequenceRef.current += 1;
       setDiffVisible(false);
       setRequest(target);
+      setSearchContext(fileOpenSearchContextFromEvent(event, fileId));
       setContent("");
       setTimeline(null);
       setTimelineError(null);
@@ -222,6 +233,7 @@ export function TextPreviewOverlay() {
     if (!presence.mounted) {
       loadSequenceRef.current += 1;
       setRequest(null);
+      setSearchContext(null);
       setTimeline(null);
       setTimelineVisible(false);
     }
@@ -289,7 +301,7 @@ export function TextPreviewOverlay() {
             onRetry={() => void loadTimeline(request)}
           /> : null) : loading ? <div className="file-text-preview-state"><LoaderCircle className="is-spinning" size={22} /><span>{copy.loading}</span></div>
             : loadError ? <div className="file-text-preview-state is-error"><AlertTriangle size={22} /><strong>{copy.loadError}</strong><span>{loadError}</span><button type="button" onClick={() => void (selectedVersion ? selectVersion(selectedVersion, true) : loadCurrent(request))}>{copy.retry}</button></div>
-              : content ? <pre data-native-context-menu="true">{content}</pre> : <p>{copy.empty}</p>}
+              : content ? <pre ref={contentRef} data-native-context-menu="true">{content}</pre> : <p>{copy.empty}</p>}
         </main>
       </div>
     </div>

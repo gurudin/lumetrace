@@ -167,6 +167,44 @@
 
 .file-pdf-preview-page > canvas.is-rendered { opacity: 1; }
 
+.file-pdf-preview-text-layer {
+  --min-font-size: 1;
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+  overflow: clip;
+  color-scheme: only light;
+  line-height: 1;
+  opacity: 1;
+  pointer-events: none;
+  text-align: initial;
+  text-size-adjust: none;
+  transform-origin: 0 0;
+}
+
+.file-pdf-preview-text-layer :is(span, br) {
+  position: absolute;
+  color: transparent;
+  cursor: default;
+  white-space: pre;
+  transform-origin: 0 0;
+}
+
+.file-pdf-preview-text-layer > :not(.markedContent),
+.file-pdf-preview-text-layer .markedContent span:not(.markedContent) {
+  --font-height: 0;
+  --scale-x: 1;
+  --rotate: 0deg;
+  z-index: 1;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
+}
+
+.file-pdf-preview-text-layer .markedContent { display: contents; }
+.file-pdf-preview-text-layer .file-preview-search-highlight { color: transparent; }
+
 .file-pdf-preview-page-loading {
   position: absolute;
   inset: 0;

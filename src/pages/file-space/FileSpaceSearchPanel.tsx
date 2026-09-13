@@ -21,6 +21,7 @@ import { globalSearchShortcutLabel, isGlobalSearchShortcut } from "./globalSearc
 import "./file-space-search-panel.css";
 import { useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
 import { splitSearchText } from "./searchTextHighlight";
+import type { FileOpenSearchContext } from "./fileOpenSearchContext";
 
 export type FileSpaceSearchScope = "name" | "content" | "tag";
 
@@ -78,7 +79,7 @@ interface FileSpaceSearchPanelProps {
   scopes: FileSpaceSearchScope[];
   onOpen: () => void;
   onClose: () => void;
-  onOpenFile: (file: FileSpaceSearchFile) => void;
+  onOpenFile: (file: FileSpaceSearchFile, context: FileOpenSearchContext | null) => void;
 }
 
 function matchesSearch(value: string, query: string) {
@@ -193,7 +194,15 @@ export function FileSpaceSearchPanel({
 
   const openFile = (file: FileSpaceSearchFile) => {
     restoreFocusRef.current = false;
-    onOpenFile(file);
+    const match = matchesByFileId.get(file.id);
+    const section = preview?.fileId === file.id ? activeSection : null;
+    onOpenFile(file, match?.contentMatch ? {
+      fileId: file.id,
+      query: query.trim(),
+      lineNumber: section?.lineNumber ?? null,
+      pageNumber: section?.pageNumber ?? null,
+      matchIndex: preview?.fileId === file.id ? activeHitIndex : 0,
+    } : null);
   };
 
   useEffect(() => {

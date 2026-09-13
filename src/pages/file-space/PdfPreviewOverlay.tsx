@@ -20,7 +20,13 @@ import { useVersionAnnotationUpdates } from "./VersionAnnotation";
 import { VersionTimelineRegion, VersionTimelineToggle } from "./VersionTimelineToggle";
 import { shouldShowVersionTimelineByDefault } from "./versionTimelineVisibility";
 import { PreviewFileHeading } from "./PreviewFileHeading";
+import {
+  fileOpenSearchContextFromEvent,
+  type FileOpenSearchContext,
+} from "./fileOpenSearchContext";
+import { highlightSearchResult } from "./searchResultHighlight";
 import "./pdf-preview-overlay.css";
+import "./search-result-highlight.css";
 
 interface PdfPreviewRequest {
   fileId: string;
@@ -36,6 +42,7 @@ interface PdfPageCanvasProps {
   pageNumber: number;
   scale: number;
   scrollRoot: HTMLElement | null;
+  searchContext: FileOpenSearchContext | null;
 }
 
 const zoomMin = 0.5;
@@ -87,10 +94,13 @@ function createPdfVisualFixture() {
   return new TextEncoder().encode(output);
 }
 
-function PdfPageCanvas({ document, pageNumber, scale, scrollRoot }: PdfPageCanvasProps) {
+function PdfPageCanvas({ document, pageNumber, scale, scrollRoot, searchContext }: PdfPageCanvasProps) {
   const holderRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const textLayerRef = useRef<HTMLDivElement>(null);
   const renderTaskRef = useRef<RenderTask | null>(null);
+  const textLayerTaskRef = useRef<{ cancel: () => void } | null>(null);
+  const textHighlightCleanupRef = useRef<(() => void) | null>(null);
   const [nearViewport, setNearViewport] = useState(pageNumber <= 2);
   const [baseSize, setBaseSize] = useState({ width: 612, height: 792 });
   const [rendered, setRendered] = useState(false);
@@ -151,6 +161,48 @@ function PdfPageCanvas({ document, pageNumber, scale, scrollRoot }: PdfPageCanva
     };
   }, [document, nearViewport, pageNumber, scale]);
 
+  useEffect(() => {
+    const container = textLayerRef.current;
+    textLayerTaskRef.current?.cancel();
+    textLayerTaskRef.current = null;
+    textHighlightCleanupRef.current?.();
+    textHighlightCleanupRef.current = null;
+    container?.replaceChildren();
+    if (!container || !nearViewport || !searchContext?.query.trim()) return undefined;
+    let cancelled = false;
+    void (async () => {
+      const [page, pdfjs] = await Promise.all([
+        document.getPage(pageNumber),
+        import("pdfjs-dist"),
+      ]);
+      if (cancelled) return;
+      container.style.setProperty("--total-scale-factor", String(scale));
+      const task = new pdfjs.TextLayer({
+        textContentSource: await page.getTextContent(),
+        container,
+        viewport: page.getViewport({ scale }),
+      });
+      if (cancelled) {
+        task.cancel();
+        return;
+      }
+      textLayerTaskRef.current = task;
+      await task.render();
+      if (cancelled) return;
+      textHighlightCleanupRef.current = highlightSearchResult(container, searchContext);
+    })().catch(() => {
+      if (!cancelled) container.replaceChildren();
+    });
+    return () => {
+      cancelled = true;
+      textLayerTaskRef.current?.cancel();
+      textLayerTaskRef.current = null;
+      textHighlightCleanupRef.current?.();
+      textHighlightCleanupRef.current = null;
+      container.replaceChildren();
+    };
+  }, [document, nearViewport, pageNumber, scale, searchContext]);
+
   return (
     <section
       ref={holderRef}
@@ -162,6 +214,7 @@ function PdfPageCanvas({ document, pageNumber, scale, scrollRoot }: PdfPageCanva
       {!rendered && !failed ? <span className="file-pdf-preview-page-loading" aria-hidden="true" /> : null}
       {failed ? <AlertTriangle className="file-pdf-preview-page-error" size={24} aria-hidden="true" /> : null}
       <canvas ref={canvasRef} className={rendered ? "is-rendered" : ""} />
+      <div ref={textLayerRef} className="textLayer file-pdf-preview-text-layer" aria-hidden="true" />
     </section>
   );
 }
@@ -194,6 +247,7 @@ export function PdfPreviewOverlay() {
     timelineLoading: t("fileSpace.preview.common.loading"),
   };
   const [request, setRequest] = useState<PdfPreviewRequest | null>(null);
+  const [searchContext, setSearchContext] = useState<FileOpenSearchContext | null>(null);
   const [open, setOpen] = useState(false);
   const [pdfDocument, setPdfDocument] = useState<PDFDocumentProxy | null>(null);
   const [loading, setLoading] = useState(false);
@@ -314,6 +368,7 @@ export function PdfPreviewOverlay() {
   const selectVersion = useCallback(async (version: PreviewTaskFileVersion) => {
     if (!request || loading || selectedVersionId === version.id) return;
     setSelectedVersionId(version.id);
+    setSearchContext(null);
     await loadPdf(request, version);
   }, [loadPdf, loading, request, selectedVersionId]);
 
@@ -359,6 +414,7 @@ export function PdfPreviewOverlay() {
       event.stopImmediatePropagation();
       returnFocusRef.current = card.button;
       setRequest(card.request);
+      setSearchContext(fileOpenSearchContextFromEvent(event, card.request.fileId));
       setTimeline(null);
       setTimelineError(null);
       setTimelineVisible(shouldShowVersionTimelineByDefault());
@@ -470,9 +526,15 @@ export function PdfPreviewOverlay() {
   }, [pdfDocument]);
 
   useEffect(() => {
+    if (!pdfDocument || !searchContext?.pageNumber) return;
+    scrollToPage(searchContext.pageNumber);
+  }, [pdfDocument, scrollToPage, searchContext]);
+
+  useEffect(() => {
     if (!presence.mounted) {
       destroyDocument();
       setRequest(null);
+      setSearchContext(null);
       setScrollRoot(null);
       setTimeline(null);
       setTimelineVisible(false);
@@ -591,6 +653,9 @@ export function PdfPreviewOverlay() {
                 pageNumber={index + 1}
                 scale={scale}
                 scrollRoot={scrollRoot}
+                searchContext={!searchContext?.pageNumber || searchContext.pageNumber === index + 1
+                  ? searchContext
+                  : null}
               />
             ))}
           </div>

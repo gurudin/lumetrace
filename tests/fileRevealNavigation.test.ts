@@ -5,6 +5,11 @@ import { FileRevealNavigation } from "../src/pages/file-space/fileRevealNavigati
 import { pruneSelection, selectionVisibilityWithPendingReveal } from "../src/pages/file-space/fileSelection.ts";
 import { calculateFileListLayout, calculateJustifiedFileLayout, visibleJustifiedFileIds } from "../src/pages/file-space/fileJustifiedLayout.ts";
 import { resolveFileDoubleClickRoute } from "../src/pages/file-space/fileOpenRouting.ts";
+import {
+  attachFileOpenSearchContext,
+  fileOpenSearchContextFromEvent,
+  type FileOpenSearchContext,
+} from "../src/pages/file-space/fileOpenSearchContext.ts";
 
 const file = { id: "test-file", folderId: "documents", name: "test-version.md" };
 const other = { id: "other-file", folderId: "elsewhere", name: "other.txt" };
@@ -13,8 +18,47 @@ test("global search opens the selected result after revealing its card", () => {
   const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
   assert.match(
     page,
-    /const openFileFromGlobalSearch = \(file: FileSpaceSearchFile\) => \{\s*revealFileInWorkspace\(file, true\);\s*\};/,
+    /revealFileInWorkspace\(file, true, context \?\? undefined\);/,
   );
+});
+
+test("search context reaches only the matching file open event", () => {
+  const context: FileOpenSearchContext = {
+    fileId: file.id,
+    query: "version restore",
+    lineNumber: 18,
+    pageNumber: null,
+    matchIndex: 1,
+  };
+  const event = attachFileOpenSearchContext(new Event("dblclick"), context);
+  assert.equal(fileOpenSearchContextFromEvent(event, file.id), context);
+  assert.equal(fileOpenSearchContextFromEvent(event, other.id), null);
+  assert.equal(fileOpenSearchContextFromEvent(new Event("dblclick"), file.id), null);
+});
+
+test("reveal navigation carries search context into the one open action", () => {
+  const context: FileOpenSearchContext = {
+    fileId: file.id,
+    query: "version",
+    lineNumber: 4,
+    pageNumber: null,
+    matchIndex: 0,
+  };
+  const navigation = new FileRevealNavigation<typeof file, FileOpenSearchContext>();
+  const request = navigation.start(file, true, true, context);
+  let received: FileOpenSearchContext | undefined;
+  assert.equal(navigation.completeWithTarget(request, file, () => {}, (_target, value) => {
+    received = value;
+  }), true);
+  assert.equal(received, context);
+});
+
+test("search-open context is consumed by every searchable document preview", () => {
+  for (const name of ["MarkdownPreviewOverlay", "TextPreviewOverlay", "PdfPreviewOverlay"]) {
+    const source = readFileSync(new URL(`../src/pages/file-space/${name}.tsx`, import.meta.url), "utf8");
+    assert.match(source, /fileOpenSearchContextFromEvent\(event,/);
+    assert.match(source, /SearchResult|highlightSearchResult/);
+  }
 });
 
 test("a single citation click survives the old page and selects without opening", () => {

@@ -3,19 +3,20 @@ export interface RevealableFile {
   folderId: string | null;
 }
 
-export interface FileRevealRequest<T extends RevealableFile> {
+export interface FileRevealRequest<T extends RevealableFile, Context = undefined> {
   file: T;
   open: boolean;
   pageReady: boolean;
+  openContext: Context | undefined;
 }
 
 // A reveal belongs to one navigation, not to a fixed number of animation frames.
 // Keep its target pinned until the destination page AND virtualized card exist.
-export class FileRevealNavigation<T extends RevealableFile> {
-  pending: FileRevealRequest<T> | null = null;
+export class FileRevealNavigation<T extends RevealableFile, Context = undefined> {
+  pending: FileRevealRequest<T, Context> | null = null;
 
-  start(file: T, open = false, pageReady = false) {
-    const request = { file, open, pageReady };
+  start(file: T, open = false, pageReady = false, openContext?: Context) {
+    const request = { file, open, pageReady, openContext };
     this.pending = request;
     return request;
   }
@@ -24,7 +25,7 @@ export class FileRevealNavigation<T extends RevealableFile> {
     this.pending = null;
   }
 
-  acceptPage(request: FileRevealRequest<T> | null, folderId: string | null, files: T[]) {
+  acceptPage(request: FileRevealRequest<T, Context> | null, folderId: string | null, files: T[]) {
     if (!request || request !== this.pending || request.file.folderId !== folderId) return files;
     request.pageReady = true;
     return files.some((file) => file.id === request.file.id) ? files : [request.file, ...files];
@@ -36,15 +37,15 @@ export class FileRevealNavigation<T extends RevealableFile> {
   }
 
   completeWithTarget<Target>(
-    request: FileRevealRequest<T>,
+    request: FileRevealRequest<T, Context>,
     target: Target | null,
     focus: (target: Target) => void,
-    open: (target: Target) => void,
+    open: (target: Target, context: Context | undefined) => void,
   ) {
     if (request !== this.pending || !request.pageReady || !target) return false;
     this.pending = null;
     focus(target);
-    if (request.open) open(target);
+    if (request.open) open(target, request.openContext);
     return true;
   }
 }
