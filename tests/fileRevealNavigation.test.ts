@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 import { FileRevealNavigation } from "../src/pages/file-space/fileRevealNavigation.ts";
 import { pruneSelection, selectionVisibilityWithPendingReveal } from "../src/pages/file-space/fileSelection.ts";
@@ -7,6 +8,14 @@ import { resolveFileDoubleClickRoute } from "../src/pages/file-space/fileOpenRou
 
 const file = { id: "test-file", folderId: "documents", name: "test-version.md" };
 const other = { id: "other-file", folderId: "elsewhere", name: "other.txt" };
+
+test("global search opens the selected result after revealing its card", () => {
+  const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
+  assert.match(
+    page,
+    /const openFileFromGlobalSearch = \(file: FileSpaceSearchFile\) => \{\s*revealFileInWorkspace\(file, true\);\s*\};/,
+  );
+});
 
 test("a single citation click survives the old page and selects without opening", () => {
   const navigation = new FileRevealNavigation<typeof file>();

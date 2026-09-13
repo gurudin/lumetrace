@@ -1777,7 +1777,7 @@ export function FileSpacePage() {
   };
 
   const openFileFromGlobalSearch = (file: FileSpaceSearchFile) => {
-    revealFileInWorkspace(file);
+    revealFileInWorkspace(file, true);
   };
 
   const openFileFromAiSource = async (
