@@ -80,10 +80,13 @@ export const ko = {
       },
       center: {
         sections: {
-          general: "언어",
+          general: "일반",
           appearance: "화면 모드",
         },
+        generalDescription: "언어와 일반 인터페이스 옵션을 조정합니다. 변경 사항은 즉시 적용되고 이 기기에 저장됩니다.",
         languageDescription: "Lume Trace의 인터페이스 언어를 선택합니다. 변경 사항은 즉시 적용됩니다.",
+        showHelpButton: "도움말 버튼 표시",
+        showHelpButtonDescription: "창 오른쪽 아래에 도움말 버튼을 표시합니다.",
         appearanceDescription: "화면 모드를 선택하고 색상과 텍스트 가독성을 조절합니다. 변경 사항은 즉시 적용됩니다.",
         theme: "테마",
         themeDescription: "Lume Trace의 화면 모드를 선택합니다. ‘시스템’은 기기의 화면 모드 설정을 따릅니다.",

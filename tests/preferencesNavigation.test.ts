@@ -10,11 +10,19 @@ import {
 
 test("unified preferences exposes AI and background sections in the requested order", () => {
   assert.deepEqual(preferencesSectionKeys, [
-    "appearance",
     "general",
+    "appearance",
     "aiService",
     "background",
   ]);
+});
+
+test("preferences opens with General and exposes the persistent Help button control", () => {
+  const preferences = readFileSync(new URL("../src/pages/file-space/FileSpacePreferences.tsx", import.meta.url), "utf8");
+  const helpCenter = readFileSync(new URL("../src/shared/help/HelpCenter.tsx", import.meta.url), "utf8");
+  assert.match(preferences, /initialSection = "general"/);
+  assert.match(preferences, /setHelpButtonVisibility\(visible\)/);
+  assert.match(helpCenter, /if \(!visible\) return null/);
 });
 
 test("settings shortcuts route to their unified preferences sections", () => {

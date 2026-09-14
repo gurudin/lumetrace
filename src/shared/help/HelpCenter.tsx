@@ -2,12 +2,17 @@ import { BookOpen, CircleHelp, Search, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { helpArticles, searchHelp } from "./helpContent";
+import {
+  getHelpButtonVisibility,
+  helpButtonVisibilityChangeEvent,
+} from "./helpButtonVisibility";
 import "./help-center.css";
 
 /** A non-modal, offline guide shared by both application entries. */
 export function HelpCenter() {
   const { t, i18n } = useTranslation();
   const language = i18n.resolvedLanguage ?? "en-US";
+  const [visible, setVisible] = useState(getHelpButtonVisibility);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selected, setSelected] = useState("start");
@@ -24,7 +29,20 @@ export function HelpCenter() {
   useEffect(() => {
     if (open) search.current?.focus({ preventScroll: true });
   }, [open]);
+  useEffect(() => {
+    const updateVisibility = () => setVisible(getHelpButtonVisibility());
+    window.addEventListener(helpButtonVisibilityChangeEvent, updateVisibility);
+    window.addEventListener("storage", updateVisibility);
+    return () => {
+      window.removeEventListener(helpButtonVisibilityChangeEvent, updateVisibility);
+      window.removeEventListener("storage", updateVisibility);
+    };
+  }, []);
+  useEffect(() => {
+    if (!visible && open) setOpen(false);
+  }, [open, visible]);
   useEffect(() => { reader.current?.scrollTo(0, 0); }, [article?.id, language]);
+  if (!visible) return null;
   return <div className="help-center" data-help-center onKeyDown={event => {
     // Editing and navigation here must not act on selected workspace files.
     event.stopPropagation();

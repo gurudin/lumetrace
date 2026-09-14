@@ -1,6 +1,6 @@
 export const preferencesSectionKeys = [
-  "appearance",
   "general",
+  "appearance",
   "aiService",
   "background",
 ] as const;

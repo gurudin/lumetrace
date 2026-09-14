@@ -80,10 +80,13 @@ export const ja = {
       },
       center: {
         sections: {
-          general: "言語",
+          general: "一般",
           appearance: "外観",
         },
+        generalDescription: "言語と一般的なインターフェイス設定を調整します。変更はすぐに適用され、このデバイスに保存されます。",
         languageDescription: "Lume Traceの表示言語を選択します。変更はすぐに適用されます。",
+        showHelpButton: "ヘルプボタンを表示",
+        showHelpButtonDescription: "ウインドウの右下にヘルプボタンを表示します。",
         appearanceDescription: "テーマを選択し、色と文字の読みやすさを調整します。変更はすぐに適用されます。",
         theme: "テーマ",
         themeDescription: "Lume Traceの外観を選択します。「システム設定」はデバイスの外観設定に従います。",

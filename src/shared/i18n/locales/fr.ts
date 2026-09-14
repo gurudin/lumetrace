@@ -80,10 +80,13 @@ export const fr = {
       },
       center: {
         sections: {
-          general: "Langue",
+          general: "Général",
           appearance: "Apparence",
         },
+        generalDescription: "Réglez la langue et les options courantes de l’interface. Les modifications s’appliquent immédiatement et sont enregistrées localement.",
         languageDescription: "Choisissez la langue de l’interface de Lume Trace. Les modifications s’appliquent immédiatement.",
+        showHelpButton: "Afficher le bouton Aide",
+        showHelpButtonDescription: "Affiche le bouton Aide dans l’angle inférieur droit de la fenêtre.",
         appearanceDescription: "Choisissez un thème et ajustez les couleurs et la lisibilité du texte. Les modifications s’appliquent immédiatement.",
         theme: "Thème",
         themeDescription: "Choisissez l’apparence de Lume Trace. « Système » reprend le réglage de l’appareil.",

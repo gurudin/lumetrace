@@ -80,10 +80,13 @@ export const zhTW = {
       },
       center: {
         sections: {
-          general: "語言",
+          general: "一般",
           appearance: "外觀",
         },
+        generalDescription: "調整語言與常用介面選項；變更會立即套用並儲存在本機。",
         languageDescription: "選擇 Lume Trace 的介面語言，變更會立即套用。",
+        showHelpButton: "顯示「幫助」按鈕",
+        showHelpButtonDescription: "在視窗右下角顯示「幫助」入口。",
         appearanceDescription: "選擇介面主題，並調整顏色與文字閱讀體驗；變更會立即套用。",
         theme: "主題",
         themeDescription: "選擇 Lume Trace 的外觀。「跟隨系統」會使用裝置的外觀設定。",

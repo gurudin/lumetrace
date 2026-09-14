@@ -179,7 +179,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
   const semanticActionBusyRef = useRef(false);
   const [isMenuOpen, setMenuOpen] = useState(false);
   const [activePanel, setActivePanel] = useState<SettingsPanel | null>(null);
-  const [preferencesInitialSection, setPreferencesInitialSection] = useState<PreferencesSection>("appearance");
+  const [preferencesInitialSection, setPreferencesInitialSection] = useState<PreferencesSection>("general");
   const [preferencesNavigationRequest, setPreferencesNavigationRequest] = useState(0);
   const [backupFeedback, setBackupFeedback] = useState<BackupFeedback>({ status: "idle" });
   const [restoreFeedback, setRestoreFeedback] = useState<RestoreFeedback>({ status: "idle" });
@@ -214,7 +214,7 @@ export function FileSpaceSettingsMenu<TSnapshot>({
     setActivePanel(panel);
   }, []);
 
-  const openPreferences = useCallback((section: PreferencesSection = "appearance") => {
+  const openPreferences = useCallback((section: PreferencesSection = "general") => {
     setMenuOpen(false);
     setPreferencesInitialSection(section);
     setPreferencesNavigationRequest((request) => request + 1);

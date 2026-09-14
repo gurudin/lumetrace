@@ -80,10 +80,13 @@ export const de = {
       },
       center: {
         sections: {
-          general: "Sprache",
+          general: "Allgemein",
           appearance: "Erscheinungsbild",
         },
+        generalDescription: "Passen Sie Sprache und allgemeine Oberflächenoptionen an. Änderungen werden sofort angewendet und lokal gespeichert.",
         languageDescription: "Wählen Sie die Sprache der Benutzeroberfläche. Änderungen werden sofort angewendet.",
+        showHelpButton: "Hilfetaste anzeigen",
+        showHelpButtonDescription: "Zeigt die Hilfetaste unten rechts im Fenster an.",
         appearanceDescription: "Wählen Sie ein Erscheinungsbild und passen Sie Farbe und Textdarstellung an. Änderungen werden sofort angewendet.",
         theme: "Darstellung",
         themeDescription: "Wählen Sie das Erscheinungsbild von Lume Trace. „System“ übernimmt die Einstellung des Geräts.",

@@ -7,6 +7,7 @@ import {
   Moon,
   Palette,
   RotateCcw,
+  Settings2,
   Sun,
 } from "lucide-react";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
@@ -18,6 +19,11 @@ import {
   type LanguagePreference,
 } from "../../shared/i18n/i18n";
 import { getSystemLanguage } from "../../shared/i18n/language";
+import {
+  getHelpButtonVisibility,
+  helpButtonVisibilityChangeEvent,
+  setHelpButtonVisibility,
+} from "../../shared/help/helpButtonVisibility";
 import type { ThemePreference, UiFont } from "../../shared/theme/theme-context";
 import { useTheme } from "../../shared/theme/useTheme";
 import { MacSelect, type MacSelectOption } from "../../shared/ui/MacSelect";
@@ -67,7 +73,7 @@ function sizeOptions(values: readonly number[]) {
 }
 
 export function FileSpacePreferences({
-  initialSection = "appearance",
+  initialSection = "general",
   navigationRequest = 0,
   onClose,
   onOpenSemantic,
@@ -87,6 +93,7 @@ export function FileSpacePreferences({
   const [activeSection, setActiveSection] = useState<PreferencesSection>(initialSection);
   const [hasMountedAiService, setHasMountedAiService] = useState(initialSection === "aiService");
   const [languagePreference, setLanguageChoice] = useState<LanguagePreference>(getLanguagePreference);
+  const [helpButtonVisible, setHelpButtonVisibleState] = useState(getHelpButtonVisibility);
   const contentRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -97,6 +104,16 @@ export function FileSpacePreferences({
   useLayoutEffect(() => {
     if (contentRef.current) contentRef.current.scrollTop = 0;
   }, [activeSection, navigationRequest]);
+
+  useEffect(() => {
+    const updateVisibility = () => setHelpButtonVisibleState(getHelpButtonVisibility());
+    window.addEventListener(helpButtonVisibilityChangeEvent, updateVisibility);
+    window.addEventListener("storage", updateVisibility);
+    return () => {
+      window.removeEventListener(helpButtonVisibilityChangeEvent, updateVisibility);
+      window.removeEventListener("storage", updateVisibility);
+    };
+  }, []);
 
   const systemLanguage = getSystemLanguage();
   const systemLanguageName = languageNames.get(systemLanguage) ?? "English";
@@ -117,7 +134,7 @@ export function FileSpacePreferences({
   const codeSizeOptions = useMemo(() => sizeOptions(codeFontSizes), []);
 
   const sectionIcons: Record<PreferencesSection, typeof Languages> = {
-    general: Languages,
+    general: Settings2,
     appearance: Palette,
     aiService: Bot,
     background: Activity,
@@ -162,7 +179,7 @@ export function FileSpacePreferences({
           <section className="file-space-preferences-page" aria-labelledby="file-space-preferences-general-title">
             <header>
               <h3 id="file-space-preferences-general-title">{t("fileSpace.preferences.center.sections.general")}</h3>
-              <p>{t("fileSpace.settings.preferencesDescription")}</p>
+              <p>{t("fileSpace.preferences.center.generalDescription")}</p>
             </header>
             <div className="file-space-preferences-group">
               <div className="file-space-preferences-row">
@@ -182,6 +199,25 @@ export function FileSpacePreferences({
                     void setLanguagePreference(preference);
                   }}
                 />
+              </div>
+              <div className="file-space-preferences-row">
+                <div>
+                  <strong>{t("fileSpace.preferences.center.showHelpButton")}</strong>
+                  <span>{t("fileSpace.preferences.center.showHelpButtonDescription")}</span>
+                </div>
+                <label className="file-space-preferences-switch">
+                  <input
+                    type="checkbox"
+                    aria-label={t("fileSpace.preferences.center.showHelpButton")}
+                    checked={helpButtonVisible}
+                    onChange={(event) => {
+                      const visible = event.target.checked;
+                      setHelpButtonVisibleState(visible);
+                      setHelpButtonVisibility(visible);
+                    }}
+                  />
+                  <span aria-hidden="true" />
+                </label>
               </div>
             </div>
           </section>

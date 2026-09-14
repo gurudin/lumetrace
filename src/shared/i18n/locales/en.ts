@@ -80,10 +80,13 @@ export const en = {
       },
       center: {
         sections: {
-          general: "Language",
+          general: "General",
           appearance: "Appearance",
         },
+        generalDescription: "Manage language and common interface options. Changes apply immediately and are saved locally.",
         languageDescription: "Choose the interface language for Lume Trace. Changes apply immediately.",
+        showHelpButton: "Show Help button",
+        showHelpButtonDescription: "Show the Help button in the bottom-right corner of the window.",
         appearanceDescription: "Choose a theme and adjust color and text readability. Changes apply immediately.",
         theme: "Theme",
         themeDescription: "Choose how Lume Trace looks. System follows your device's appearance setting.",

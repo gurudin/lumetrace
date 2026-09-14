@@ -78,8 +78,9 @@ test("an explicit language preference overrides the system language", () => {
 });
 
 test("preferences center exposes appearance, language, AI, and background sections", () => {
-  assert.equal(zh.fileSpace.preferences.center.sections.general, "语言");
+  assert.equal(zh.fileSpace.preferences.center.sections.general, "常规");
   assert.equal(zh.fileSpace.preferences.center.sections.appearance, "外观");
+  assert.equal(zh.fileSpace.preferences.center.showHelpButton, "显示帮助按钮");
   assert.equal(zh.fileSpace.settings.aiServiceTitle, "AI 服务");
   assert.equal(zh.fileSpace.settings.backgroundTitle, "后台任务与状态");
   assert.equal(zh.fileSpace.preferences.center.theme, "主题");
