@@ -487,52 +487,89 @@ fn migrate_to_v2(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
-fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
-    let mut version = connection
-        .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
-        .map_err(|error| format!("Unable to read Lume Trace schema version: {error}"))?;
+fn migrate_to_v3(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    transaction.execute_batch(
+        // Empty at migration time: populate old rows in small background
+        // batches, not by scanning a large workspace during startup. Every
+        // object is idempotent so a stale version marker can be repaired.
+        "CREATE TABLE IF NOT EXISTS file_space_file_lookup (
+           file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
+           file_name TEXT NOT NULL COLLATE NOCASE,
+           relative_path TEXT NOT NULL COLLATE NOCASE
+         );
+         CREATE INDEX IF NOT EXISTS idx_file_lookup_name ON file_space_file_lookup(file_name, file_id);
+         CREATE INDEX IF NOT EXISTS idx_file_lookup_path ON file_space_file_lookup(relative_path, file_id);
+         CREATE TRIGGER IF NOT EXISTS file_lookup_insert AFTER INSERT ON files
+         WHEN new.trashed_at IS NULL AND new.storage_path IS NOT NULL BEGIN
+           INSERT INTO file_space_file_lookup VALUES(new.id, new.original_name, new.storage_path);
+         END;
+         CREATE TRIGGER IF NOT EXISTS file_lookup_update AFTER UPDATE OF original_name, storage_path, trashed_at ON files BEGIN
+           DELETE FROM file_space_file_lookup WHERE file_id = old.id;
+           INSERT INTO file_space_file_lookup SELECT new.id, new.original_name, new.storage_path
+           WHERE new.trashed_at IS NULL AND new.storage_path IS NOT NULL;
+         END;",
+    )
+}
 
-    if version > CURRENT_SCHEMA_VERSION {
-        return Err(format!(
-            "This Lume Trace database uses schema version {version}, but this app supports up to version {CURRENT_SCHEMA_VERSION}"
-        ));
+fn migrate_to_v4(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    let columns = table_columns(transaction, "file_space_artifact_versions")?;
+    if !columns.iter().any(|column| column == "note") {
+        transaction.execute(
+            "ALTER TABLE file_space_artifact_versions
+             ADD COLUMN note TEXT NOT NULL DEFAULT ''",
+            [],
+        )?;
     }
+    if !columns.iter().any(|column| column == "is_milestone") {
+        transaction.execute(
+            "ALTER TABLE file_space_artifact_versions
+             ADD COLUMN is_milestone INTEGER NOT NULL DEFAULT 0
+             CHECK (is_milestone IN (0, 1))",
+            [],
+        )?;
+    }
+    Ok(())
+}
 
-    while version < CURRENT_SCHEMA_VERSION {
-        let next_version = version + 1;
+fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
+    loop {
+        // This first read is only for a useful lock error. The authoritative
+        // version is read again after the immediate transaction owns the lock.
+        let observed_version = connection
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("Unable to read Lume Trace schema version: {error}"))?;
+        if observed_version > CURRENT_SCHEMA_VERSION {
+            return Err(format!(
+                "This Lume Trace database uses schema version {observed_version}, but this app supports up to version {CURRENT_SCHEMA_VERSION}"
+            ));
+        }
+        if observed_version == CURRENT_SCHEMA_VERSION {
+            return Ok(());
+        }
+        let observed_next = observed_version + 1;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|error| {
-                format!("Unable to start Lume Trace schema migration {next_version}: {error}")
+                format!("Unable to start Lume Trace schema migration {observed_next}: {error}")
             })?;
+        let locked_version = transaction
+            .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
+            .map_err(|error| format!("Unable to read Lume Trace schema version: {error}"))?;
+        if locked_version > CURRENT_SCHEMA_VERSION {
+            return Err(format!(
+                "This Lume Trace database uses schema version {locked_version}, but this app supports up to version {CURRENT_SCHEMA_VERSION}"
+            ));
+        }
+        if locked_version == CURRENT_SCHEMA_VERSION {
+            return Ok(());
+        }
+        let next_version = locked_version + 1;
 
         match next_version {
             1 => migrate_to_v1(&transaction),
             2 => migrate_to_v2(&transaction),
-            3 => transaction.execute_batch(
-                // Empty at migration time: populate old rows in small background
-                // batches, not by scanning a large workspace during startup.
-                "CREATE TABLE file_space_file_lookup (
-                   file_id TEXT PRIMARY KEY REFERENCES files(id) ON DELETE CASCADE,
-                   file_name TEXT NOT NULL COLLATE NOCASE,
-                   relative_path TEXT NOT NULL COLLATE NOCASE
-                 );
-                 CREATE INDEX idx_file_lookup_name ON file_space_file_lookup(file_name, file_id);
-                 CREATE INDEX idx_file_lookup_path ON file_space_file_lookup(relative_path, file_id);
-                 CREATE TRIGGER file_lookup_insert AFTER INSERT ON files
-                 WHEN new.trashed_at IS NULL AND new.storage_path IS NOT NULL BEGIN
-                   INSERT INTO file_space_file_lookup VALUES(new.id, new.original_name, new.storage_path);
-                 END;
-                 CREATE TRIGGER file_lookup_update AFTER UPDATE OF original_name, storage_path, trashed_at ON files BEGIN
-                   DELETE FROM file_space_file_lookup WHERE file_id = old.id;
-                   INSERT INTO file_space_file_lookup SELECT new.id, new.original_name, new.storage_path
-                   WHERE new.trashed_at IS NULL AND new.storage_path IS NOT NULL;
-                 END;",
-            ),
-            4 => transaction.execute_batch(
-                "ALTER TABLE file_space_artifact_versions ADD COLUMN note TEXT NOT NULL DEFAULT '';
-                 ALTER TABLE file_space_artifact_versions ADD COLUMN is_milestone INTEGER NOT NULL DEFAULT 0 CHECK (is_milestone IN (0, 1));",
-            ),
+            3 => migrate_to_v3(&transaction),
+            4 => migrate_to_v4(&transaction),
             // CURRENT_SCHEMA_VERSION and this match must advance together.
             _ => unreachable!("missing migration for schema version {next_version}"),
         }
@@ -548,10 +585,7 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
         transaction.commit().map_err(|error| {
             format!("Unable to commit Lume Trace schema migration {next_version}: {error}")
         })?;
-        version = next_version;
     }
-
-    Ok(())
 }
 
 pub(crate) fn open_connection(path: &PathBuf) -> Result<Connection, String> {
@@ -561,6 +595,9 @@ pub(crate) fn open_connection(path: &PathBuf) -> Result<Connection, String> {
     }
     let mut connection = Connection::open(path)
         .map_err(|error| format!("Unable to open Lume Trace database: {error}"))?;
+    connection
+        .busy_timeout(std::time::Duration::from_secs(5))
+        .map_err(|error| format!("Unable to configure Lume Trace database: {error}"))?;
     connection
         .pragma_update(None, "foreign_keys", "ON")
         .map_err(|error| format!("Unable to enable Lume Trace database integrity: {error}"))?;
@@ -1073,6 +1110,114 @@ mod tests {
                 .unwrap(),
             "[\"existing-context\"]"
         );
+    }
+
+    #[test]
+    fn current_schema_recovers_a_stale_v1_marker_without_reapplying_objects() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        migrate_connection(&mut connection).unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO file_space_ai_turns
+                   (id, question, status, created_at, updated_at, context_json)
+                 VALUES ('current-turn', 'preserve me', 'completed', 1, 2,
+                         '[\"current-context\"]');
+                 INSERT INTO files(id, original_name, storage_path, created_at)
+                 VALUES ('current-file', 'current.md', 'current.md', 1);
+                 INSERT INTO file_space_artifacts
+                   (file_id, task_id, logical_key, current_version_id, created_at, updated_at)
+                 VALUES ('current-file', 'current-task', 'current.md', 'current-version', 1, 1);
+                 INSERT INTO file_space_artifact_versions
+                   (id, file_id, version_number, snapshot_path, sha256, size_bytes,
+                    produced_name, origin, produced_at, created_at, note, is_milestone)
+                 VALUES ('current-version', 'current-file', 1, 'current.blob',
+                         'current-hash', 7, 'current.md', 'user_edit', 1, 1,
+                         'preserved note', 1);",
+            )
+            .unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+
+        migrate_connection(&mut connection).unwrap();
+
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT context_json FROM file_space_ai_turns WHERE id='current-turn'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "[\"current-context\"]"
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT note, is_milestone FROM file_space_artifact_versions
+                     WHERE id='current-version'",
+                    [],
+                    |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
+                )
+                .unwrap(),
+            ("preserved note".to_owned(), true)
+        );
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT file_name FROM file_space_file_lookup
+                     WHERE file_id='current-file'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "current.md"
+        );
+    }
+
+    #[test]
+    fn concurrent_first_openers_cannot_move_the_schema_version_backwards() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-concurrent-migration-{}", Uuid::new_v4()));
+        fs::create_dir_all(&root).unwrap();
+        let path = root.join("lumetrace.sqlite3");
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(9));
+        let handles = (0..8)
+            .map(|_| {
+                let path = path.clone();
+                let barrier = barrier.clone();
+                std::thread::spawn(move || {
+                    barrier.wait();
+                    open_connection(&path)
+                })
+            })
+            .collect::<Vec<_>>();
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap().unwrap();
+        }
+
+        let connection = Connection::open(&path).unwrap();
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        for (table, column) in [
+            ("file_space_ai_turns", "context_json"),
+            ("file_space_artifact_versions", "note"),
+            ("file_space_artifact_versions", "is_milestone"),
+        ] {
+            assert_eq!(
+                connection
+                    .query_row(
+                        &format!(
+                            "SELECT COUNT(*) FROM pragma_table_info('{table}') WHERE name='{column}'"
+                        ),
+                        [],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .unwrap(),
+                1
+            );
+        }
+        drop(connection);
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
