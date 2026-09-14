@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createInstance } from "i18next";
 import {
   getSystemLanguage,
   matchSupportedLanguage,
@@ -225,6 +226,14 @@ test("AI no-result copy exposes an inline index-status action", () => {
   assert.equal(zh.fileSpace.ai.noSourcesBefore, "没有找到足够相关的本地文件内容，请换一种问法或");
   assert.equal(zh.fileSpace.ai.confirmIndex, "确认索引");
   assert.equal(zh.fileSpace.ai.noSourcesAfter, "已经完成。");
+});
+
+test("AI source count uses the correct English singular and plural form", async () => {
+  const i18n = createInstance();
+  await i18n.init({ lng: "en", resources: { en: { translation: en } } });
+
+  assert.equal(i18n.t("fileSpace.ai.referencedFiles", { count: 1 }), "Referenced 1 file");
+  assert.equal(i18n.t("fileSpace.ai.referencedFiles", { count: 2 }), "Referenced 2 files");
 });
 
 test("same-name import conflict offers versioning and independent-file actions", () => {
