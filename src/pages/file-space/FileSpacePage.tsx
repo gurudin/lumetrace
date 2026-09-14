@@ -5883,7 +5883,6 @@ export function FileSpacePage() {
               <Plus size={16} />
             </button>
           </div>
-          <ApplicationExtensionToolbarEntry />
           <div className="file-space-filter-menu" ref={filterMenuRef}>
             <button
               className={isFilterMenuOpen || hasActiveFilters ? "is-active" : ""}
@@ -5974,6 +5973,7 @@ export function FileSpacePage() {
             <span>{t("fileSpace.globalSearch.trigger")}</span>
             <kbd className="file-space-search-shortcut">{globalSearchShortcut}</kbd>
           </button>
+          <ApplicationExtensionToolbarEntry />
           {capabilities?.search !== false ? <FileSpaceBackgroundStatusButton /> : null}
           {capabilities?.ai !== false ? <FileSpaceAiSurface key={workspaceGeneration} onOpenSource={openFileFromAiSource} /> : null}
           <button

@@ -23,7 +23,7 @@ test("community without an extension renders its existing workspace unchanged", 
   assert.equal(renderToStaticMarkup(createElement(ApplicationExtensionToolbarEntry)), "");
 });
 
-test("commercial editions can add one optional primary toolbar action", () => {
+test("commercial editions place one optional toolbar action beside Search", () => {
   const extension = {
     Entry: () => null,
     Page: () => null,
@@ -33,7 +33,8 @@ test("commercial editions can add one optional primary toolbar action", () => {
   assert.match(html, /aria-label="Plugins"/);
   assert.match(html, /Extension mark/);
   const page = readFileSync(new URL("../src/pages/file-space/FileSpacePage.tsx", import.meta.url), "utf8");
-  assert.ok(page.indexOf("<ApplicationExtensionToolbarEntry />") < page.indexOf('className="file-space-filter-menu"'));
+  assert.ok(page.indexOf('className="file-space-search file-space-search-trigger"') < page.indexOf("<ApplicationExtensionToolbarEntry />"));
+  assert.ok(page.indexOf("<ApplicationExtensionToolbarEntry />") < page.indexOf("<FileSpaceBackgroundStatusButton"));
 });
 
 test("extension pages retain the mounted workspace and hide it from interaction", () => {
