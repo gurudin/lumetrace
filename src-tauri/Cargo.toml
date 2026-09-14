@@ -1,6 +1,6 @@
 [package]
 name = "lumetrace"
-version = "1.0.2"
+version = "1.0.3"
 description = "A traceable local-first file workspace"
 authors = ["Lume Trace Contributors"]
 edition = "2021"
