@@ -472,6 +472,21 @@ fn migrate_to_v1(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migrate_to_v2(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    // Some adopted databases already contain this column but still report v1.
+    // Treat the existing compatible schema as applied instead of failing the
+    // whole workspace open with a duplicate-column error.
+    let columns = table_columns(transaction, "file_space_ai_turns")?;
+    if !columns.iter().any(|column| column == "context_json") {
+        transaction.execute(
+            "ALTER TABLE file_space_ai_turns
+             ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]'",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
     let mut version = connection
         .pragma_query_value(None, "user_version", |row| row.get::<_, i64>(0))
@@ -493,9 +508,7 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
 
         match next_version {
             1 => migrate_to_v1(&transaction),
-            2 => transaction.execute_batch(
-                "ALTER TABLE file_space_ai_turns ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';",
-            ),
+            2 => migrate_to_v2(&transaction),
             3 => transaction.execute_batch(
                 // Empty at migration time: populate old rows in small background
                 // batches, not by scanning a large workspace during startup.
@@ -1026,6 +1039,40 @@ mod tests {
             .unwrap();
         assert_eq!(context, "[\"synthetic-file\"]");
         assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn schema_two_adopts_an_existing_context_column_with_a_stale_version_marker() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let transaction = connection.transaction().unwrap();
+        migrate_to_v1(&transaction).unwrap();
+        transaction
+            .execute_batch(
+                "ALTER TABLE file_space_ai_turns
+                 ADD COLUMN context_json TEXT NOT NULL DEFAULT '[]';
+                 INSERT INTO file_space_ai_turns
+                   (id, question, status, created_at, updated_at, context_json)
+                 VALUES ('stale-marker-turn', 'preserve me', 'completed', 1, 2,
+                         '[\"existing-context\"]');",
+            )
+            .unwrap();
+        transaction.pragma_update(None, "user_version", 1).unwrap();
+        transaction.commit().unwrap();
+
+        migrate_connection(&mut connection).unwrap();
+
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
+        assert_eq!(
+            connection
+                .query_row(
+                    "SELECT context_json FROM file_space_ai_turns
+                     WHERE id = 'stale-marker-turn'",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .unwrap(),
+            "[\"existing-context\"]"
+        );
     }
 
     #[test]
