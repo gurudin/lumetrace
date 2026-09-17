@@ -19,12 +19,84 @@ bool lumetrace_vision_available(void) {
 @interface LTRecognitionJob : NSObject
 @property(atomic) BOOL cancelled;
 @property(atomic, copy) NSArray<VNRequest *> *requests;
+@property(nonatomic) NSUInteger geometryCount;
 @end
 @implementation LTRecognitionJob
 @end
 
+// All persisted rectangles use the displayed image/page: normalized, top-left.
+static NSDictionary *LTBox(CGRect box) {
+    box = CGRectIntersection(box, CGRectMake(0, 0, 1, 1));
+    if (CGRectIsNull(box) || CGRectIsEmpty(box)) return @{@"x":@0,@"y":@0,@"width":@0,@"height":@0};
+    return @{@"x":@(box.origin.x), @"y":@(1-CGRectGetMaxY(box)), @"width":@(box.size.width), @"height":@(box.size.height)};
+}
+
+static NSDictionary *LTPDFBox(NSRect bounds, CGAffineTransform transform, CGSize size) {
+    CGRect box = CGRectApplyAffineTransform(bounds, transform);
+    return LTBox(CGRectMake(box.origin.x/size.width, box.origin.y/size.height, box.size.width/size.width, box.size.height/size.height));
+}
+
+static BOOL LTRepeatedLine(NSDictionary *line, NSArray *nativeLines) {
+    NSString *(^fold)(NSString *) = ^NSString *(NSString *text) {
+        return [[[text componentsSeparatedByCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet] componentsJoinedByString:@""] lowercaseString];
+    };
+    NSDictionary *r = line[@"rect"];
+    CGRect box = CGRectMake([r[@"x"] doubleValue], [r[@"y"] doubleValue], [r[@"width"] doubleValue], [r[@"height"] doubleValue]);
+    for (NSDictionary *other in nativeLines) {
+        if (![fold(line[@"text"]) isEqual:fold(other[@"text"])]) continue;
+        NSDictionary *s = other[@"rect"];
+        CGRect native = CGRectMake([s[@"x"] doubleValue], [s[@"y"] doubleValue], [s[@"width"] doubleValue], [s[@"height"] doubleValue]);
+        CGRect overlap = CGRectIntersection(box, native);
+        if (!CGRectIsNull(overlap) && overlap.size.width*overlap.size.height > box.size.width*box.size.height*0.4) return YES;
+    }
+    return NO;
+}
+
+// A page with ordinary text can still contain raster text in an image or Form.
+static BOOL LTResourcesContainImages(CGPDFDictionaryRef resources, NSUInteger depth);
+typedef struct { BOOL found; NSUInteger depth; } LTImageProbe;
+static void LTInspectXObject(const char *key, CGPDFObjectRef value, void *context) {
+    (void)key;
+    LTImageProbe *probe = context;
+    if (probe->found || probe->depth > 8) return;
+    CGPDFStreamRef stream;
+    if (!CGPDFObjectGetValue(value, kCGPDFObjectTypeStream, &stream)) return;
+    CGPDFDictionaryRef dictionary = CGPDFStreamGetDictionary(stream);
+    const char *subtype = NULL;
+    if (CGPDFDictionaryGetName(dictionary, "Subtype", &subtype) && !strcmp(subtype, "Image")) probe->found = YES;
+    CGPDFDictionaryRef nested;
+    if (CGPDFDictionaryGetDictionary(dictionary, "Resources", &nested) && LTResourcesContainImages(nested, probe->depth+1)) probe->found = YES;
+}
+static BOOL LTResourcesContainImages(CGPDFDictionaryRef resources, NSUInteger depth) {
+    if (depth > 8) return NO;
+    CGPDFDictionaryRef objects;
+    if (!CGPDFDictionaryGetDictionary(resources, "XObject", &objects)) return NO;
+    LTImageProbe probe = { NO, depth };
+    CGPDFDictionaryApplyFunction(objects, LTInspectXObject, &probe);
+    return probe.found;
+}
+static void LTInlineImage(CGPDFScannerRef scanner, void *context) { (void)scanner; *((BOOL *)context) = YES; }
+static BOOL LTPageContainsImages(CGPDFPageRef page) {
+    CGPDFDictionaryRef dictionary = CGPDFPageGetDictionary(page), resources;
+    for (NSUInteger depth=0; dictionary && depth<16; depth++) {
+        if (CGPDFDictionaryGetDictionary(dictionary, "Resources", &resources)) {
+            if (LTResourcesContainImages(resources, 0)) return YES;
+            break;
+        }
+        if (!CGPDFDictionaryGetDictionary(dictionary, "Parent", &dictionary)) break;
+    }
+    BOOL inlineImage = NO;
+    CGPDFContentStreamRef content = CGPDFContentStreamCreateWithPage(page);
+    CGPDFOperatorTableRef table = CGPDFOperatorTableCreate();
+    CGPDFOperatorTableSetCallback(table, "BI", LTInlineImage);
+    CGPDFScannerRef scanner = CGPDFScannerCreate(content, table, &inlineImage);
+    CGPDFScannerScan(scanner);
+    CGPDFScannerRelease(scanner); CGPDFOperatorTableRelease(table); CGPDFContentStreamRelease(content);
+    return inlineImage;
+}
+
 API_AVAILABLE(macos(10.15))
-static NSString *LTReadImage(CGImageRef image, LTRecognitionJob *job, NSMutableArray *labels, NSError **error) {
+static NSString *LTReadImage(CGImageRef image, LTRecognitionJob *job, NSMutableArray *labels, NSMutableArray *geometry, NSError **error) {
     if (job.cancelled) return nil;
     VNRecognizeTextRequest *ocr = [VNRecognizeTextRequest new];
     ocr.recognitionLevel = VNRequestTextRecognitionLevelAccurate;
@@ -51,7 +123,22 @@ static NSString *LTReadImage(CGImageRef image, LTRecognitionJob *job, NSMutableA
     NSMutableArray *lines = [NSMutableArray new];
     for (VNRecognizedTextObservation *line in ocr.results) {
         VNRecognizedText *candidate = [line topCandidates:1].firstObject;
-        if (candidate.string.length) [lines addObject:candidate.string];
+        if (job.cancelled) return nil;
+        if (candidate.string.length) {
+            [lines addObject:candidate.string];
+            NSMutableArray *words = [NSMutableArray new];
+            // Keep exact substring geometry when Vision can provide it. Spaces
+            // and unavailable character boxes fall back to the recognized line.
+            [candidate.string enumerateSubstringsInRange:NSMakeRange(0, candidate.string.length)
+                options:NSStringEnumerationByComposedCharacterSequences usingBlock:^(NSString *s, NSRange range, NSRange enclosing, BOOL *stop) {
+                (void)enclosing;
+                if (job.cancelled || job.geometryCount >= 50000) { *stop=YES; return; }
+                if (![s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) return;
+                VNRectangleObservation *word = [candidate boundingBoxForRange:range error:nil];
+                if (word) { [words addObject:@{@"start":@(range.location),@"end":@(NSMaxRange(range)),@"rect":LTBox(word.boundingBox)}]; job.geometryCount++; }
+            }];
+            if (geometry.count < 10000) [geometry addObject:@{@"text":candidate.string,@"rect":LTBox(line.boundingBox),@"words":words}];
+        }
     }
     for (VNClassificationObservation *item in classification.results) {
         if (item.confidence >= 0.3 && labels.count < 8)
@@ -65,6 +152,7 @@ API_AVAILABLE(macos(10.15))
 static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) {
     NSMutableString *body = [NSMutableString new];
     NSMutableArray *labels = [NSMutableArray new];
+    NSMutableArray *pages = [NSMutableArray new];
     NSUInteger ocrPages = 0;
     NSError *error = nil;
     if (isPDF) {
@@ -74,34 +162,67 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
             @autoreleasepool {
                 if (job.cancelled) return @{@"error":@"Apple Vision recognition timed out"};
                 PDFPage *page = [document pageAtIndex:i];
-                NSString *text = [page.string stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
-                // Mixed PDFs are handled page by page. Existing text is never OCRed.
-                if (!text.length) {
-                    NSRect bounds = [page boundsForBox:kPDFDisplayBoxMediaBox];
-                    CGFloat maximum = MAX(bounds.size.width, bounds.size.height);
-                    if (!isfinite(maximum) || maximum <= 0 || bounds.size.width <= 0 || bounds.size.height <= 0)
-                        return @{@"error":@"Invalid PDF page dimensions"};
-                    CGFloat scale = MIN(2.0, LTMaxDimension / maximum);
-                    size_t width = MAX(1, ceil(bounds.size.width * scale));
-                    size_t height = MAX(1, ceil(bounds.size.height * scale));
+                NSString *text = page.string ?: @"";
+                CGPDFPageRef pageRef = page.pageRef;
+                if (!pageRef) return @{@"error":@"Unable to read PDF page"};
+                CGRect bounds = CGRectIntersection(CGPDFPageGetBoxRect(pageRef, kCGPDFCropBox), CGPDFPageGetBoxRect(pageRef, kCGPDFMediaBox));
+                BOOL rotated = labs(page.rotation) % 180 == 90;
+                CGFloat displayWidth = rotated ? bounds.size.height : bounds.size.width;
+                CGFloat displayHeight = rotated ? bounds.size.width : bounds.size.height;
+                CGFloat maximum = MAX(displayWidth, displayHeight);
+                if (!isfinite(maximum) || maximum <= 0 || displayWidth <= 0 || displayHeight <= 0) return @{@"error":@"Invalid PDF page dimensions"};
+                CGFloat scale = MIN(2.0, LTMaxDimension / maximum);
+                size_t width = MAX(1, ceil(displayWidth * scale)), height = MAX(1, ceil(displayHeight * scale));
+                CGSize size = CGSizeMake(width,height);
+                // CoreGraphics only scales DOWN in GetDrawingTransform. Asking
+                // it for a 2x target merely centers a 1x page with padding.
+                // Resolve rotation/crop at 1x, then apply explicit raster scale.
+                CGAffineTransform baseTransform = CGPDFPageGetDrawingTransform(pageRef, kCGPDFCropBox, CGRectMake(0,0,displayWidth,displayHeight), 0, true);
+                CGAffineTransform transform = CGAffineTransformConcat(baseTransform, CGAffineTransformMakeScale(width/displayWidth,height/displayHeight));
+                NSMutableArray *geometry = [NSMutableArray new];
+                [text enumerateSubstringsInRange:NSMakeRange(0,text.length) options:NSStringEnumerationByLines usingBlock:^(NSString *line, NSRange range, NSRange enclosing, BOOL *stop) {
+                    (void)enclosing;
+                    if (job.cancelled || geometry.count >= 10000) { *stop=YES; return; }
+                    PDFSelection *selection = [page selectionForRange:range];
+                    if (!selection || !line.length) return;
+                    NSMutableArray *words = [NSMutableArray new];
+                    [line enumerateSubstringsInRange:NSMakeRange(0,line.length) options:NSStringEnumerationByComposedCharacterSequences usingBlock:^(NSString *s, NSRange wordRange, NSRange ignored, BOOL *wordStop) {
+                        (void)ignored;
+                        if (job.cancelled || job.geometryCount >= 50000) { *wordStop=YES; return; }
+                        if (![s stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet].length) return;
+                        PDFSelection *word = [page selectionForRange:NSMakeRange(range.location+wordRange.location,wordRange.length)];
+                        if (word) { [words addObject:@{@"start":@(wordRange.location),@"end":@(NSMaxRange(wordRange)),@"rect":LTPDFBox([word boundsForPage:page],transform,size)}]; job.geometryCount++; }
+                    }];
+                    [geometry addObject:@{@"text":line,@"rect":LTPDFBox([selection boundsForPage:page],transform,size),@"words":words}];
+                }];
+                NSString *trimmed = [text stringByTrimmingCharactersInSet:NSCharacterSet.whitespaceAndNewlineCharacterSet];
+                NSMutableString *pageBody = [trimmed mutableCopy];
+                if (!trimmed.length || LTPageContainsImages(pageRef)) {
                     CGColorSpaceRef colors = CGColorSpaceCreateDeviceRGB();
                     CGContextRef context = CGBitmapContextCreate(NULL, width, height, 8, width * 4, colors, (CGBitmapInfo)kCGImageAlphaPremultipliedLast);
                     CGColorSpaceRelease(colors);
                     if (!context) return @{@"error":@"Unable to render PDF page for OCR"};
                     CGContextSetRGBFillColor(context, 1, 1, 1, 1);
                     CGContextFillRect(context, CGRectMake(0, 0, width, height));
-                    CGContextScaleCTM(context, scale, scale);
-                    CGContextTranslateCTM(context, -bounds.origin.x, -bounds.origin.y);
-                    [page drawWithBox:kPDFDisplayBoxMediaBox toContext:context];
+                    CGContextConcatCTM(context, transform);
+                    CGContextDrawPDFPage(context, pageRef);
                     CGImageRef image = CGBitmapContextCreateImage(context);
                     CGContextRelease(context);
                     if (!image) return @{@"error":@"Unable to render PDF page for OCR"};
-                    text = LTReadImage(image, job, nil, &error);
+                    NSMutableArray *ocrGeometry = [NSMutableArray new];
+                    NSString *ocrText = LTReadImage(image, job, nil, ocrGeometry, &error);
                     CGImageRelease(image);
                     ocrPages++;
-                    if (!text) return @{@"error":error.localizedDescription ?: @"Apple Vision OCR failed or was cancelled"};
+                    if (!ocrText) return @{@"error":error.localizedDescription ?: @"Apple Vision OCR failed or was cancelled"};
+                    NSArray *nativeLines = [geometry copy];
+                    for (NSDictionary *line in ocrGeometry) {
+                        if (LTRepeatedLine(line,nativeLines)) continue;
+                        [pageBody appendFormat:@"%@%@",pageBody.length ? @"\n" : @"",line[@"text"]];
+                        [geometry addObject:line];
+                    }
                 }
-                if (text.length) [body appendFormat:@"%@[Page %lu]\n%@", body.length ? @"\n\n" : @"", (unsigned long)i + 1, text];
+                [pages addObject:@{@"number":@(i+1),@"width":@(displayWidth),@"height":@(displayHeight),@"lines":geometry}];
+                if (pageBody.length) [body appendFormat:@"%@[Page %lu]\n%@", body.length ? @"\n\n" : @"", (unsigned long)i + 1, pageBody];
                 if (body.length > LTMaxCharacters) break;
             }
         }
@@ -116,13 +237,15 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
         });
         CFRelease(source);
         if (!image) return @{@"error":@"Unable to decode image for recognition"};
-        NSString *text = LTReadImage(image, job, labels, &error);
+        NSMutableArray *geometry = [NSMutableArray new];
+        NSString *text = LTReadImage(image, job, labels, geometry, &error);
+        [pages addObject:@{@"number":@1,@"width":@(CGImageGetWidth(image)),@"height":@(CGImageGetHeight(image)),@"lines":geometry}];
         CGImageRelease(image);
         if (!text) return @{@"error":error.localizedDescription ?: @"Apple Vision recognition failed or was cancelled"};
         [body appendString:text];
         ocrPages = 1;
     }
-    return @{@"body":body, @"labels":labels, @"ocr_pages":@(ocrPages)};
+    return @{@"body":body, @"labels":labels, @"ocr_pages":@(ocrPages), @"pages":pages};
 }
 
 char *lumetrace_vision_read(const char *path, bool pdf) {

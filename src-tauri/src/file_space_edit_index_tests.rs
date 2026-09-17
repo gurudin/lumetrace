@@ -85,6 +85,7 @@ fn slow_extraction_does_not_hold_the_edit_lock_or_publish_a_superseded_version()
             fixture.save(&id, "new_content");
             drop(guard);
             ContentExtraction {
+                visual_json: None,
                 text: "stale OCR".into(),
                 status: ExtractionStatus::Extracted,
                 error: None,
@@ -114,6 +115,7 @@ fn extraction_cannot_write_into_a_workspace_selected_while_it_was_running() {
                 .switch_workspace(second.database.location().unwrap())
                 .unwrap();
             ContentExtraction {
+                visual_json: None,
                 text: "wrong_workspace".into(),
                 status: ExtractionStatus::Extracted,
                 error: None,
@@ -152,7 +154,7 @@ fn recognition_upgrade_requeues_only_images_and_pdf_not_unchanged_text() {
     .id
     .clone();
     synchronize_file_search_index_scope(&fixture.database, Some(&fixture.storage), None).unwrap();
-    fixture.database.0.lock().unwrap().execute("UPDATE file_space_search_documents SET extraction_status='unsupported',extraction_version=1 WHERE file_id=?1", [&image]).unwrap();
+    fixture.database.0.lock().unwrap().execute("UPDATE file_space_search_documents SET extraction_status='extracted',extraction_version=2,body_text='old OCR without coordinates' WHERE file_id=?1", [&image]).unwrap();
     while repair_missed_edit_indexes_batch(&fixture.database).unwrap() {}
     assert_eq!(fixture.state(&text), original);
     assert_eq!(fixture.state(&image).0, "pending");
@@ -168,7 +170,7 @@ fn recognition_upgrade_requeues_only_images_and_pdf_not_unchanged_text() {
                 |r| r.get::<_, i64>(0)
             )
             .unwrap(),
-        2
+        extraction_version("old-image.png")
     );
 }
 
@@ -182,7 +184,13 @@ fn native_vision_local_index_is_searchable_persistent_and_incremental() {
             .expect("synthetic fixture directory required"),
     );
     let mut ids = Vec::new();
-    for name in ["document.png", "scan.pdf"] {
+    for name in [
+        "document.png",
+        "scan.pdf",
+        "mixed.pdf",
+        "embedded.pdf",
+        "rotated.pdf",
+    ] {
         let result = import_files_record(
             &fixture.database,
             None,
@@ -202,11 +210,18 @@ fn native_vision_local_index_is_searchable_persistent_and_incremental() {
     while repair_missed_edit_indexes_batch(&fixture.database).unwrap() {}
     fixture.drain();
     for word in ["ORCHID", "北京"] {
-        assert_eq!(
-            fixture.find(word, "content").len(),
-            2,
-            "{word}; states={:?}",
-            ids.iter().map(|id| fixture.state(id)).collect::<Vec<_>>()
+        let found = fixture.find(word, "content");
+        let required = if word == "ORCHID" {
+            &ids[..]
+        } else {
+            &ids[..4]
+        };
+        // Rotated OCR may join adjacent Chinese words. The existing unicode61
+        // tokenizer does not split that joined token; rotation tests assert
+        // its recognized text/geometry separately, not artificial spacing.
+        assert!(
+            required.iter().all(|id| found.contains(id)),
+            "{word}: {found:?}"
         );
     }
     let states: Vec<_> = ids.iter().map(|id| fixture.state(id)).collect();
@@ -224,15 +239,68 @@ fn native_vision_local_index_is_searchable_persistent_and_incremental() {
             &reopened,
             None,
             &FileSpaceSearchRequest {
-                query: "北京".into(),
+                query: "ORCHID".into(),
                 scopes: vec!["content".into()]
             }
         )
         .unwrap()
         .len(),
-        2
+        5
     );
     assert!(!process_next_content_extraction(&reopened).unwrap());
+    for id in &ids {
+        let file = load_snapshot_record(&reopened)
+            .unwrap()
+            .files
+            .into_iter()
+            .find(|f| &f.id == id)
+            .unwrap();
+        let preview = search_preview_record(
+            &reopened,
+            &FileSpaceSearchPreviewRequest {
+                file_id: id.clone(),
+                query: "ORCHID".into(),
+                scopes: vec!["content".into()],
+            },
+        )
+        .unwrap();
+        assert!(
+            preview.sections.iter().any(|s| !s.rectangles.is_empty()),
+            "{} has no persisted geometry",
+            file.name
+        );
+        assert_eq!(preview.source_updated_at, file.updated_at);
+        assert_eq!(preview.source_size_bytes, file.size_bytes);
+        let matches = search_file_space_matches(
+            &reopened,
+            None,
+            &FileSpaceSearchRequest {
+                query: "ORCHID".into(),
+                scopes: vec!["content".into()],
+            },
+        )
+        .unwrap();
+        assert!(matches.iter().all(|m| !m
+            .snippet
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Image categories")));
+        if std::env::var_os("LUMETRACE_TEST_WRITE_GEOMETRY").is_some() {
+            use std::io::Write;
+            let mut output = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(generated.join(format!("{}.search.json", file.name)))
+                .unwrap();
+            output
+                .write_all(
+                    serde_json::to_string(&serde_json::json!({"file":file,"preview":preview}))
+                        .unwrap()
+                        .as_bytes(),
+                )
+                .unwrap();
+        }
+    }
     drop(reopened);
 }
 

@@ -3,6 +3,7 @@
 #import <AppKit/AppKit.h>
 #import <CoreText/CoreText.h>
 #import <ImageIO/ImageIO.h>
+#import <PDFKit/PDFKit.h>
 
 int main(int argc, const char **argv) {
     @autoreleasepool {
@@ -26,10 +27,11 @@ int main(int argc, const char **argv) {
             BOOL ok = CGImageDestinationFinalize(destination); CFRelease(destination);
             if (!ok) return 4;
         }
-        for (NSString *name in @[@"scan.pdf", @"mixed.pdf"]) {
+        for (NSString *name in @[@"scan.pdf", @"mixed.pdf", @"embedded.pdf"]) {
             NSURL *url = [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:name]];
             if ([[NSFileManager defaultManager] fileExistsAtPath:url.path]) return 3;
-            CGRect box = CGRectMake(0,0,700,250);
+            BOOL embedded = [name isEqual:@"embedded.pdf"];
+            CGRect box = CGRectMake(0,0,700,embedded ? 500 : 250);
             CGContextRef pdf = CGPDFContextCreateWithURL((__bridge CFURLRef)url, &box, NULL);
             if ([name isEqual:@"mixed.pdf"]) {
                 CGPDFContextBeginPage(pdf, NULL);
@@ -40,9 +42,24 @@ int main(int argc, const char **argv) {
                 CTLineDraw(line, pdf); CFRelease(line); CFRelease(font);
                 CGPDFContextEndPage(pdf);
             }
-            CGPDFContextBeginPage(pdf, NULL); CGContextDrawImage(pdf, box, image); CGPDFContextEndPage(pdf);
+            CGPDFContextBeginPage(pdf, NULL);
+            if (embedded) {
+                CGContextSetTextPosition(pdf, 30, 430);
+                CTFontRef font = CTFontCreateWithName(CFSTR("Helvetica"), 24, NULL);
+                NSAttributedString *text = [[NSAttributedString alloc] initWithString:@"NATIVE HEADER QUARTZ" attributes:@{(__bridge id)kCTFontAttributeName:(__bridge id)font}];
+                CTLineRef line = CTLineCreateWithAttributedString((__bridge CFAttributedStringRef)text);
+                CTLineDraw(line,pdf); CFRelease(line); CFRelease(font);
+            }
+            CGContextDrawImage(pdf, CGRectMake(0,0,700,250), image); CGPDFContextEndPage(pdf);
             CGPDFContextClose(pdf); CGContextRelease(pdf);
         }
+        NSURL *rotatedURL = [NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"rotated.pdf"]];
+        if ([[NSFileManager defaultManager] fileExistsAtPath:rotatedURL.path]) return 3;
+        PDFDocument *rotated = [[PDFDocument alloc] initWithURL:[NSURL fileURLWithPath:[directory stringByAppendingPathComponent:@"embedded.pdf"]]];
+        PDFPage *page = [rotated pageAtIndex:0];
+        [page setBounds:NSMakeRect(10,10,680,480) forBox:kPDFDisplayBoxCropBox];
+        page.rotation = 90;
+        if (![rotated writeToURL:rotatedURL]) return 4;
         puts("Generated synthetic PNG/JPEG/TIFF, scanned PDF, and mixed text/scan PDF.");
     }
     return 0;

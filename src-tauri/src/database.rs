@@ -3,7 +3,7 @@ use std::{fs, path::PathBuf, sync::Mutex};
 
 // Migration numbers are append-only once released. Never change or reuse an
 // existing number; add a new migration and advance CURRENT_SCHEMA_VERSION.
-const CURRENT_SCHEMA_VERSION: i64 = 4;
+const CURRENT_SCHEMA_VERSION: i64 = 5;
 
 const MIGRATION_1_SCHEMA: &str = r#"
 
@@ -531,6 +531,19 @@ fn migrate_to_v4(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
     Ok(())
 }
 
+fn migrate_to_v5(transaction: &Transaction<'_>) -> rusqlite::Result<()> {
+    if !table_columns(transaction, "file_space_search_documents")?
+        .iter()
+        .any(|c| c == "visual_json")
+    {
+        transaction.execute(
+            "ALTER TABLE file_space_search_documents ADD COLUMN visual_json TEXT",
+            [],
+        )?;
+    }
+    Ok(())
+}
+
 fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
     loop {
         // This first read is only for a useful lock error. The authoritative
@@ -570,6 +583,7 @@ fn migrate_connection(connection: &mut Connection) -> Result<(), String> {
             2 => migrate_to_v2(&transaction),
             3 => migrate_to_v3(&transaction),
             4 => migrate_to_v4(&transaction),
+            5 => migrate_to_v5(&transaction),
             // CURRENT_SCHEMA_VERSION and this match must advance together.
             _ => unreachable!("missing migration for schema version {next_version}"),
         }
@@ -1272,6 +1286,27 @@ mod tests {
     }
 
     #[test]
+    fn schema_five_preserves_deployed_v4_content_and_adds_empty_geometry() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        let transaction = connection.transaction().unwrap();
+        migrate_to_v1(&transaction).unwrap();
+        migrate_to_v2(&transaction).unwrap();
+        migrate_to_v3(&transaction).unwrap();
+        migrate_to_v4(&transaction).unwrap();
+        transaction.execute_batch("INSERT INTO files(id,original_name,storage_path,created_at) VALUES('f','image.png','image.png',1);
+            INSERT INTO file_space_search_documents(file_id,file_name,body_text,extraction_status,extraction_version,file_updated_at,size_bytes,indexed_at)
+            VALUES('f','image.png','cached OCR','extracted',2,1,20,30);
+            PRAGMA user_version=4;").unwrap();
+        transaction.commit().unwrap();
+        migrate_connection(&mut connection).unwrap();
+        let row = connection.query_row("SELECT body_text,extraction_status,extraction_version,indexed_at,visual_json FROM file_space_search_documents",[],|r| Ok((r.get::<_,String>(0)?,r.get::<_,String>(1)?,r.get::<_,i64>(2)?,r.get::<_,i64>(3)?,r.get::<_,Option<String>>(4)?))).unwrap();
+        assert_eq!(row, ("cached OCR".into(), "extracted".into(), 2, 30, None));
+        assert_eq!(schema_version(&connection), 5);
+        migrate_connection(&mut connection).unwrap();
+        assert_eq!(connection.query_row("SELECT count(*) FROM file_space_search_fts WHERE file_space_search_fts MATCH 'cached'",[],|r|r.get::<_,i64>(0)).unwrap(),1);
+    }
+
+    #[test]
     fn schema_four_adds_annotation_defaults_to_existing_v3_versions() {
         // Released v3 version rows have no note/star columns. Use the original
         // schema, not a current database with its migration marker rolled back.
@@ -1289,7 +1324,7 @@ mod tests {
         migrate_connection(&mut connection).unwrap();
         let row = connection.query_row("SELECT note,is_milestone,sha256,version_number FROM file_space_artifact_versions WHERE id='v1'", [], |r| Ok((r.get::<_, String>(0)?, r.get::<_, bool>(1)?, r.get::<_, String>(2)?, r.get::<_, i64>(3)?))).unwrap();
         assert_eq!(row, ("".to_owned(), false, "synthetic-hash".to_owned(), 1));
-        assert_eq!(schema_version(&connection), 4);
+        assert_eq!(schema_version(&connection), CURRENT_SCHEMA_VERSION);
         connection
             .execute(
                 "UPDATE file_space_artifact_versions SET note='Launch milestone',is_milestone=1",

@@ -49,7 +49,7 @@ const FILE_SPACE_INITIAL_PAGE_LIMIT: usize = 160;
 const FILE_SPACE_FILE_PAGE_MAX_LIMIT: usize = 320;
 const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
 const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
-const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v2";
+const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v3";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
 const SEARCH_RESULT_SNIPPET_TOKENS: i64 = 42;
 const SEARCH_PREVIEW_CONTEXT_BEFORE: usize = 140;
@@ -309,6 +309,7 @@ pub struct FileSpaceSearchPreviewSection {
     pub text: String,
     pub line_number: Option<usize>,
     pub page_number: Option<usize>,
+    pub rectangles: Vec<crate::visual_content::VisualRect>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -319,6 +320,8 @@ pub struct FileSpaceSearchPreview {
     pub match_count: usize,
     pub truncated: bool,
     pub extraction_status: String,
+    pub source_updated_at: i64,
+    pub source_size_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -3335,6 +3338,7 @@ struct SearchDocumentCandidate {
 
 fn failed_content_extraction(error: impl Into<String>) -> ContentExtraction {
     ContentExtraction {
+        visual_json: None,
         text: String::new(),
         status: ExtractionStatus::Failed,
         error: Some(error.into()),
@@ -3488,7 +3492,7 @@ fn process_next_content_extraction_with(
         connection
             .execute(
                 "UPDATE file_space_search_documents
-                 SET body_text = ?1, extraction_status = ?2, extraction_error = ?3
+                 SET body_text = ?1, extraction_status = ?2, extraction_error = ?3, visual_json = ?9
                  WHERE file_id = ?4 AND indexed_at = ?5
                    AND extraction_version = ?6 AND extraction_status = 'pending'
                    AND EXISTS (SELECT 1 FROM files f WHERE f.id = ?4
@@ -3502,6 +3506,7 @@ fn process_next_content_extraction_with(
                     job.extraction_version,
                     job.relative_path,
                     job.file_name,
+                    extraction.visual_json,
                 ],
             )
             .map_err(|error| format!("Unable to save extracted file content: {error}"))?
@@ -3771,7 +3776,7 @@ fn queue_changed_file_index(
          LEFT JOIN file_space_artifact_versions v ON v.id = a.current_version_id
          WHERE f.id = ?1 AND f.trashed_at IS NULL AND f.storage_path IS NOT NULL
          ON CONFLICT(file_id) DO UPDATE SET
-           file_name = excluded.file_name, body_text = '', extraction_status = 'pending',
+           file_name = excluded.file_name, body_text = '', visual_json = NULL, extraction_status = 'pending',
            extraction_error = NULL, extraction_version = excluded.extraction_version,
            tag_text = excluded.tag_text, task_text = excluded.task_text, cell_text = excluded.cell_text,
            file_updated_at = excluded.file_updated_at, size_bytes = excluded.size_bytes,
@@ -3983,12 +3988,14 @@ fn synchronize_file_search_index_scope(
         }
         let extraction = if content_changed {
             ContentExtraction {
+                visual_json: None,
                 text: String::new(),
                 status: ExtractionStatus::Pending,
                 error: None,
             }
         } else {
             ContentExtraction {
+                visual_json: None,
                 text: candidate.indexed_body_text.clone().unwrap_or_default(),
                 status: match candidate.indexed_extraction_status.as_deref() {
                     Some("pending") => ExtractionStatus::Pending,
@@ -4045,6 +4052,7 @@ fn synchronize_file_search_index_scope(
                  ON CONFLICT(file_id) DO UPDATE SET
                    file_name = excluded.file_name,
                    body_text = excluded.body_text,
+                   visual_json = CASE WHEN excluded.extraction_status = 'pending' THEN NULL ELSE file_space_search_documents.visual_json END,
                    extraction_status = excluded.extraction_status,
                    extraction_error = excluded.extraction_error,
                    extraction_version = excluded.extraction_version,
@@ -10968,12 +10976,16 @@ fn search_preview_record(
     if query.is_empty() || query.chars().count() > 512 || request.file_id.chars().count() > 2_048 {
         return Err("Invalid File Space search preview request".to_owned());
     }
-    let (file_name, body_text, extraction_status) = database
+    let (file_name, body_text, extraction_status, visual_json, source_updated_at, source_size_bytes) = database
         .0
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?
         .query_row(
-            "SELECT documents.file_name, documents.body_text, documents.extraction_status
+            "SELECT documents.file_name, documents.body_text, documents.extraction_status,
+                    CASE WHEN documents.file_updated_at = files.updated_at
+                      AND documents.size_bytes = COALESCE(files.size_bytes, 0)
+                      AND documents.extraction_status = 'extracted' THEN documents.visual_json ELSE NULL END,
+                    documents.file_updated_at, documents.size_bytes
              FROM file_space_search_documents documents
              JOIN files ON files.id = documents.file_id
              WHERE documents.file_id = ?1
@@ -10985,6 +10997,9 @@ fn search_preview_record(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
@@ -10998,10 +11013,72 @@ fn search_preview_record(
             match_count: 0,
             truncated: false,
             extraction_status,
+            source_updated_at,
+            source_size_bytes,
         });
     }
     let terms = normalized_search_terms(query);
-    let characters = body_text.chars().collect::<Vec<_>>();
+    if let Some(visual) = visual_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<crate::visual_content::VisualDocument>(value).ok())
+    {
+        let mut sections = Vec::new();
+        let mut count = 0;
+        let mut limited = false;
+        for page in &visual.pages {
+            if page.number == 0
+                || !page.width.is_finite()
+                || !page.height.is_finite()
+                || page.width <= 0.0
+                || page.height <= 0.0
+            {
+                continue;
+            }
+            for line in &page.lines {
+                let (hits, truncated) =
+                    search_text_occurrences(&line.text.chars().collect::<Vec<_>>(), &terms);
+                count += hits.len();
+                limited |= truncated;
+                for (start, end) in hits {
+                    if sections.len() >= SEARCH_PREVIEW_SECTION_LIMIT {
+                        limited = true;
+                        break;
+                    }
+                    sections.push(FileSpaceSearchPreviewSection {
+                        text: line.text.clone(),
+                        line_number: None,
+                        page_number: file_name
+                            .to_ascii_lowercase()
+                            .ends_with(".pdf")
+                            .then_some(page.number),
+                        rectangles: line.rectangles(start, end),
+                    });
+                }
+                if count >= SEARCH_PREVIEW_MATCH_LIMIT {
+                    limited = true;
+                    break;
+                }
+            }
+            if count >= SEARCH_PREVIEW_MATCH_LIMIT {
+                break;
+            }
+        }
+        return Ok(FileSpaceSearchPreview {
+            file_id: request.file_id.clone(),
+            sections,
+            match_count: count,
+            truncated: limited,
+            extraction_status,
+            source_updated_at,
+            source_size_bytes,
+        });
+    }
+    let visible_body = if crate::visual_content::is_raster(&file_name) {
+        crate::visual_content::display_body(&body_text)
+    } else {
+        &body_text
+    };
+    let characters = visible_body.chars().collect::<Vec<_>>();
     let (occurrences, truncated) = search_text_occurrences(&characters, &terms);
     let newline_indexes = characters
         .iter()
@@ -11034,6 +11111,7 @@ fn search_preview_record(
                 text,
                 line_number,
                 page_number,
+                rectangles: Vec::new(),
             }
         })
         .collect();
@@ -11043,6 +11121,8 @@ fn search_preview_record(
         match_count: occurrences.len(),
         truncated: truncated || occurrences.len() > SEARCH_PREVIEW_SECTION_LIMIT,
         extraction_status,
+        source_updated_at,
+        source_size_bytes,
     })
 }
 
@@ -11123,7 +11203,10 @@ fn search_file_space_matches_with_generation(
             let mut statement = connection
                 .prepare(
                     "SELECT documents.file_id,
-                            snippet(file_space_search_fts, 1, '', '', ' … ', ?2)
+                            CASE WHEN documents.extraction_version >= 2 AND instr(documents.body_text, ?3) > 0 THEN
+                              substr(substr(documents.body_text, 1, instr(documents.body_text, ?3)-1),
+                                max(1, instr(lower(substr(documents.body_text, 1, instr(documents.body_text, ?3)-1)), lower(?4))-80), 240)
+                            ELSE snippet(file_space_search_fts, 1, '', '', ' … ', ?2) END
                      FROM file_space_search_fts
                      JOIN file_space_search_documents documents
                        ON documents.rowid = file_space_search_fts.rowid
@@ -11138,15 +11221,18 @@ fn search_file_space_matches_with_generation(
                     format!("Unable to prepare File Space search excerpts: {error}")
                 })?;
             let rows = statement.query_map(
-                params![body_expression, SEARCH_RESULT_SNIPPET_TOKENS],
+                params![
+                    body_expression,
+                    SEARCH_RESULT_SNIPPET_TOKENS,
+                    crate::visual_content::CATEGORY_MARKER,
+                    query.split_whitespace().next().unwrap_or(query)
+                ],
                 |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
             );
             if let Ok(rows) = rows {
                 for (file_id, snippet) in rows.flatten() {
                     let snippet = snippet.trim();
-                    if !snippet.is_empty() {
-                        content_snippets.insert(file_id, snippet.to_owned());
-                    }
+                    content_snippets.insert(file_id, snippet.to_owned());
                 }
             }
         }
@@ -13321,6 +13407,7 @@ mod tests {
             .is_some_and(|error| error.contains("other files will continue")));
 
         let extracted = protected_content_extraction(|| ContentExtraction {
+            visual_json: None,
             text: "next document".to_owned(),
             status: ExtractionStatus::Extracted,
             error: None,

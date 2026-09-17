@@ -1,23 +1,25 @@
 //! On-device Apple Vision. No model downloads, network calls, or source writes.
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
     ffi::{CStr, CString},
     path::Path,
 };
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Recognition {
     #[serde(default)]
     pub body: String,
     #[serde(default)]
     pub labels: Vec<Classification>,
     #[serde(default)]
+    pub pages: Vec<crate::visual_content::VisualPage>,
+    #[serde(default)]
     #[allow(dead_code)] // Used by native regression checks, not application UI.
     pub ocr_pages: usize,
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Serialize)]
 pub(crate) struct Classification {
     pub identifier: String,
     pub confidence: f32,
@@ -54,14 +56,26 @@ pub(crate) fn recognize(path: &Path, pdf: bool) -> Result<Recognition, String> {
 }
 
 pub(crate) fn extract(path: &Path, pdf: bool) -> Result<String, String> {
+    extract_with_geometry(path, pdf).map(|(text, _)| text)
+}
+
+pub(crate) fn extract_with_geometry(
+    path: &Path,
+    pdf: bool,
+) -> Result<(String, crate::visual_content::VisualDocument), String> {
     let result = recognize(path, pdf)?;
     let mut text = result.body;
     let labels = classification_text(&result.labels);
     if !labels.is_empty() {
-        text.push_str("\n\n[Image categories — automatically inferred, not document text]\n");
+        text.push_str(crate::visual_content::CATEGORY_MARKER);
         text.push_str(&labels);
     }
-    Ok(text)
+    Ok((
+        text,
+        crate::visual_content::VisualDocument {
+            pages: result.pages,
+        },
+    ))
 }
 
 fn classification_text(labels: &[Classification]) -> String {
@@ -173,6 +187,80 @@ mod tests {
                 );
             }
             assert_eq!(before, Sha256::digest(std::fs::read(path).unwrap()));
+        }
+    }
+}
+#[test]
+#[ignore = "Requires synthetic Vision fixtures and real macOS frameworks"]
+fn native_vision_visual_geometry_covers_embedded_images_and_rotated_pages() {
+    let root = std::path::PathBuf::from(
+        std::env::var_os("LUMETRACE_TEST_VISION_DIR").expect("fixture directory"),
+    );
+    for name in [
+        "document.png",
+        "scan.pdf",
+        "mixed.pdf",
+        "embedded.pdf",
+        "rotated.pdf",
+    ] {
+        let result = recognize(&root.join(name), name.ends_with(".pdf")).unwrap();
+        assert!(result.body.contains("ORCHID"), "{name}: {}", result.body);
+        if name == "embedded.pdf" || name == "rotated.pdf" {
+            assert!(result.body.contains("NATIVE HEADER QUARTZ"));
+            assert_eq!(
+                result.ocr_pages, 1,
+                "Text-bearing image pages must also be OCRed"
+            );
+        }
+        let page = result
+            .pages
+            .iter()
+            .find(|p| p.lines.iter().any(|l| l.text.contains("ORCHID")))
+            .expect("OCR page geometry");
+        let line = page
+            .lines
+            .iter()
+            .find(|l| l.text.contains("ORCHID"))
+            .unwrap();
+        assert!(line.rect.valid());
+        assert!(
+            !line.words.is_empty(),
+            "Substring coordinates missing: {name}"
+        );
+        assert!(line.words.iter().all(|w| w.rect.valid()
+            && w.start < w.end
+            && w.end <= line.text.encode_utf16().count()));
+        if name == "mixed.pdf" {
+            assert_eq!(page.number, 2);
+        }
+        if name == "rotated.pdf" {
+            assert!(page.height > page.width);
+        }
+        if name == "embedded.pdf" {
+            assert!(
+                line.rect.y > 0.5,
+                "Embedded OCR must be below the native header"
+            );
+        }
+        if name == "document.png" || name == "scan.pdf" {
+            let boxes = line.rectangles(0, 6);
+            let left = boxes.iter().map(|r| r.x).fold(1.0, f64::min);
+            let right = boxes.iter().map(|r| r.x + r.width).fold(0.0, f64::max);
+            assert!(
+                left < 0.06 && right < 0.3 && right > 0.15,
+                "ORCHID boxes: {boxes:?}"
+            );
+        }
+        // Optional evidence for the synthetic browser fixture; never user data.
+        if std::env::var_os("LUMETRACE_TEST_WRITE_GEOMETRY").is_some() {
+            use std::io::Write;
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(root.join(format!("{name}.vision.json")))
+                .unwrap();
+            file.write_all(serde_json::to_string(&result).unwrap().as_bytes())
+                .unwrap();
         }
     }
 }

@@ -11,7 +11,7 @@ use std::{
 };
 use zip::ZipArchive;
 
-pub(crate) const EXTRACTION_VERSION: i64 = if cfg!(target_os = "macos") { 2 } else { 1 };
+pub(crate) const EXTRACTION_VERSION: i64 = if cfg!(target_os = "macos") { 3 } else { 1 };
 const MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS: usize = 5_000_000;
@@ -40,6 +40,7 @@ impl ExtractionStatus {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct ContentExtraction {
     pub(crate) text: String,
+    pub(crate) visual_json: Option<String>,
     pub(crate) status: ExtractionStatus,
     pub(crate) error: Option<String>,
 }
@@ -56,12 +57,14 @@ impl ContentExtraction {
                 };
                 Self {
                     text,
+                    visual_json: None,
                     status,
                     error: None,
                 }
             }
             Err(error) => Self {
                 text: String::new(),
+                visual_json: None,
                 status: ExtractionStatus::Failed,
                 error: Some(error),
             },
@@ -71,6 +74,7 @@ impl ContentExtraction {
     fn unsupported() -> Self {
         Self {
             text: String::new(),
+            visual_json: None,
             status: ExtractionStatus::Unsupported,
             error: None,
         }
@@ -148,7 +152,7 @@ pub(crate) fn extraction_version(name: &str) -> i64 {
             Some(ContentKind::Pdf | ContentKind::Image)
         )
     {
-        return 2;
+        return 3;
     }
     let _ = name;
     1
@@ -176,6 +180,20 @@ pub(crate) fn extract_file_content(path: &Path, name: &str) -> ContentExtraction
             "The file is larger than the {} MB content extraction limit",
             MAX_SOURCE_BYTES / 1024 / 1024
         )));
+    }
+    #[cfg(target_os = "macos")]
+    if crate::apple_vision::available() && matches!(kind, ContentKind::Image | ContentKind::Pdf) {
+        return match crate::apple_vision::extract_with_geometry(
+            path,
+            matches!(kind, ContentKind::Pdf),
+        ) {
+            Ok((text, visual)) => {
+                let mut extraction = ContentExtraction::from_result(Ok(text));
+                extraction.visual_json = serde_json::to_string(&visual).ok();
+                extraction
+            }
+            Err(error) => ContentExtraction::from_result(Err(error)),
+        };
     }
     let result = match kind {
         ContentKind::PlainText => read_plain_text(path),
