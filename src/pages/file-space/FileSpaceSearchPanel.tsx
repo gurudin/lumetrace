@@ -402,6 +402,10 @@ export function FileSpaceSearchPanel({
           : (current - 1 + preview!.sections.length) % preview!.sections.length);
         return;
       }
+      // Let focused preview controls (including Retry) receive native Enter
+      // activation instead of opening the selected file behind the control.
+      if (event.key === "Enter" && event.target instanceof Element
+        && event.target.closest(".file-space-global-search-preview button")) return;
       if (event.key === "Enter" && results[activeIndex]) {
         event.preventDefault();
         event.stopImmediatePropagation();
