@@ -1,5 +1,6 @@
 import { createContext, useContext, useRef, useState, type ComponentType, type PropsWithChildren, type ReactNode } from "react";
 import type { WorkspaceCommandSource } from "./workspaceCommands";
+import type { DocumentViewProps } from "./DocumentView";
 import "./application-extension.css";
 
 export interface ApplicationExtension {
@@ -9,6 +10,7 @@ export interface ApplicationExtension {
   initiallyOpen?: boolean;
   onVisibilityChange?: (visible: boolean) => void;
   WorkspaceProvider?: ComponentType<PropsWithChildren>;
+  DocumentView?: ComponentType<DocumentViewProps>;
 }
 
 /** Additional data sources use the same workbench, not an edition-owned file page. */
