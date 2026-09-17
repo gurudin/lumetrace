@@ -1,6 +1,7 @@
 use crate::{
     content_extractor::{
-        extract_file_content, ContentExtraction, ExtractionStatus, EXTRACTION_VERSION,
+        extract_file_content, extraction_version, ContentExtraction, ExtractionStatus,
+        EXTRACTION_VERSION,
     },
     database::Database,
 };
@@ -48,7 +49,7 @@ const FILE_SPACE_INITIAL_PAGE_LIMIT: usize = 160;
 const FILE_SPACE_FILE_PAGE_MAX_LIMIT: usize = 320;
 const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
 const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
-const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v1";
+const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v2";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
 const SEARCH_RESULT_SNIPPET_TOKENS: i64 = 42;
 const SEARCH_PREVIEW_CONTEXT_BEFORE: usize = 140;
@@ -3398,7 +3399,7 @@ fn claim_next_content_extraction(
              FROM file_space_search_documents documents
              JOIN files ON files.id = documents.file_id
              WHERE documents.extraction_status = 'pending'
-               AND documents.extraction_version = ?1
+               AND documents.extraction_version <= ?1
                AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
              ORDER BY documents.indexed_at, documents.file_id
              LIMIT 1",
@@ -3422,18 +3423,63 @@ fn claim_next_content_extraction(
 }
 
 fn process_next_content_extraction(database: &Database) -> Result<bool, String> {
-    let Some(root) = read_storage_root(database)? else {
-        return Ok(false);
-    };
-    if inspect_root(Some(&root)) != "ready" {
-        return Ok(false);
+    process_next_content_extraction_with(database, read_searchable_text)
+}
+
+fn source_stamp(path: &Path) -> Option<(u64, i128)> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return None;
     }
-    let Some(job) = claim_next_content_extraction(database)? else {
-        return Ok(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((
+            metadata.len(),
+            metadata.ctime() as i128 * 1_000_000_000 + metadata.ctime_nsec() as i128,
+        ))
+    }
+    #[cfg(not(unix))]
+    Some((
+        metadata.len(),
+        metadata
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos() as i128,
+    ))
+}
+
+fn process_next_content_extraction_with(
+    database: &Database,
+    extract: impl FnOnce(&Path, &str, &str) -> ContentExtraction,
+) -> Result<bool, String> {
+    let (root, location, job, stamp) = {
+        let _operation = lock_file_space_operations()?;
+        let Some(root) = read_storage_root(database)? else {
+            return Ok(false);
+        };
+        if inspect_root(Some(&root)) != "ready" {
+            return Ok(false);
+        }
+        let Some(job) = claim_next_content_extraction(database)? else {
+            return Ok(false);
+        };
+        let stamp = source_stamp(&physical_path(&root, &job.relative_path)?);
+        (root, database.location()?, job, stamp)
     };
-    let extraction = protected_content_extraction(|| {
-        read_searchable_text(&root, &job.relative_path, &job.file_name)
-    });
+    // OCR runs without the file-operation or SQLite locks. UI reads, edits,
+    // workspace switches, and catalogue sync must not wait for native analysis.
+    let extraction =
+        protected_content_extraction(|| extract(&root, &job.relative_path, &job.file_name));
+    let _operation = lock_file_space_operations()?;
+    if database.location()?.database_path != location.database_path
+        || read_storage_root(database)?.as_ref() != Some(&root)
+        || source_stamp(&physical_path(&root, &job.relative_path)?) != stamp
+    {
+        return Ok(true);
+    }
     let updated = {
         let connection = database
             .0
@@ -3444,7 +3490,9 @@ fn process_next_content_extraction(database: &Database) -> Result<bool, String> 
                 "UPDATE file_space_search_documents
                  SET body_text = ?1, extraction_status = ?2, extraction_error = ?3
                  WHERE file_id = ?4 AND indexed_at = ?5
-                   AND extraction_version = ?6 AND extraction_status = 'pending'",
+                   AND extraction_version = ?6 AND extraction_status = 'pending'
+                   AND EXISTS (SELECT 1 FROM files f WHERE f.id = ?4
+                     AND f.trashed_at IS NULL AND f.storage_path = ?7 AND f.original_name = ?8)",
                 params![
                     extraction.text,
                     extraction.status.as_str(),
@@ -3452,6 +3500,8 @@ fn process_next_content_extraction(database: &Database) -> Result<bool, String> 
                     job.file_id,
                     job.indexed_at,
                     job.extraction_version,
+                    job.relative_path,
+                    job.file_name,
                 ],
             )
             .map_err(|error| format!("Unable to save extracted file content: {error}"))?
@@ -3472,14 +3522,19 @@ pub fn start_file_content_extractor(app: tauri::AppHandle) -> Result<(), String>
                 continue;
             }
             let database = app.state::<Database>();
-            let result = lock_file_space_operations().and_then(|_operation| {
-                // Repair old omissions in bounded metadata-only batches. Never
-                // put a workspace-wide body scan on startup or search paths.
-                let cataloged = crate::file_query::backfill_file_lookup_batch(database.inner())?;
-                let repaired = repair_missed_edit_indexes_batch(database.inner())?;
-                let extracted = process_next_content_extraction(database.inner())?;
-                Ok(cataloged || repaired || extracted)
-            });
+            let result = lock_file_space_operations()
+                .and_then(|_operation| {
+                    // Repair old omissions in bounded metadata-only batches. Never
+                    // put a workspace-wide body scan on startup or search paths.
+                    let cataloged =
+                        crate::file_query::backfill_file_lookup_batch(database.inner())?;
+                    let repaired = repair_missed_edit_indexes_batch(database.inner())?;
+                    Ok(cataloged || repaired)
+                })
+                .and_then(|repaired| {
+                    process_next_content_extraction(database.inner())
+                        .map(|extracted| repaired || extracted)
+                });
             match result {
                 Ok(true) => std::thread::sleep(CONTENT_EXTRACTION_DOCUMENT_PAUSE),
                 Ok(false) => std::thread::sleep(Duration::from_millis(500)),
@@ -3637,10 +3692,9 @@ fn retry_background_failures(database: &Database) -> Result<(), String> {
         connection
             .execute(
                 "UPDATE file_space_search_documents
-                 SET extraction_status = 'pending', extraction_error = NULL,
-                     extraction_version = ?1
+                 SET extraction_status = 'pending', extraction_error = NULL
                  WHERE extraction_status = 'failed'",
-                [EXTRACTION_VERSION],
+                [],
             )
             .map_err(|error| format!("Unable to retry content extraction: {error}"))?;
     }
@@ -3693,6 +3747,16 @@ fn queue_changed_file_index(
     file_id: &str,
 ) -> rusqlite::Result<()> {
     let requested_at = now_millis();
+    let name: Option<String> = transaction
+        .query_row(
+            "SELECT original_name FROM files WHERE id = ?1",
+            [file_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(name) = name else {
+        return Ok(());
+    };
     transaction.execute(
         "INSERT INTO file_space_search_documents
          (file_id, file_name, body_text, extraction_status, extraction_error,
@@ -3712,7 +3776,7 @@ fn queue_changed_file_index(
            tag_text = excluded.tag_text, task_text = excluded.task_text, cell_text = excluded.cell_text,
            file_updated_at = excluded.file_updated_at, size_bytes = excluded.size_bytes,
            indexed_at = MAX(file_space_search_documents.indexed_at + 1, excluded.indexed_at)",
-        params![file_id, EXTRACTION_VERSION, requested_at],
+        params![file_id, extraction_version(&name), requested_at],
     )?;
     transaction.execute(
         "INSERT INTO file_space_index_jobs
@@ -3762,25 +3826,29 @@ fn repair_missed_edit_indexes_batch(database: &Database) -> Result<bool, String>
     let candidates = {
         let mut statement = transaction
             .prepare(
-                "SELECT f.id, f.trashed_at IS NULL AND f.storage_path IS NOT NULL AND (
+                "SELECT f.id, f.original_name, f.trashed_at IS NULL AND f.storage_path IS NOT NULL, (
                  d.file_id IS NULL OR d.file_name <> f.original_name
-                 OR d.file_updated_at <> f.updated_at OR d.size_bytes <> COALESCE(f.size_bytes, 0)
-                 OR d.extraction_version <> ?3)
+                 OR d.file_updated_at <> f.updated_at OR d.size_bytes <> COALESCE(f.size_bytes, 0)), d.extraction_version
              FROM (SELECT id, original_name, storage_path, trashed_at, updated_at, size_bytes
                    FROM files WHERE id > ?1 ORDER BY id LIMIT ?2) f
              LEFT JOIN file_space_search_documents d ON d.file_id = f.id ORDER BY f.id",
             )
             .map_err(|error| format!("Unable to prepare index repair: {error}"))?;
         statement
-            .query_map(
-                params![cursor, EDIT_INDEX_REPAIR_BATCH_SIZE, EXTRACTION_VERSION],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
-            )
+            .query_map(params![cursor, EDIT_INDEX_REPAIR_BATCH_SIZE], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
+            })
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
             .map_err(|error| format!("Unable to read index repair candidates: {error}"))?
     };
-    for (file_id, stale) in &candidates {
-        if *stale {
+    for (file_id, name, live, stale, version) in &candidates {
+        if *live && (*stale || *version != Some(extraction_version(name))) {
             queue_changed_file_index(&transaction, file_id)
                 .map_err(|error| format!("Unable to repair a file index: {error}"))?;
         }
@@ -3904,7 +3972,8 @@ fn synchronize_file_search_index_scope(
             != Some(candidate.file_name.as_str())
             || candidate.indexed_file_updated_at != Some(candidate.file_updated_at)
             || candidate.indexed_size_bytes != Some(candidate.size_bytes)
-            || candidate.indexed_extraction_version != Some(EXTRACTION_VERSION);
+            || candidate.indexed_extraction_version
+                != Some(extraction_version(&candidate.file_name));
         let metadata_changed = candidate.indexed_tag_text.as_deref()
             != Some(candidate.tag_text.as_str())
             || candidate.indexed_task_text.as_deref() != Some(candidate.task_text.as_str())
@@ -3991,7 +4060,7 @@ fn synchronize_file_search_index_scope(
                     extraction.text,
                     extraction.status.as_str(),
                     extraction.error,
-                    EXTRACTION_VERSION,
+                    extraction_version(&candidate.file_name),
                     candidate.tag_text,
                     candidate.task_text,
                     candidate.cell_text,

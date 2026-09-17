@@ -65,6 +65,178 @@ impl Drop for Fixture {
 }
 
 #[test]
+fn slow_extraction_does_not_hold_the_edit_lock_or_publish_a_superseded_version() {
+    let fixture = Fixture::new();
+    let id = fixture.create("concurrent", "md");
+    fixture.save(&id, "old_content");
+    assert!(
+        process_next_content_extraction_with(&fixture.database, |_, _, _| {
+            let started = std::time::Instant::now();
+            let guard = loop {
+                if let Ok(guard) = FILE_SPACE_OPERATION_LOCK.get().unwrap().try_lock() {
+                    break guard;
+                }
+                assert!(
+                    started.elapsed() < Duration::from_secs(3),
+                    "OCR must not block edits"
+                );
+                std::thread::sleep(Duration::from_millis(10));
+            };
+            fixture.save(&id, "new_content");
+            drop(guard);
+            ContentExtraction {
+                text: "stale OCR".into(),
+                status: ExtractionStatus::Extracted,
+                error: None,
+            }
+        })
+        .unwrap()
+    );
+    assert_eq!(fixture.state(&id).0, "pending");
+    assert!(fixture.find("stale", "content").is_empty());
+    fixture.drain();
+    assert_eq!(fixture.find("new_content", "content"), vec![id]);
+}
+
+#[test]
+fn extraction_cannot_write_into_a_workspace_selected_while_it_was_running() {
+    let first = Fixture::new();
+    let second = Fixture::new();
+    let id = first.create("first", "md");
+    first.save(&id, "first_content");
+    let second_id = second.create("second", "md");
+    let original = first.database.location().unwrap();
+    assert!(
+        process_next_content_extraction_with(&first.database, |_, _, _| {
+            let _guard = lock_file_space_operations().unwrap();
+            first
+                .database
+                .switch_workspace(second.database.location().unwrap())
+                .unwrap();
+            ContentExtraction {
+                text: "wrong_workspace".into(),
+                status: ExtractionStatus::Extracted,
+                error: None,
+            }
+        })
+        .unwrap()
+    );
+    assert!(second.find("wrong_workspace", "content").is_empty());
+    assert_eq!(second.state(&second_id).0, "pending");
+    first.database.switch_workspace(original).unwrap();
+    assert_eq!(first.state(&id).0, "pending");
+    first.drain();
+    assert_eq!(first.find("first_content", "content"), vec![id]);
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+fn recognition_upgrade_requeues_only_images_and_pdf_not_unchanged_text() {
+    let fixture = Fixture::new();
+    let text = fixture.create("keep", "md");
+    fixture.save(&text, "cached text");
+    fixture.drain();
+    let original = fixture.state(&text);
+    let incoming = fixture.root.join("old-image.png");
+    fs::write(&incoming, "synthetic not decoded in this migration test").unwrap();
+    let image = import_files_record(
+        &fixture.database,
+        None,
+        &[incoming.to_string_lossy().into_owned()],
+    )
+    .unwrap()
+    .files
+    .iter()
+    .find(|f| f.name == "old-image.png")
+    .unwrap()
+    .id
+    .clone();
+    synchronize_file_search_index_scope(&fixture.database, Some(&fixture.storage), None).unwrap();
+    fixture.database.0.lock().unwrap().execute("UPDATE file_space_search_documents SET extraction_status='unsupported',extraction_version=1 WHERE file_id=?1", [&image]).unwrap();
+    while repair_missed_edit_indexes_batch(&fixture.database).unwrap() {}
+    assert_eq!(fixture.state(&text), original);
+    assert_eq!(fixture.state(&image).0, "pending");
+    assert_eq!(
+        fixture
+            .database
+            .0
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT extraction_version FROM file_space_search_documents WHERE file_id=?1",
+                [&image],
+                |r| r.get::<_, i64>(0)
+            )
+            .unwrap(),
+        2
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
+#[ignore = "requires explicitly generated synthetic LUMETRACE_TEST_VISION_DIR fixtures; uses real Apple Vision"]
+fn native_vision_local_index_is_searchable_persistent_and_incremental() {
+    let fixture = Fixture::new();
+    let generated = PathBuf::from(
+        std::env::var_os("LUMETRACE_TEST_VISION_DIR")
+            .expect("synthetic fixture directory required"),
+    );
+    let mut ids = Vec::new();
+    for name in ["document.png", "scan.pdf"] {
+        let result = import_files_record(
+            &fixture.database,
+            None,
+            &[generated.join(name).to_string_lossy().into_owned()],
+        )
+        .unwrap();
+        ids.push(
+            result
+                .files
+                .iter()
+                .find(|f| f.name == name)
+                .unwrap()
+                .id
+                .clone(),
+        );
+    }
+    while repair_missed_edit_indexes_batch(&fixture.database).unwrap() {}
+    fixture.drain();
+    for word in ["ORCHID", "北京"] {
+        assert_eq!(
+            fixture.find(word, "content").len(),
+            2,
+            "{word}; states={:?}",
+            ids.iter().map(|id| fixture.state(id)).collect::<Vec<_>>()
+        );
+    }
+    let states: Vec<_> = ids.iter().map(|id| fixture.state(id)).collect();
+    synchronize_file_search_index_scope(&fixture.database, Some(&fixture.storage), None).unwrap();
+    assert!(!process_next_content_extraction(&fixture.database).unwrap());
+    assert_eq!(
+        states,
+        ids.iter().map(|id| fixture.state(id)).collect::<Vec<_>>()
+    );
+    let reopened =
+        crate::database::open_for_test(&fixture.database.location().unwrap().database_path)
+            .unwrap();
+    assert_eq!(
+        search_file_space_records(
+            &reopened,
+            None,
+            &FileSpaceSearchRequest {
+                query: "北京".into(),
+                scopes: vec!["content".into()]
+            }
+        )
+        .unwrap()
+        .len(),
+        2
+    );
+    assert!(!process_next_content_extraction(&reopened).unwrap());
+    drop(reopened);
+}
+
+#[test]
 fn manual_creation_indexes_names_immediately_but_extracts_content_in_background() {
     let fixture = Fixture::new();
     for format in ["md", "txt"] {

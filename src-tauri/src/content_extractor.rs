@@ -11,7 +11,7 @@ use std::{
 };
 use zip::ZipArchive;
 
-pub(crate) const EXTRACTION_VERSION: i64 = 1;
+pub(crate) const EXTRACTION_VERSION: i64 = if cfg!(target_os = "macos") { 2 } else { 1 };
 const MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS: usize = 5_000_000;
@@ -80,6 +80,8 @@ impl ContentExtraction {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ContentKind {
     PlainText,
+    #[cfg(target_os = "macos")]
+    Image,
     Pdf,
     Docx,
     Xlsx,
@@ -97,6 +99,10 @@ fn content_kind(name: &str) -> Option<ContentKind> {
         Some("docx") => Some(ContentKind::Docx),
         Some("xlsx") => Some(ContentKind::Xlsx),
         Some("pptx") => Some(ContentKind::Pptx),
+        #[cfg(target_os = "macos")]
+        Some(
+            "png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp" | "tif" | "tiff" | "heic" | "heif",
+        ) if crate::apple_vision::available() => Some(ContentKind::Image),
         Some(
             "md" | "markdown" | "mdx" | "txt" | "text" | "log" | "csv" | "tsv" | "rst" | "adoc"
             | "asciidoc" | "json" | "jsonl" | "ndjson" | "xml" | "yaml" | "yml" | "toml" | "ini"
@@ -132,6 +138,22 @@ pub(crate) fn supports_content(name: &str) -> bool {
     content_kind(name).is_some()
 }
 
+/// Only newly supported image/PDF extraction invalidates existing cached text.
+/// An upgrade must not redownload every unchanged remote Office/text document.
+pub(crate) fn extraction_version(name: &str) -> i64 {
+    #[cfg(target_os = "macos")]
+    if crate::apple_vision::available()
+        && matches!(
+            content_kind(name),
+            Some(ContentKind::Pdf | ContentKind::Image)
+        )
+    {
+        return 2;
+    }
+    let _ = name;
+    1
+}
+
 pub(crate) fn extract_file_content(path: &Path, name: &str) -> ContentExtraction {
     let Some(kind) = content_kind(name) else {
         return ContentExtraction::unsupported();
@@ -157,6 +179,8 @@ pub(crate) fn extract_file_content(path: &Path, name: &str) -> ContentExtraction
     }
     let result = match kind {
         ContentKind::PlainText => read_plain_text(path),
+        #[cfg(target_os = "macos")]
+        ContentKind::Image => crate::apple_vision::extract(path, false),
         ContentKind::Pdf => extract_pdf(path),
         ContentKind::Docx => extract_docx(path),
         ContentKind::Xlsx => extract_xlsx(path),
@@ -172,6 +196,10 @@ fn read_plain_text(path: &Path) -> Result<String, String> {
 }
 
 fn extract_pdf(path: &Path) -> Result<String, String> {
+    #[cfg(target_os = "macos")]
+    if crate::apple_vision::available() {
+        return crate::apple_vision::extract(path, true);
+    }
     let pages = pdf_extract::extract_text_by_pages(path)
         .map_err(|error| format!("Unable to extract PDF text: {error}"))?;
     let mut output = String::new();
@@ -769,6 +797,9 @@ mod tests {
         assert_eq!(content_kind("proposal.docx"), Some(ContentKind::Docx));
         assert_eq!(content_kind("budget.xlsx"), Some(ContentKind::Xlsx));
         assert_eq!(content_kind("pitch.pptx"), Some(ContentKind::Pptx));
+        #[cfg(target_os = "macos")]
+        assert_eq!(content_kind("photo.png"), Some(ContentKind::Image));
+        #[cfg(not(target_os = "macos"))]
         assert_eq!(content_kind("photo.png"), None);
     }
 
@@ -874,7 +905,7 @@ mod tests {
 
     #[test]
     fn unsupported_files_never_fabricate_body_text() {
-        let extraction = extract_file_content(Path::new("not-read.png"), "not-read.png");
+        let extraction = extract_file_content(Path::new("not-read.mp4"), "not-read.mp4");
         assert_eq!(extraction.status, ExtractionStatus::Unsupported);
         assert!(extraction.text.is_empty());
         assert!(extraction.error.is_none());

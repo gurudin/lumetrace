@@ -1,0 +1,55 @@
+# System category aliases: English, simplified/traditional Chinese, Japanese, Korean, German, French, Spanish.
+cat	cat 猫 貓 ねこ 고양이 Katze chat gato
+dog	dog 狗 犬 개 Hund chien perro
+bird	bird 鸟 鳥 새 Vogel oiseau pájaro
+fish	fish 鱼 魚 물고기 Fisch poisson pez
+horse	horse 马 馬 말 Pferd cheval caballo
+animal	animal 动物 動物 동물 Tier animal
+car|automobile	car 汽车 汽車 轿车 轎車 自動車 자동차 Auto voiture coche
+bicycle|bike	bicycle 自行车 自行車 单车 單車 自転車 자전거 Fahrrad vélo bicicleta
+motorcycle	motorcycle 摩托车 摩托車 オートバイ 오토바이 Motorrad moto motocicleta
+bus	bus 公交车 公車 巴士 バス 버스 Bus autobus autobús
+train	train 火车 火車 列車 기차 Zug train tren
+airplane|aircraft	airplane 飞机 飛機 飛行機 비행기 Flugzeug avion avión
+boat|ship	boat ship 船 船只 船隻 배 Boot bateau barco
+building	building 建筑 建築 建物 건물 Gebäude bâtiment edificio
+house	house 房屋 房子 住宅 家 집 Haus maison casa
+bridge	bridge 桥 橋 다리 Brücke pont puente
+beach	beach 海滩 海灘 沙滩 沙灘 ビーチ 해변 Strand plage playa
+sea|ocean	sea ocean 海洋 大海 海 바다 Meer océan océano
+mountain	mountain 山 山脉 山脈 산 Berg montagne montaña
+forest	forest 森林 森 숲 Wald forêt bosque
+tree	tree 树 樹 木 나무 Baum arbre árbol
+flower	flower 花 花朵 꽃 Blume fleur flor
+plant	plant 植物 식물 Pflanze plante planta
+sunset	sunset 日落 夕阳 夕陽 夕焼け 일몰 Sonnenuntergang coucher du soleil puesta de sol
+sunrise	sunrise 日出 朝日 일출 Sonnenaufgang lever du soleil amanecer
+snow	snow 雪 눈 Schnee neige nieve
+sky	sky 天空 空 하늘 Himmel ciel cielo
+cloud	cloud 云 雲 구름 Wolke nuage nube
+waterfall	waterfall 瀑布 滝 폭포 Wasserfall cascade cascada
+lake	lake 湖 湖泊 호수 See lac lago
+river	river 河 河流 川 강 Fluss rivière río
+food	food 食物 食品 食べ物 음식 Essen nourriture comida
+fruit	fruit 水果 果物 과일 Obst fruit fruta
+vegetable	vegetable 蔬菜 野菜 채소 Gemüse légume verdura
+cake	cake 蛋糕 ケーキ 케이크 Kuchen gâteau pastel
+coffee	coffee 咖啡 コーヒー 커피 Kaffee café
+document|printed_page	document 文档 文件 文檔 文書 문서 Dokument document documento
+book	book 书 书籍 書 書籍 本 책 Buch livre libro
+handwriting	handwriting 手写 手寫 手書き 필기 Handschrift écriture manuscrite escritura manuscrita
+receipt	receipt 收据 收據 小票 レシート 영수증 Beleg reçu recibo
+computer	computer 电脑 電腦 パソコン 컴퓨터 Computer ordinateur computadora
+laptop	laptop 笔记本电脑 筆記型電腦 ノートパソコン 노트북 Laptop ordinateur portable portátil
+phone|cellphone	phone 手机 手機 電話 スマートフォン 휴대폰 Telefon téléphone teléfono
+keyboard	keyboard 键盘 鍵盤 キーボード 키보드 Tastatur clavier teclado
+screen|monitor	screen 显示器 顯示器 屏幕 螢幕 画面 화면 Bildschirm écran pantalla
+chair	chair 椅子 의자 Stuhl chaise silla
+table|desk	table desk 桌子 书桌 書桌 机 책상 Tisch table mesa
+bottle	bottle 瓶子 ボトル 병 Flasche bouteille botella
+cup	cup 杯子 コップ 컵 Tasse tasse taza
+clock	clock 时钟 時鐘 時計 시계 Uhr horloge reloj
+shoe	shoe 鞋 鞋子 靴 신발 Schuh chaussure zapato
+bag	bag 包 バッグ 가방 Tasche sac bolsa
+person|human|people	person people 人 人物 人体 人體 人間 사람 Person personne persona
+city	city 城市 都市 도시 Stadt ville ciudad

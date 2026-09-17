@@ -1,6 +1,8 @@
 mod agent_cli;
 mod ai_qa;
 mod ai_service;
+#[cfg(target_os = "macos")]
+mod apple_vision;
 mod content_extractor;
 mod database;
 mod feedback;
