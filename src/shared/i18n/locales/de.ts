@@ -872,6 +872,7 @@ export const de = {
     },
     fileMenu: {
       versionHistory: "Versionsverlauf anzeigen",
+      openDefault: "Mit Standard-App öffnen",
       reveal: "Im Finder zeigen",
       rename: "Umbenennen",
       tags: "Tags verwalten",
@@ -1016,6 +1017,7 @@ export const de = {
       restoreTrash: "Das Objekt konnte nicht aus dem Papierkorb wiederhergestellt werden.",
       emptyTrash: "Der Papierkorb konnte nicht geleert werden.",
       autoCleanupTrash: "Abgelaufene Papierkorbobjekte konnten nicht automatisch gelöscht werden.",
+      openFile: "Die Datei konnte nicht mit der Standard-App geöffnet werden.",
       revealFile: "Die Datei konnte nicht im Finder angezeigt werden.",
       copyFile: "Die Datei konnte nicht kopiert werden.",
       copyPath: "Der Dateipfad konnte nicht kopiert werden.",

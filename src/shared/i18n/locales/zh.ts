@@ -937,6 +937,7 @@ export const zh = {
     },
     fileMenu: {
       versionHistory: "查看版本记录",
+      openDefault: "使用系统默认工具打开",
       reveal: "在访达中打开",
       rename: "重命名",
       tags: "管理 Tag",
@@ -1081,6 +1082,7 @@ export const zh = {
       restoreTrash: "无法恢复废纸篓项目。",
       emptyTrash: "无法清空废纸篓。",
       autoCleanupTrash: "无法自动清理到期项目。",
+      openFile: "无法使用系统默认工具打开文件。",
       revealFile: "无法在访达中打开文件。",
       copyFile: "无法复制文件。",
       copyPath: "无法复制文件路径。",

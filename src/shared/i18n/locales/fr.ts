@@ -872,6 +872,7 @@ export const fr = {
     },
     fileMenu: {
       versionHistory: "Afficher l’historique des versions",
+      openDefault: "Ouvrir avec l’app par défaut",
       reveal: "Afficher dans le Finder",
       rename: "Renommer",
       tags: "Gérer les Tags",
@@ -1016,6 +1017,7 @@ export const fr = {
       restoreTrash: "Impossible de restaurer l’élément de la corbeille.",
       emptyTrash: "Impossible de vider la corbeille.",
       autoCleanupTrash: "Impossible de supprimer automatiquement les éléments expirés de la corbeille.",
+      openFile: "Impossible d’ouvrir le fichier avec l’app par défaut.",
       revealFile: "Impossible d’afficher le fichier dans le Finder.",
       copyFile: "Impossible de copier le fichier.",
       copyPath: "Impossible de copier le chemin du fichier.",

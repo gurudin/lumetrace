@@ -11947,7 +11947,7 @@ pub fn open_file_space_file<R: tauri::Runtime>(
 ) -> Result<(), String> {
     let _operation = lock_file_space_operations()?;
     reconcile_before_file_action(database.inner(), &app, &file_id)?;
-    open_file_with_default_application(&external_default_document_path(database.inner(), &file_id)?)
+    open_file_with_default_application(&active_file_path(database.inner(), &file_id)?)
 }
 
 #[tauri::command]

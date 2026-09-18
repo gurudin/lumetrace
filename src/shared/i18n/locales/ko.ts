@@ -872,6 +872,7 @@ export const ko = {
     },
     fileMenu: {
       versionHistory: "버전 기록 보기",
+      openDefault: "기본 앱으로 열기",
       reveal: "Finder에서 보기",
       rename: "이름 변경",
       tags: "Tags 관리",
@@ -1016,6 +1017,7 @@ export const ko = {
       restoreTrash: "휴지통 항목을 복원할 수 없습니다.",
       emptyTrash: "휴지통을 비울 수 없습니다.",
       autoCleanupTrash: "만료된 휴지통 항목을 자동 삭제할 수 없습니다.",
+      openFile: "기본 앱으로 파일을 열 수 없습니다.",
       revealFile: "Finder에서 파일을 표시할 수 없습니다.",
       copyFile: "파일을 복사할 수 없습니다.",
       copyPath: "파일 경로를 복사할 수 없습니다.",
