@@ -116,7 +116,7 @@ Claude Code and OpenCode are available to try, but are not yet fully validated f
 
 ### Download LumeTrace for macOS
 
-LumeTrace v1.0.3 is available for Apple Silicon Macs. Download the `.dmg` from the latest GitHub Release.
+LumeTrace v1.0.4 is available for Apple Silicon Macs. Download the `.dmg` from the latest GitHub Release.
 
 **[Download for macOS](https://github.com/gurudin/lumetrace/releases/latest)**
 
@@ -145,7 +145,7 @@ Yes. Changes made by other applications are detected in the background and recor
 
 **Which files can I compare or search?**
 
-Line- and word-level Diff is available for supported text files, including Markdown, plain text, and source code. Full-text indexing can also extract readable text from PDF, DOCX, XLSX, and PPTX files. OCR for scanned documents and images is not included.
+Line- and word-level Diff is available for supported text files, including Markdown, plain text, and source code. Full-text indexing also extracts readable text from PDF, DOCX, XLSX, and PPTX. On macOS, Apple Vision adds on-device OCR for supported images and PDF pages without a text layer or containing embedded images, plus basic image-category search. No recognition models are downloaded and original files are unchanged. Results and text coordinates persist in the existing local index; E5 is optional. Search previews show the actual image/PDF page with matching text regions highlighted. Image categories are inferred, not guaranteed descriptions: common categories have offline aliases in the eight interface languages, while other categories keep Apple's English identifiers. Animated and multi-image image files use their first frame. Non-macOS builds retain ordinary text extraction without Apple Vision.
 
 **Does a timeline replace a backup?**
 

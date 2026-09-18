@@ -106,7 +106,7 @@ export const zhHelpArticles: HelpArticle[] = [
         "steps": [
           "选中文件后按空格预览；也可使用右键菜单的预览或系统应用打开操作。不同格式会使用对应的预览方式。",
           "图片支持缩放查看；PDF 可以翻页。Markdown 和支持的文本格式可查看正文或进入编辑。",
-          "内置预览无法读取的格式，可交给系统应用打开。扫描 PDF 和图片不提供 OCR 正文识别。"
+          "内置预览无法读取的格式，可交给系统应用打开。macOS 使用苹果内置能力识别图片和扫描 PDF 中的文字，原文件不会被修改。"
         ]
       },
       {
@@ -136,7 +136,7 @@ export const zhHelpArticles: HelpArticle[] = [
         "title": "搜索不到时",
         "steps": [
           "到“偏好设置 → 后台任务与状态”检查是否暂停、有待处理任务或失败项，继续处理或重试。",
-          "PDF、DOCX、XLSX、PPTX 和支持的文本格式可以提取可读正文；图片、扫描件或超出提取限制的文件不一定有正文索引。",
+          "PDF、DOCX、XLSX、PPTX 和支持的文本格式可以提取正文。macOS 还支持图片和扫描 PDF 的本地 OCR，以及基础图片分类检索；识别结果可能有误差，超出提取限制的文件无法建立完整正文索引。",
           "想增加内容含义的相关性，可安装本地语义模型。语义相关性不等于所有文件都能被完整理解或找到。"
         ]
       }
@@ -256,7 +256,7 @@ export const zhHelpArticles: HelpArticle[] = [
       {
         "title": "使用与管理",
         "steps": [
-          "安装后继续使用普通搜索和 Lumie 检索，不需要手动把文件转换成向量。向量由可提取的正文生成，图片和扫描件不因此获得 OCR。",
+          "安装后继续使用普通搜索和 Lumie 检索，不需要手动转换向量。macOS 的图片 OCR 和基础分类独立于 E5；安装 E5 后，已有识别文字也能参与语义检索。",
           "下载失败检查网络后重试；索引失败查看失败项再重试。下载和索引期间仍可管理文件。",
           "移除模型会关闭语义搜索并删除本地向量，文件名与全文搜索仍可用。模型、文本、分块和向量在索引过程中保留在本机。"
         ]
@@ -331,7 +331,7 @@ export const zhHelpArticles: HelpArticle[] = [
         "title": "按现象排查",
         "steps": [
           "文件不见了：确认当前空间、文件夹、筛选条件和废纸篓；检查磁盘是否在线。",
-          "文件有但搜不到正文：确认格式能提取文字，检查后台队列。扫描件不支持 OCR。",
+          "文件有但搜不到正文：检查后台提取队列，必要时重试失败项。macOS 的图片和扫描 PDF 需要等待本地 OCR 完成；其他系统暂不提供此识别能力。",
           "AI 无法回答：检查 AI 服务测试结果、模型权限、额度和当前网络；索引成功不代表聊天服务已配置。",
           "从齿轮 → 功能反馈进入 GitHub Issues 或 Discord，提供版本、复现步骤和脱敏截图，不要附 API Key 或私人文件正文。"
         ]
@@ -468,7 +468,7 @@ export const enHelpArticles: HelpArticle[] = [
         "steps": [
           "Select a file and press Space to preview it, or use the context menu to preview or open it in the system app. The viewer depends on the format.",
           "Zoom images or browse PDF pages. Markdown and supported text formats can be read or edited in their respective views.",
-          "Use the system app for formats without a readable built-in preview. Scanned PDFs and images do not have OCR text extraction."
+          "Use the system app for formats without a built-in preview. On macOS, Apple system recognition reads text from images and scanned PDFs without modifying the originals."
         ]
       },
       {
@@ -498,7 +498,7 @@ export const enHelpArticles: HelpArticle[] = [
         "title": "When a file is missing",
         "steps": [
           "Open Preferences → Background tasks and status. Resume paused work or retry failed items, and allow pending extraction to finish.",
-          "Readable text can be extracted from PDF, DOCX, XLSX, PPTX, and supported text formats. Images, scans, or files beyond extraction limits may have no indexed body.",
+          "Readable text is extracted from PDF, DOCX, XLSX, PPTX, and supported text formats. macOS also provides local image/scanned-PDF OCR and basic image-category search. Recognition can be inaccurate, and files beyond extraction limits may not have a complete body index.",
           "Install the local semantic model to add meaning-based relevance. Semantic relevance does not guarantee that every file can be understood or retrieved."
         ]
       }
@@ -618,7 +618,7 @@ export const enHelpArticles: HelpArticle[] = [
       {
         "title": "Use and manage",
         "steps": [
-          "Continue using normal search and Lumie retrieval; you do not manually convert files to vectors. Embeddings use extracted text and do not add OCR to images or scans.",
+          "Continue using normal search and Lumie retrieval without manually converting files to vectors. macOS image OCR and basic classification work independently of E5; installing E5 also makes recognized text available to semantic search.",
           "Retry failed downloads after checking the network. Inspect failed indexing tasks before retrying. File management remains available during downloads and indexing.",
           "Removing the model disables semantic search and deletes local vectors. Name and full-text search remain available. The model, extracted text, chunks, and vectors stay local during indexing."
         ]
@@ -693,7 +693,7 @@ export const enHelpArticles: HelpArticle[] = [
         "title": "Diagnose the symptom",
         "steps": [
           "Missing file: check the active workspace, folder, filters, Trash, and disk connection.",
-          "File exists but its text is missing from search: check extraction support and the background queue. Scans do not have OCR.",
+          "File exists but its text is missing from search: check the background extraction queue and retry failures if needed. Images and scanned PDFs on macOS must finish local OCR first; other systems do not currently provide this recognition.",
           "AI cannot answer: check the service connection, model access, quota, and network. A ready index does not mean chat is configured.",
           "Open gear → Feedback for GitHub Issues or Discord. Include the version, reproduction steps, and sanitized screenshots, but no API keys or private file contents."
         ]

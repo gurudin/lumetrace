@@ -937,6 +937,7 @@ export const en = {
     },
     fileMenu: {
       versionHistory: "View Version History",
+      openDefault: "Open with Default App",
       reveal: "Show in Finder",
       rename: "Rename",
       tags: "Manage Tags",
@@ -1081,6 +1082,7 @@ export const en = {
       restoreTrash: "Unable to restore the Trash item.",
       emptyTrash: "Unable to empty Trash.",
       autoCleanupTrash: "Unable to automatically remove expired Trash items.",
+      openFile: "Unable to open the file with the default app.",
       revealFile: "Unable to show the file in Finder.",
       copyFile: "Unable to copy the file.",
       copyPath: "Unable to copy the file path.",

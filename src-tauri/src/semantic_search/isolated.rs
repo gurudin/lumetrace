@@ -49,6 +49,7 @@ mod tests {
             "one",
             revision,
             ContentExtraction {
+                visual_json: None,
                 text: text.into(),
                 status: ExtractionStatus::Extracted,
                 error: None,
@@ -71,7 +72,7 @@ mod tests {
             s.name = if n == 467 {
                 "second.txt".into()
             } else {
-                format!("image-{n:03}.png")
+                format!("image-{n:03}.unsupported")
             };
             w.database.0.lock().unwrap().execute(
                 "INSERT INTO files(id,original_name,storage_path,created_at) VALUES(?1,?2,?2,1)",
@@ -186,6 +187,126 @@ mod tests {
         drop((a, b));
         std::fs::remove_dir_all(root).unwrap();
     }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    fn visual_extraction_upgrade_invalidates_only_affected_cached_sources() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-vision-upgrade-{}", Uuid::new_v4()));
+        let runtime = SemanticSearchRuntime::new(&root);
+        let w = fixture(&root, &runtime);
+        let mut image = source(1);
+        image.id = "image".into();
+        image.name = "image.PNG".into();
+        w.database.0.lock().unwrap().execute("INSERT INTO files(id,original_name,storage_path,created_at) VALUES('image','image.PNG','image.PNG',1)", []).unwrap();
+        w.prepare(&[source(1), image.clone()]).unwrap();
+        supply(&w, 1, "cached text must survive");
+        w.database.0.lock().unwrap().execute("UPDATE file_space_search_documents SET extraction_version=1,extraction_status='unsupported' WHERE file_id='image'", []).unwrap();
+        w.prepare(&[source(1), image.clone()]).unwrap();
+        assert_eq!(w.next_source().unwrap(), Some(("image".into(), 1)));
+        assert!(!query(&w, "cached").is_empty());
+        w.store_extraction(
+            "image",
+            1,
+            ContentExtraction {
+                visual_json: None,
+                text: "recognized orchid".into(),
+                status: ExtractionStatus::Extracted,
+                error: None,
+            },
+        )
+        .unwrap();
+        w.prepare(&[source(1), image]).unwrap();
+        assert!(w.next_source().unwrap().is_none());
+        assert!(!query(&w, "orchid").is_empty());
+        drop(w);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[cfg(target_os = "macos")]
+    #[ignore = "requires explicitly generated synthetic LUMETRACE_TEST_VISION_DIR fixtures; uses real Apple Vision"]
+    fn native_vision_replica_search_survives_restart_and_rejects_stale_content() {
+        let root =
+            std::env::temp_dir().join(format!("lumetrace-vision-replica-{}", Uuid::new_v4()));
+        let generated = PathBuf::from(
+            std::env::var_os("LUMETRACE_TEST_VISION_DIR")
+                .expect("synthetic fixture directory required"),
+        );
+        let runtime = SemanticSearchRuntime::new(&root);
+        let mut s = source(1);
+        s.name = "document.png".into();
+        let w = fixture(&root, &runtime);
+        w.database
+            .0
+            .lock()
+            .unwrap()
+            .execute("UPDATE files SET updated_at=1,size_bytes=42", [])
+            .unwrap();
+        let staged = root.join(".index-source-synthetic");
+        std::fs::copy(generated.join("document.png"), &staged).unwrap();
+        w.prepare(&[s.clone()]).unwrap();
+        assert!(w.supply("one", 1, &s.name, &staged).unwrap());
+        assert!(!query(&w, "北京").is_empty());
+        assert!(!query(&w, "文档").is_empty());
+        std::fs::remove_file(&staged).unwrap();
+        drop(w);
+        let w = fixture(&root, &runtime);
+        w.prepare(&[s.clone()]).unwrap();
+        assert!(w.next_source().unwrap().is_none());
+        assert!(!query(&w, "ORCHID").is_empty());
+        let preview = w
+            .preview(&SearchPreviewRequest {
+                file_id: "one".into(),
+                query: "ORCHID".into(),
+                scopes: vec!["content".into()],
+            })
+            .unwrap();
+        assert!(
+            preview.sections.iter().any(|s| !s.rectangles.is_empty()),
+            "Replica restart must preserve OCR coordinates"
+        );
+        assert!(query(&w, "文档").iter().all(|m| !m
+            .snippet
+            .as_deref()
+            .unwrap_or_default()
+            .contains("Image categories")));
+        s.revision = 2;
+        w.prepare(&[s]).unwrap();
+        assert!(query(&w, "ORCHID").is_empty());
+        assert!(w
+            .preview(&SearchPreviewRequest {
+                file_id: "one".into(),
+                query: "ORCHID".into(),
+                scopes: vec!["content".into()]
+            })
+            .unwrap()
+            .sections
+            .is_empty());
+        assert!(!w
+            .supply("one", 1, "document.png", &generated.join("document.png"))
+            .unwrap());
+        assert!(w.next_source().unwrap().is_some());
+        s = source(3);
+        s.name = "scan.pdf".into();
+        std::fs::copy(generated.join("scan.pdf"), &staged).unwrap();
+        w.prepare(&[s]).unwrap();
+        assert!(w.supply("one", 3, "scan.pdf", &staged).unwrap());
+        std::fs::remove_file(&staged).unwrap();
+        assert!(!query(&w, "北京").is_empty());
+        assert!(w
+            .preview(&SearchPreviewRequest {
+                file_id: "one".into(),
+                query: "ORCHID".into(),
+                scopes: vec!["content".into()]
+            })
+            .unwrap()
+            .sections
+            .iter()
+            .any(|s| s.page_number == Some(1) && !s.rectangles.is_empty()));
+        drop(w);
+        std::fs::remove_dir_all(root).unwrap();
+    }
     #[test]
     #[ignore = "requires explicitly supplied existing model assets; never downloads or reads user documents"]
     fn real_e5_isolated_owner_member_restart_and_version_invalidation() {
@@ -214,6 +335,7 @@ mod tests {
                     "file-467",
                     469,
                     ContentExtraction {
+                        visual_json: None,
                         text: "A second synthetic document about team collaboration.".into(),
                         status: ExtractionStatus::Extracted,
                         error: None
@@ -336,10 +458,12 @@ impl Workspace {
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
-        let mut old: HashMap<String, i64> = tx
-            .prepare("SELECT file_id,indexed_at FROM file_space_search_documents")
+        let mut old: HashMap<String, (i64, i64)> = tx
+            .prepare(
+                "SELECT file_id,indexed_at,extraction_version FROM file_space_search_documents",
+            )
             .map_err(|e| e.to_string())?
-            .query_map([], |r| Ok((r.get(0)?, r.get(1)?)))
+            .query_map([], |r| Ok((r.get(0)?, (r.get(1)?, r.get(2)?))))
             .map_err(|e| e.to_string())?
             .collect::<rusqlite::Result<_>>()
             .map_err(|e| e.to_string())?;
@@ -348,7 +472,8 @@ impl Workspace {
             if s.revision <= 0 || !seen.insert(&s.id) {
                 return Err("Invalid source revision".into());
             }
-            if old.remove(&s.id) == Some(s.revision) {
+            let version = content_extractor::extraction_version(&s.name);
+            if old.remove(&s.id) == Some((s.revision, version)) {
                 continue;
             }
             tx.execute(
@@ -369,8 +494,8 @@ impl Workspace {
                 "pending"
             };
             tx.execute("INSERT INTO file_space_search_documents(file_id,file_name,body_text,extraction_status,extraction_error,extraction_version,tag_text,task_text,cell_text,file_updated_at,size_bytes,indexed_at)
-                VALUES(?1,?2,'',?3,NULL,?4,?5,'','',?6,?7,?8) ON CONFLICT(file_id) DO UPDATE SET file_name=excluded.file_name,body_text='',extraction_status=excluded.extraction_status,extraction_error=NULL,extraction_version=excluded.extraction_version,tag_text=excluded.tag_text,task_text='',cell_text='',file_updated_at=excluded.file_updated_at,size_bytes=excluded.size_bytes,indexed_at=excluded.indexed_at",
-                params![s.id,s.name,state,content_extractor::EXTRACTION_VERSION,s.tags,s.updated_at,s.size,s.revision]).map_err(|e|e.to_string())?;
+                VALUES(?1,?2,'',?3,NULL,?4,?5,'','',?6,?7,?8) ON CONFLICT(file_id) DO UPDATE SET file_name=excluded.file_name,body_text='',visual_json=NULL,extraction_status=excluded.extraction_status,extraction_error=NULL,extraction_version=excluded.extraction_version,tag_text=excluded.tag_text,task_text='',cell_text='',file_updated_at=excluded.file_updated_at,size_bytes=excluded.size_bytes,indexed_at=excluded.indexed_at",
+                params![s.id,s.name,state,version,s.tags,s.updated_at,s.size,s.revision]).map_err(|e|e.to_string())?;
         }
         for id in old.keys() {
             for table in [
@@ -407,6 +532,7 @@ impl Workspace {
             id,
             revision,
             ContentExtraction {
+                visual_json: None,
                 text: String::new(),
                 status: ExtractionStatus::Failed,
                 error: Some(reason.into()),
@@ -423,8 +549,8 @@ impl Workspace {
         let tx = db
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|e| e.to_string())?;
-        let changed=tx.execute("UPDATE file_space_search_documents SET body_text=?3,extraction_status=?4,extraction_error=?5 WHERE file_id=?1 AND indexed_at=?2 AND extraction_status='pending'",
-            params![id,revision,value.text,value.status.as_str(),value.error]).map_err(|e|e.to_string())?;
+        let changed=tx.execute("UPDATE file_space_search_documents SET body_text=?3,extraction_status=?4,extraction_error=?5,visual_json=?6 WHERE file_id=?1 AND indexed_at=?2 AND extraction_status='pending'",
+            params![id,revision,value.text,value.status.as_str(),value.error,value.visual_json]).map_err(|e|e.to_string())?;
         if changed > 0 {
             schedule_search_documents_in_transaction(&tx, &[id.into()], now_millis())?;
             complete_metadata_only(&tx)?;

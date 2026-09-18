@@ -22,6 +22,7 @@ import {
   FilePlus2,
   FileSpreadsheet,
   FileText,
+  ExternalLink,
   Filter,
   Folder,
   FolderPlus,
@@ -4064,9 +4065,9 @@ export function FileSpacePage() {
   };
 
   const runFileCommand = async (
-    command: "reveal_file_space_file" | "copy_file_space_file" | "copy_file_space_file_path",
+    command: "open_file_space_file" | "reveal_file_space_file" | "copy_file_space_file_path" | "copy_file_space_file",
     fileId: string,
-    errorKey: "revealFile" | "copyFile" | "copyPath",
+    errorKey: "openFile" | "revealFile" | "copyFile" | "copyPath",
   ) => {
     const operation = beginOperation("fileAction");
     if (!operation) return;
@@ -6718,6 +6719,9 @@ export function FileSpacePage() {
               <span />
             </>
           ) : null}
+          <button type="button" role="menuitem" disabled={Boolean(busyAction)} onClick={() => void runFileCommand("open_file_space_file", fileContextMenu.fileId, "openFile")}>
+            <ExternalLink size={16} />{t("fileSpace.fileMenu.openDefault")}
+          </button>
           <button type="button" role="menuitem" disabled={!canWrite || Boolean(busyAction)} onClick={() => void runFileCommand("reveal_file_space_file", fileContextMenu.fileId, "revealFile")}>
             <FolderOpen size={16} />{t("fileSpace.fileMenu.reveal")}
           </button>

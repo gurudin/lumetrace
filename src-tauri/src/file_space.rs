@@ -1,6 +1,7 @@
 use crate::{
     content_extractor::{
-        extract_file_content, ContentExtraction, ExtractionStatus, EXTRACTION_VERSION,
+        extract_file_content, extraction_version, ContentExtraction, ExtractionStatus,
+        EXTRACTION_VERSION,
     },
     database::Database,
 };
@@ -48,7 +49,10 @@ const FILE_SPACE_INITIAL_PAGE_LIMIT: usize = 160;
 const FILE_SPACE_FILE_PAGE_MAX_LIMIT: usize = 320;
 const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
 const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
-const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v1";
+// Keep this key versioned independently from the extraction version. A repair
+// batch may already be marked done in an existing database, so changing the
+// extraction algorithm must advance the cursor key to run a new bounded pass.
+const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v4";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
 const SEARCH_RESULT_SNIPPET_TOKENS: i64 = 42;
 const SEARCH_PREVIEW_CONTEXT_BEFORE: usize = 140;
@@ -308,6 +312,7 @@ pub struct FileSpaceSearchPreviewSection {
     pub text: String,
     pub line_number: Option<usize>,
     pub page_number: Option<usize>,
+    pub rectangles: Vec<crate::visual_content::VisualRect>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -318,6 +323,8 @@ pub struct FileSpaceSearchPreview {
     pub match_count: usize,
     pub truncated: bool,
     pub extraction_status: String,
+    pub source_updated_at: i64,
+    pub source_size_bytes: i64,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -3334,6 +3341,7 @@ struct SearchDocumentCandidate {
 
 fn failed_content_extraction(error: impl Into<String>) -> ContentExtraction {
     ContentExtraction {
+        visual_json: None,
         text: String::new(),
         status: ExtractionStatus::Failed,
         error: Some(error.into()),
@@ -3398,7 +3406,7 @@ fn claim_next_content_extraction(
              FROM file_space_search_documents documents
              JOIN files ON files.id = documents.file_id
              WHERE documents.extraction_status = 'pending'
-               AND documents.extraction_version = ?1
+               AND documents.extraction_version <= ?1
                AND files.trashed_at IS NULL AND files.storage_path IS NOT NULL
              ORDER BY documents.indexed_at, documents.file_id
              LIMIT 1",
@@ -3422,18 +3430,63 @@ fn claim_next_content_extraction(
 }
 
 fn process_next_content_extraction(database: &Database) -> Result<bool, String> {
-    let Some(root) = read_storage_root(database)? else {
-        return Ok(false);
-    };
-    if inspect_root(Some(&root)) != "ready" {
-        return Ok(false);
+    process_next_content_extraction_with(database, read_searchable_text)
+}
+
+fn source_stamp(path: &Path) -> Option<(u64, i128)> {
+    let metadata = fs::symlink_metadata(path).ok()?;
+    if !metadata.is_file() || metadata.file_type().is_symlink() {
+        return None;
     }
-    let Some(job) = claim_next_content_extraction(database)? else {
-        return Ok(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        Some((
+            metadata.len(),
+            metadata.ctime() as i128 * 1_000_000_000 + metadata.ctime_nsec() as i128,
+        ))
+    }
+    #[cfg(not(unix))]
+    Some((
+        metadata.len(),
+        metadata
+            .modified()
+            .ok()?
+            .duration_since(std::time::UNIX_EPOCH)
+            .ok()?
+            .as_nanos() as i128,
+    ))
+}
+
+fn process_next_content_extraction_with(
+    database: &Database,
+    extract: impl FnOnce(&Path, &str, &str) -> ContentExtraction,
+) -> Result<bool, String> {
+    let (root, location, job, stamp) = {
+        let _operation = lock_file_space_operations()?;
+        let Some(root) = read_storage_root(database)? else {
+            return Ok(false);
+        };
+        if inspect_root(Some(&root)) != "ready" {
+            return Ok(false);
+        }
+        let Some(job) = claim_next_content_extraction(database)? else {
+            return Ok(false);
+        };
+        let stamp = source_stamp(&physical_path(&root, &job.relative_path)?);
+        (root, database.location()?, job, stamp)
     };
-    let extraction = protected_content_extraction(|| {
-        read_searchable_text(&root, &job.relative_path, &job.file_name)
-    });
+    // OCR runs without the file-operation or SQLite locks. UI reads, edits,
+    // workspace switches, and catalogue sync must not wait for native analysis.
+    let extraction =
+        protected_content_extraction(|| extract(&root, &job.relative_path, &job.file_name));
+    let _operation = lock_file_space_operations()?;
+    if database.location()?.database_path != location.database_path
+        || read_storage_root(database)?.as_ref() != Some(&root)
+        || source_stamp(&physical_path(&root, &job.relative_path)?) != stamp
+    {
+        return Ok(true);
+    }
     let updated = {
         let connection = database
             .0
@@ -3442,9 +3495,11 @@ fn process_next_content_extraction(database: &Database) -> Result<bool, String> 
         connection
             .execute(
                 "UPDATE file_space_search_documents
-                 SET body_text = ?1, extraction_status = ?2, extraction_error = ?3
+                 SET body_text = ?1, extraction_status = ?2, extraction_error = ?3, visual_json = ?9
                  WHERE file_id = ?4 AND indexed_at = ?5
-                   AND extraction_version = ?6 AND extraction_status = 'pending'",
+                   AND extraction_version = ?6 AND extraction_status = 'pending'
+                   AND EXISTS (SELECT 1 FROM files f WHERE f.id = ?4
+                     AND f.trashed_at IS NULL AND f.storage_path = ?7 AND f.original_name = ?8)",
                 params![
                     extraction.text,
                     extraction.status.as_str(),
@@ -3452,6 +3507,9 @@ fn process_next_content_extraction(database: &Database) -> Result<bool, String> 
                     job.file_id,
                     job.indexed_at,
                     job.extraction_version,
+                    job.relative_path,
+                    job.file_name,
+                    extraction.visual_json,
                 ],
             )
             .map_err(|error| format!("Unable to save extracted file content: {error}"))?
@@ -3472,14 +3530,19 @@ pub fn start_file_content_extractor(app: tauri::AppHandle) -> Result<(), String>
                 continue;
             }
             let database = app.state::<Database>();
-            let result = lock_file_space_operations().and_then(|_operation| {
-                // Repair old omissions in bounded metadata-only batches. Never
-                // put a workspace-wide body scan on startup or search paths.
-                let cataloged = crate::file_query::backfill_file_lookup_batch(database.inner())?;
-                let repaired = repair_missed_edit_indexes_batch(database.inner())?;
-                let extracted = process_next_content_extraction(database.inner())?;
-                Ok(cataloged || repaired || extracted)
-            });
+            let result = lock_file_space_operations()
+                .and_then(|_operation| {
+                    // Repair old omissions in bounded metadata-only batches. Never
+                    // put a workspace-wide body scan on startup or search paths.
+                    let cataloged =
+                        crate::file_query::backfill_file_lookup_batch(database.inner())?;
+                    let repaired = repair_missed_edit_indexes_batch(database.inner())?;
+                    Ok(cataloged || repaired)
+                })
+                .and_then(|repaired| {
+                    process_next_content_extraction(database.inner())
+                        .map(|extracted| repaired || extracted)
+                });
             match result {
                 Ok(true) => std::thread::sleep(CONTENT_EXTRACTION_DOCUMENT_PAUSE),
                 Ok(false) => std::thread::sleep(Duration::from_millis(500)),
@@ -3637,10 +3700,9 @@ fn retry_background_failures(database: &Database) -> Result<(), String> {
         connection
             .execute(
                 "UPDATE file_space_search_documents
-                 SET extraction_status = 'pending', extraction_error = NULL,
-                     extraction_version = ?1
+                 SET extraction_status = 'pending', extraction_error = NULL
                  WHERE extraction_status = 'failed'",
-                [EXTRACTION_VERSION],
+                [],
             )
             .map_err(|error| format!("Unable to retry content extraction: {error}"))?;
     }
@@ -3693,6 +3755,16 @@ fn queue_changed_file_index(
     file_id: &str,
 ) -> rusqlite::Result<()> {
     let requested_at = now_millis();
+    let name: Option<String> = transaction
+        .query_row(
+            "SELECT original_name FROM files WHERE id = ?1",
+            [file_id],
+            |r| r.get(0),
+        )
+        .optional()?;
+    let Some(name) = name else {
+        return Ok(());
+    };
     transaction.execute(
         "INSERT INTO file_space_search_documents
          (file_id, file_name, body_text, extraction_status, extraction_error,
@@ -3707,12 +3779,12 @@ fn queue_changed_file_index(
          LEFT JOIN file_space_artifact_versions v ON v.id = a.current_version_id
          WHERE f.id = ?1 AND f.trashed_at IS NULL AND f.storage_path IS NOT NULL
          ON CONFLICT(file_id) DO UPDATE SET
-           file_name = excluded.file_name, body_text = '', extraction_status = 'pending',
+           file_name = excluded.file_name, body_text = '', visual_json = NULL, extraction_status = 'pending',
            extraction_error = NULL, extraction_version = excluded.extraction_version,
            tag_text = excluded.tag_text, task_text = excluded.task_text, cell_text = excluded.cell_text,
            file_updated_at = excluded.file_updated_at, size_bytes = excluded.size_bytes,
            indexed_at = MAX(file_space_search_documents.indexed_at + 1, excluded.indexed_at)",
-        params![file_id, EXTRACTION_VERSION, requested_at],
+        params![file_id, extraction_version(&name), requested_at],
     )?;
     transaction.execute(
         "INSERT INTO file_space_index_jobs
@@ -3762,25 +3834,29 @@ fn repair_missed_edit_indexes_batch(database: &Database) -> Result<bool, String>
     let candidates = {
         let mut statement = transaction
             .prepare(
-                "SELECT f.id, f.trashed_at IS NULL AND f.storage_path IS NOT NULL AND (
+                "SELECT f.id, f.original_name, f.trashed_at IS NULL AND f.storage_path IS NOT NULL, (
                  d.file_id IS NULL OR d.file_name <> f.original_name
-                 OR d.file_updated_at <> f.updated_at OR d.size_bytes <> COALESCE(f.size_bytes, 0)
-                 OR d.extraction_version <> ?3)
+                 OR d.file_updated_at <> f.updated_at OR d.size_bytes <> COALESCE(f.size_bytes, 0)), d.extraction_version
              FROM (SELECT id, original_name, storage_path, trashed_at, updated_at, size_bytes
                    FROM files WHERE id > ?1 ORDER BY id LIMIT ?2) f
              LEFT JOIN file_space_search_documents d ON d.file_id = f.id ORDER BY f.id",
             )
             .map_err(|error| format!("Unable to prepare index repair: {error}"))?;
         statement
-            .query_map(
-                params![cursor, EDIT_INDEX_REPAIR_BATCH_SIZE, EXTRACTION_VERSION],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, bool>(1)?)),
-            )
+            .query_map(params![cursor, EDIT_INDEX_REPAIR_BATCH_SIZE], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, bool>(2)?,
+                    row.get::<_, bool>(3)?,
+                    row.get::<_, Option<i64>>(4)?,
+                ))
+            })
             .and_then(|rows| rows.collect::<rusqlite::Result<Vec<_>>>())
             .map_err(|error| format!("Unable to read index repair candidates: {error}"))?
     };
-    for (file_id, stale) in &candidates {
-        if *stale {
+    for (file_id, name, live, stale, version) in &candidates {
+        if *live && (*stale || *version != Some(extraction_version(name))) {
             queue_changed_file_index(&transaction, file_id)
                 .map_err(|error| format!("Unable to repair a file index: {error}"))?;
         }
@@ -3904,7 +3980,8 @@ fn synchronize_file_search_index_scope(
             != Some(candidate.file_name.as_str())
             || candidate.indexed_file_updated_at != Some(candidate.file_updated_at)
             || candidate.indexed_size_bytes != Some(candidate.size_bytes)
-            || candidate.indexed_extraction_version != Some(EXTRACTION_VERSION);
+            || candidate.indexed_extraction_version
+                != Some(extraction_version(&candidate.file_name));
         let metadata_changed = candidate.indexed_tag_text.as_deref()
             != Some(candidate.tag_text.as_str())
             || candidate.indexed_task_text.as_deref() != Some(candidate.task_text.as_str())
@@ -3914,12 +3991,14 @@ fn synchronize_file_search_index_scope(
         }
         let extraction = if content_changed {
             ContentExtraction {
+                visual_json: None,
                 text: String::new(),
                 status: ExtractionStatus::Pending,
                 error: None,
             }
         } else {
             ContentExtraction {
+                visual_json: None,
                 text: candidate.indexed_body_text.clone().unwrap_or_default(),
                 status: match candidate.indexed_extraction_status.as_deref() {
                     Some("pending") => ExtractionStatus::Pending,
@@ -3976,6 +4055,7 @@ fn synchronize_file_search_index_scope(
                  ON CONFLICT(file_id) DO UPDATE SET
                    file_name = excluded.file_name,
                    body_text = excluded.body_text,
+                   visual_json = CASE WHEN excluded.extraction_status = 'pending' THEN NULL ELSE file_space_search_documents.visual_json END,
                    extraction_status = excluded.extraction_status,
                    extraction_error = excluded.extraction_error,
                    extraction_version = excluded.extraction_version,
@@ -3991,7 +4071,7 @@ fn synchronize_file_search_index_scope(
                     extraction.text,
                     extraction.status.as_str(),
                     extraction.error,
-                    EXTRACTION_VERSION,
+                    extraction_version(&candidate.file_name),
                     candidate.tag_text,
                     candidate.task_text,
                     candidate.cell_text,
@@ -10899,12 +10979,16 @@ fn search_preview_record(
     if query.is_empty() || query.chars().count() > 512 || request.file_id.chars().count() > 2_048 {
         return Err("Invalid File Space search preview request".to_owned());
     }
-    let (file_name, body_text, extraction_status) = database
+    let (file_name, body_text, extraction_status, visual_json, source_updated_at, source_size_bytes) = database
         .0
         .lock()
         .map_err(|_| "Unable to access Lume Trace database".to_owned())?
         .query_row(
-            "SELECT documents.file_name, documents.body_text, documents.extraction_status
+            "SELECT documents.file_name, documents.body_text, documents.extraction_status,
+                    CASE WHEN documents.file_updated_at = files.updated_at
+                      AND documents.size_bytes = COALESCE(files.size_bytes, 0)
+                      AND documents.extraction_status = 'extracted' THEN documents.visual_json ELSE NULL END,
+                    documents.file_updated_at, documents.size_bytes
              FROM file_space_search_documents documents
              JOIN files ON files.id = documents.file_id
              WHERE documents.file_id = ?1
@@ -10916,6 +11000,9 @@ fn search_preview_record(
                     row.get::<_, String>(0)?,
                     row.get::<_, String>(1)?,
                     row.get::<_, String>(2)?,
+                    row.get::<_, Option<String>>(3)?,
+                    row.get::<_, i64>(4)?,
+                    row.get::<_, i64>(5)?,
                 ))
             },
         )
@@ -10929,10 +11016,72 @@ fn search_preview_record(
             match_count: 0,
             truncated: false,
             extraction_status,
+            source_updated_at,
+            source_size_bytes,
         });
     }
     let terms = normalized_search_terms(query);
-    let characters = body_text.chars().collect::<Vec<_>>();
+    if let Some(visual) = visual_json
+        .as_deref()
+        .and_then(|value| serde_json::from_str::<crate::visual_content::VisualDocument>(value).ok())
+    {
+        let mut sections = Vec::new();
+        let mut count = 0;
+        let mut limited = false;
+        for page in &visual.pages {
+            if page.number == 0
+                || !page.width.is_finite()
+                || !page.height.is_finite()
+                || page.width <= 0.0
+                || page.height <= 0.0
+            {
+                continue;
+            }
+            for line in &page.lines {
+                let (hits, truncated) =
+                    search_text_occurrences(&line.text.chars().collect::<Vec<_>>(), &terms);
+                count += hits.len();
+                limited |= truncated;
+                for (start, end) in hits {
+                    if sections.len() >= SEARCH_PREVIEW_SECTION_LIMIT {
+                        limited = true;
+                        break;
+                    }
+                    sections.push(FileSpaceSearchPreviewSection {
+                        text: line.text.clone(),
+                        line_number: None,
+                        page_number: file_name
+                            .to_ascii_lowercase()
+                            .ends_with(".pdf")
+                            .then_some(page.number),
+                        rectangles: line.rectangles(start, end),
+                    });
+                }
+                if count >= SEARCH_PREVIEW_MATCH_LIMIT {
+                    limited = true;
+                    break;
+                }
+            }
+            if count >= SEARCH_PREVIEW_MATCH_LIMIT {
+                break;
+            }
+        }
+        return Ok(FileSpaceSearchPreview {
+            file_id: request.file_id.clone(),
+            sections,
+            match_count: count,
+            truncated: limited,
+            extraction_status,
+            source_updated_at,
+            source_size_bytes,
+        });
+    }
+    let visible_body = if crate::visual_content::is_raster(&file_name) {
+        crate::visual_content::display_body(&body_text)
+    } else {
+        &body_text
+    };
+    let characters = visible_body.chars().collect::<Vec<_>>();
     let (occurrences, truncated) = search_text_occurrences(&characters, &terms);
     let newline_indexes = characters
         .iter()
@@ -10965,6 +11114,7 @@ fn search_preview_record(
                 text,
                 line_number,
                 page_number,
+                rectangles: Vec::new(),
             }
         })
         .collect();
@@ -10974,6 +11124,8 @@ fn search_preview_record(
         match_count: occurrences.len(),
         truncated: truncated || occurrences.len() > SEARCH_PREVIEW_SECTION_LIMIT,
         extraction_status,
+        source_updated_at,
+        source_size_bytes,
     })
 }
 
@@ -10982,6 +11134,65 @@ pub(crate) fn search_file_space_preview(
     request: &FileSpaceSearchPreviewRequest,
 ) -> Result<FileSpaceSearchPreview, String> {
     search_preview_record(database, request)
+}
+
+fn visual_search_snippet(body: &str, query: &str, fallback: &str) -> String {
+    fn find_term(text: &str, term: &str) -> Option<(usize, usize)> {
+        let term = term.trim();
+        if term.is_empty() {
+            return None;
+        }
+        if let Some(start) = text.find(term) {
+            return Some((start, start + term.len()));
+        }
+        let term_chars = term.chars().count();
+        let folded_term = term.to_lowercase();
+        let chars = text.char_indices().collect::<Vec<_>>();
+        for (index, (start, _)) in chars.iter().enumerate() {
+            let end = chars
+                .get(index + term_chars)
+                .map(|(offset, _)| *offset)
+                .unwrap_or(text.len());
+            if text[*start..end].to_lowercase() == folded_term {
+                return Some((*start, end));
+            }
+        }
+        None
+    }
+
+    fn context(text: &str, range: (usize, usize)) -> String {
+        let start_chars = text[..range.0].chars().count();
+        let end_chars = text[..range.1].chars().count();
+        let chars = text.chars().collect::<Vec<_>>();
+        let from = start_chars.saturating_sub(80);
+        let to = (end_chars + 160).min(chars.len());
+        let mut result = chars[from..to].iter().collect::<String>();
+        if from > 0 {
+            result.insert(0, '…');
+        }
+        if to < chars.len() {
+            result.push('…');
+        }
+        result.trim().to_owned()
+    }
+
+    let terms = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    let (document_body, category_body) = body
+        .split_once(crate::visual_content::CATEGORY_MARKER)
+        .unwrap_or((body, ""));
+    if let Some(range) = terms.iter().find_map(|term| find_term(document_body, term)) {
+        return context(document_body, range);
+    }
+    if let Some(range) = terms.iter().find_map(|term| find_term(category_body, term)) {
+        return context(category_body, range);
+    }
+    fallback
+        .replace(crate::visual_content::CATEGORY_MARKER, "\n")
+        .trim()
+        .to_owned()
 }
 
 fn search_file_space_matches_with_generation(
@@ -11054,6 +11265,7 @@ fn search_file_space_matches_with_generation(
             let mut statement = connection
                 .prepare(
                     "SELECT documents.file_id,
+                            documents.body_text,
                             snippet(file_space_search_fts, 1, '', '', ' … ', ?2)
                      FROM file_space_search_fts
                      JOIN file_space_search_documents documents
@@ -11069,15 +11281,19 @@ fn search_file_space_matches_with_generation(
                     format!("Unable to prepare File Space search excerpts: {error}")
                 })?;
             let rows = statement.query_map(
-                params![body_expression, SEARCH_RESULT_SNIPPET_TOKENS],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                params![body_expression, SEARCH_RESULT_SNIPPET_TOKENS,],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             );
             if let Ok(rows) = rows {
-                for (file_id, snippet) in rows.flatten() {
-                    let snippet = snippet.trim();
-                    if !snippet.is_empty() {
-                        content_snippets.insert(file_id, snippet.to_owned());
-                    }
+                for (file_id, body, fallback) in rows.flatten() {
+                    let snippet = visual_search_snippet(&body, query, &fallback);
+                    content_snippets.insert(file_id, snippet);
                 }
             }
         }
@@ -11792,7 +12008,7 @@ pub fn open_file_space_file<R: tauri::Runtime>(
 ) -> Result<(), String> {
     let _operation = lock_file_space_operations()?;
     reconcile_before_file_action(database.inner(), &app, &file_id)?;
-    open_file_with_default_application(&external_default_document_path(database.inner(), &file_id)?)
+    open_file_with_default_application(&active_file_path(database.inner(), &file_id)?)
 }
 
 #[tauri::command]
@@ -12168,6 +12384,63 @@ mod tests {
         let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
         configure_storage_root_record(&database, storage.to_string_lossy().as_ref()).unwrap();
         (root, storage, versions, database)
+    }
+
+    #[test]
+    fn image_category_search_snippet_uses_category_text_without_internal_marker() {
+        let body = format!(
+            "OCR text{}cake\n蛋糕\nケーキ",
+            crate::visual_content::CATEGORY_MARKER
+        );
+        let snippet = visual_search_snippet(&body, "蛋糕", "fallback");
+        assert!(snippet.contains("蛋糕"));
+        assert!(!snippet.contains("Image categories"));
+        assert_eq!(visual_search_snippet(&body, "OCR", "fallback"), "OCR text");
+    }
+
+    #[test]
+    fn image_category_search_returns_the_image_for_a_localized_object_query() {
+        let (root, _storage, _versions, database) = test_workspace("image-category-search");
+        let body = format!(
+            "{}cake\n蛋糕\nケーキ",
+            crate::visual_content::CATEGORY_MARKER
+        );
+        let connection = database.0.lock().unwrap();
+        connection
+            .execute(
+                "INSERT INTO files
+                 (id, original_name, storage_path, source_kind, updated_at, created_at)
+                 VALUES ('cake-image', 'cake.png', 'cake.png', 'user_import', 1, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_space_search_documents
+                 (file_id, file_name, body_text, extraction_status, extraction_version,
+                  file_updated_at, size_bytes, indexed_at)
+                 VALUES ('cake-image', 'cake.png', ?1, 'extracted', 5, 1, 1, 1)",
+                [&body],
+            )
+            .unwrap();
+        drop(connection);
+
+        let matches = search_file_space_matches(
+            &database,
+            None,
+            &FileSpaceSearchRequest {
+                query: "蛋糕".into(),
+                scopes: vec!["content".into()],
+            },
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].file_id, "cake-image");
+        assert!(matches[0].snippet.as_deref().is_some_and(
+            |snippet| snippet.contains("蛋糕") && !snippet.contains("Image categories")
+        ));
+        drop(database);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn stage_purge_for_test(
@@ -13252,6 +13525,7 @@ mod tests {
             .is_some_and(|error| error.contains("other files will continue")));
 
         let extracted = protected_content_extraction(|| ContentExtraction {
+            visual_json: None,
             text: "next document".to_owned(),
             status: ExtractionStatus::Extracted,
             error: None,

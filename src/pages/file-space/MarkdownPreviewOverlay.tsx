@@ -1,4 +1,6 @@
 import { useWorkspaceInvoke } from "../../shared/extensions/useWorkspaceInvoke";
+import { useApplicationExtension, useWorkspaceExtension } from "../../shared/extensions/ApplicationExtension";
+import { DocumentViewSlot } from "../../shared/extensions/DocumentView";
 import { VersionAuthor } from "./VersionAuthor";
 import { isTauri } from "@tauri-apps/api/core";
 import { AlertTriangle, Eye, History, LoaderCircle, Pencil, Save, X } from "lucide-react";
@@ -190,6 +192,8 @@ function createTimelineVisualFixture(target: MarkdownPreviewRequest): TaskFileTi
 
 export function MarkdownPreviewOverlay() {
   const invoke = useWorkspaceInvoke();
+  const documentView = useApplicationExtension()?.extension.DocumentView;
+  const workspaceKey = useWorkspaceExtension()?.selectionKey ?? "local";
   const { t, i18n } = useTranslation();
   const copy = {
     dialog: (name: string) => t("fileSpace.preview.markdown.dialog", { name }),
@@ -566,6 +570,19 @@ export function MarkdownPreviewOverlay() {
 
   if (!presence.mounted || !request) return null;
 
+  const contentView = mode === "edit" ? (
+    <textarea ref={editorRef} value={draft} onChange={(event) => {
+      setDraft(event.target.value); setSaved(false); setSaveError(null);
+    }} aria-label={copy.editorLabel} />
+  ) : (
+    <article ref={documentRef} className="file-markdown-document" data-native-context-menu="true">
+      {draft ? <ReactMarkdown remarkPlugins={[remarkGfm]} rehypePlugins={[rehypeSourceLines]}
+        components={{ a: ({ children, ...props }) => <a {...props} target="_blank" rel="noreferrer noopener">{children}</a> }}
+      >{draft}</ReactMarkdown> : <p className="file-markdown-empty">{copy.empty}</p>}
+    </article>
+  );
+  const viewSessionKey = `${workspaceKey}:${request.fileId}:${contentLoadSequenceRef.current}`;
+
   return (
     <div
       ref={dialogRef}
@@ -752,34 +769,15 @@ export function MarkdownPreviewOverlay() {
                 {copy.retry}
               </button>
             </div>
-          ) : mode === "edit" ? (
-            <textarea
-              ref={editorRef}
-              value={draft}
-              onChange={(event) => {
-                setDraft(event.target.value);
-                setSaved(false);
-                setSaveError(null);
-              }}
-              aria-label={copy.editorLabel}
-            />
-          ) : (
-            <article ref={documentRef} className="file-markdown-document" data-native-context-menu="true">
-              {draft ? (
-                <ReactMarkdown
-                  remarkPlugins={[remarkGfm]}
-                  rehypePlugins={[rehypeSourceLines]}
-                  components={{
-                    a: ({ children, ...props }) => (
-                      <a {...props} target="_blank" rel="noreferrer noopener">{children}</a>
-                    ),
-                  }}
-                >
-                  {draft}
-                </ReactMarkdown>
-              ) : <p className="file-markdown-empty">{copy.empty}</p>}
-            </article>
-          )}
+          ) : documentView ? <DocumentViewSlot key={viewSessionKey} view={documentView}
+            sessionKey={viewSessionKey} fileId={request.fileId} name={request.name} value={draft}
+            mode={mode} readOnly={historicalVersionSelected || saving || !open}
+            language={i18n.resolvedLanguage ?? "en"}
+            searchContext={historicalVersionSelected ? null : searchContext}
+            onChange={(value) => {
+              if (historicalVersionSelected || saving || !open || mode !== "edit" || typeof value !== "string") return;
+              setDraft(value); setSaved(false); setSaveError(null);
+            }} fallback={contentView} /> : contentView}
         </main>
       </div>
 

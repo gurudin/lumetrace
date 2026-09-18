@@ -1,6 +1,8 @@
 mod agent_cli;
 mod ai_qa;
 mod ai_service;
+#[cfg(target_os = "macos")]
+mod apple_vision;
 mod content_extractor;
 mod database;
 mod feedback;
@@ -12,6 +14,7 @@ pub use ai_qa::isolated as workspace_ai;
 pub use semantic_search::isolated as workspace_search;
 mod version_annotation;
 mod version_comparison;
+mod visual_content;
 mod workspace;
 pub mod workspace_database;
 

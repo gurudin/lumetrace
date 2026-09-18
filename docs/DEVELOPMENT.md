@@ -185,7 +185,34 @@ OS-owned interactions such as Finder-to-app drag/drop, app-to-app drag-out, nati
 - team identity, roles, permissions, sharing, or concurrent collaboration;
 - NAS or cloud synchronization and conflict resolution;
 - Eagle-specific or other application-specific database migration;
-- OCR for image-only documents;
+- image OCR on non-Apple platforms and downloadable advanced visual models;
 - release-accepted Windows and Linux packages.
 
 Claude Code and OpenCode are implemented as experimental Agent CLI adapters, not release-accepted AI answer paths.
+
+## Apple on-device content recognition
+
+On macOS 10.15+, the shared native extractor uses Vision OCR and image classification; older systems retain ordinary PDF text extraction. No model, Python environment, source upload, or Plugin is required. Supported raster extensions are PNG, JPEG, WebP, GIF, BMP, TIFF, HEIC and HEIF, subject to the OS decoder; image containers use the first frame. PDFKit preserves the text layer, and OCRs textless pages and pages containing raster images (including nested Form resources and inline images). Same-page body text no longer prevents embedded-image recognition. Spatially overlapping duplicate text lines are suppressed. Recognition rasters are limited to 3200 pixels on the longest edge, and the existing 100 MiB source / five-million-character extraction bounds remain. A native request times out after 120 seconds and reports failure through existing background-task retry; no additional native worker starts while the timed-out request is still finishing.
+
+Results are stored in the existing SQLite document index. Schema migration 5 adds optional cached `visual_json`; deployed v4 text and FTS entries are preserved without a synchronous rebuild. Normalized top-left rectangles include crop/rotation transforms and UTF-16 substring ranges. Geometry is limited to 50,000 detailed character boxes per document, with recognized-line fallback. Search preview renders the actual image or selected PDF page, highlights cached matching regions, and loads only the selected source. Query/hit changes and resizing do not re-recognize the file. Preview failures have a retry action; stale file/revision responses cannot provide overlays. Opening the separate full-detail viewer retains its previous behavior; these overlays belong to the search preview.
+
+Inferred categories retain explicit provenance for indexing and a small eight-language common-object vocabulary; internal markers and multilingual aliases are excluded from visible snippets. Categories never change filenames, tags or originals, and category matches do not invent object-location boxes. E5, when installed separately, consumes the recognized text through the existing index pipeline. The existing unicode61 tokenizer is unchanged: joined Chinese words may not match a partial token if OCR omits spaces; this milestone does not add Chinese word segmentation.
+
+Extractor revision 3 affects images/PDF only; unchanged text/Office caches remain revision 1. Local upgrade repair is bounded and resumable. Replica preparation also compares extraction revision, not only remote file revision. Extraction runs outside file-operation/database locks, and local commits validate workspace, file stamp, path and document generation. Replica commits validate the caller's revision. Editing invalidates old geometry in the same index write; metadata-only updates preserve valid geometry.
+
+Automatable checks (2026-09-17): 221 frontend tests and production build passed; 207 default Rust tests passed with seven explicit opt-in tests skipped. Four native recognition regressions exercise English/Chinese PNG/JPEG/TIFF, scanned/mixed/same-page embedded-image PDFs, rotation/cropping, classification, unchanged source hashes, cached geometry, local/replica search, restart persistence and stale-result rejection. Eight synthetic Chrome combinations (light/dark, Chinese/English, 920×640/1280×800) use real native-index output to check that highlight rectangles cover rendered text pixels, including rotated PDF pages, and test dense scrolling, source failure/retry, delayed replies, resize caching, compact filename-only/empty search and retained queries. Pixel checks caught and fixed CoreGraphics' downscale-only drawing transform; 2x OCR now applies explicit scale after the 1x crop/rotation transform. These checks do not access live remote storage or the user's application data.
+
+Reproduce with a fresh temporary directory (the generator refuses existing output files):
+
+```sh
+xcrun clang -fobjc-arc -fmodules scripts/vision-fixtures.m -framework AppKit -framework CoreText -framework ImageIO -framework PDFKit -o /tmp/lumetrace-vision-fixtures
+vision_test_dir=$(mktemp -d /tmp/lumetrace-vision-fixtures.XXXXXX)
+/tmp/lumetrace-vision-fixtures "$vision_test_dir"
+LUMETRACE_TEST_VISION_DIR="$vision_test_dir" LUMETRACE_TEST_WRITE_GEOMETRY=1 cargo test --manifest-path src-tauri/Cargo.toml --lib --locked native_vision -- --ignored --nocapture --test-threads=1
+# In a separate terminal; this fixture configuration never mounts the real App.
+npm run dev -- --config tests/browser/vite.config.ts --host 127.0.0.1 --port 1432 --strictPort
+# With Playwright available; optional LUMETRACE_PLAYWRIGHT_PATH selects an existing package.
+LUMETRACE_TEST_VISION_DIR="$vision_test_dir" node tests/browser/searchVisual.cjs
+```
+
+Manual acceptance remains: import an image/scanned PDF, wait for Background Tasks, search a visible word or common object, inspect the search preview, open the result, restart and repeat. Use synthetic data for connected storage, verify unchanged files are not re-downloaded, and check pause/retry while recognition is pending. Native WKWebView transport, older macOS versions, every image codec/orientation, pathological PDFs, and broad photo-classification accuracy remain manual boundaries. No running application, user database, model installation or external storage was accessed during the isolated tests.

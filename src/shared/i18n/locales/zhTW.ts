@@ -872,6 +872,7 @@ export const zhTW = {
     },
     fileMenu: {
       versionHistory: "檢視版本歷程",
+      openDefault: "使用系統預設工具開啟",
       reveal: "在 Finder 中顯示",
       rename: "重新命名",
       tags: "管理 Tag",
@@ -1016,6 +1017,7 @@ export const zhTW = {
       restoreTrash: "無法復原垃圾桶項目。",
       emptyTrash: "無法清空垃圾桶。",
       autoCleanupTrash: "無法自動清理到期項目。",
+      openFile: "無法使用系統預設工具開啟檔案。",
       revealFile: "無法在 Finder 中顯示檔案。",
       copyFile: "無法複製檔案。",
       copyPath: "無法複製檔案路徑。",

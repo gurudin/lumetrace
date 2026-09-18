@@ -1,6 +1,6 @@
 [package]
 name = "lumetrace"
-version = "1.0.3"
+version = "1.0.4"
 description = "A traceable local-first file workspace"
 authors = ["Lume Trace Contributors"]
 edition = "2021"
@@ -10,6 +10,7 @@ name = "lumetrace_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+cc = "1"
 tauri-build = { version = "2", features = [] }
 
 [dependencies]

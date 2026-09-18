@@ -22,6 +22,8 @@ import "./file-space-search-panel.css";
 import { useApplicationExtension } from "../../shared/extensions/ApplicationExtension";
 import { splitSearchText } from "./searchTextHighlight";
 import type { FileOpenSearchContext } from "./fileOpenSearchContext";
+import { SearchVisualPreview } from "./SearchVisualPreview";
+import { visualPreviewKind, type SearchVisualRect } from "./searchVisualGeometry";
 
 export type FileSpaceSearchScope = "name" | "content" | "tag";
 
@@ -62,6 +64,7 @@ interface FileSpaceSearchPreviewSection {
   text: string;
   lineNumber: number | null;
   pageNumber: number | null;
+  rectangles?: SearchVisualRect[];
 }
 
 interface FileSpaceSearchPreview {
@@ -70,6 +73,8 @@ interface FileSpaceSearchPreview {
   matchCount: number;
   truncated: boolean;
   extractionStatus: string;
+  sourceUpdatedAt?: number;
+  sourceSizeBytes?: number;
 }
 
 interface FileSpaceSearchPanelProps {
@@ -187,6 +192,7 @@ export function FileSpaceSearchPanel({
   const activeMatch = activeFile ? matchesByFileId.get(activeFile.id) ?? null : null;
   const activeSection = preview?.sections[activeHitIndex] ?? null;
   const showContentPreview = activeMatch?.contentMatch === true;
+  const visualKind = activeFile ? visualPreviewKind(activeFile.name) : null;
 
   const closePanel = (restoreFocus = true) => {
     restoreFocusRef.current = restoreFocus;
@@ -351,7 +357,7 @@ export function FileSpaceSearchPanel({
       request: { fileId: activeFile.id, query: query.trim(), scopes },
     }).then((value) => {
       if (sequence !== previewSequenceRef.current) return;
-      setPreview(value.sections.length > 0 ? value : semanticFallback() ?? value);
+      setPreview(value.sections.length > 0 || visualKind ? value : semanticFallback() ?? value);
     }).catch(() => {
       if (sequence !== previewSequenceRef.current) return;
       const fallback = semanticFallback();
@@ -396,6 +402,10 @@ export function FileSpaceSearchPanel({
           : (current - 1 + preview!.sections.length) % preview!.sections.length);
         return;
       }
+      // Let focused preview controls (including Retry) receive native Enter
+      // activation instead of opening the selected file behind the control.
+      if (event.key === "Enter" && event.target instanceof Element
+        && event.target.closest(".file-space-global-search-preview button")) return;
       if (event.key === "Enter" && results[activeIndex]) {
         event.preventDefault();
         event.stopImmediatePropagation();
@@ -594,7 +604,12 @@ export function FileSpaceSearchPanel({
                   ) : null}
                 </header>
                 <div className="file-space-global-search-preview-body">
-                  {previewLoading ? (
+                  {activeFile && visualKind ? (
+                    <SearchVisualPreview key={`${activeFile.id}:${activeFile.updatedAt}`} file={activeFile} kind={visualKind}
+                      sections={preview?.fileId === activeFile.id ? preview.sections : []} activeIndex={activeHitIndex}
+                      ready={!previewLoading && preview?.fileId === activeFile.id
+                        && preview.sourceUpdatedAt === activeFile.updatedAt && preview.sourceSizeBytes === activeFile.sizeBytes} />
+                  ) : previewLoading ? (
                     <div className="file-space-global-search-preview-state" role="status">
                       <LoaderCircle className="is-spinning" size={20} />
                       <span>{t("fileSpace.globalSearch.loadingPreview")}</span>

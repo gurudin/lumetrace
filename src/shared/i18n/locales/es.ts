@@ -872,6 +872,7 @@ export const es = {
     },
     fileMenu: {
       versionHistory: "Ver historial de versiones",
+      openDefault: "Abrir con la app predeterminada",
       reveal: "Mostrar en Finder",
       rename: "Renombrar",
       tags: "Gestionar Tags",
@@ -1016,6 +1017,7 @@ export const es = {
       restoreTrash: "No se puede restaurar el elemento de la papelera.",
       emptyTrash: "No se puede vaciar la papelera.",
       autoCleanupTrash: "No se pueden eliminar automáticamente los elementos caducados de la papelera.",
+      openFile: "No se pudo abrir el archivo con la app predeterminada.",
       revealFile: "No se puede mostrar el archivo en Finder.",
       copyFile: "No se puede copiar el archivo.",
       copyPath: "No se puede copiar la ruta del archivo.",

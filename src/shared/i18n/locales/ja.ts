@@ -872,6 +872,7 @@ export const ja = {
     },
     fileMenu: {
       versionHistory: "バージョン履歴を表示",
+      openDefault: "デフォルトのアプリで開く",
       reveal: "Finderに表示",
       rename: "名前を変更",
       tags: "Tagを管理",
@@ -1016,6 +1017,7 @@ export const ja = {
       restoreTrash: "ゴミ箱の項目を復元できません。",
       emptyTrash: "ゴミ箱を空にできません。",
       autoCleanupTrash: "期限切れのゴミ箱項目を自動削除できません。",
+      openFile: "デフォルトのアプリでファイルを開けません。",
       revealFile: "ファイルをFinderに表示できません。",
       copyFile: "ファイルをコピーできません。",
       copyPath: "ファイルパスをコピーできません。",
