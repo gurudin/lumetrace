@@ -11133,6 +11133,65 @@ pub(crate) fn search_file_space_preview(
     search_preview_record(database, request)
 }
 
+fn visual_search_snippet(body: &str, query: &str, fallback: &str) -> String {
+    fn find_term(text: &str, term: &str) -> Option<(usize, usize)> {
+        let term = term.trim();
+        if term.is_empty() {
+            return None;
+        }
+        if let Some(start) = text.find(term) {
+            return Some((start, start + term.len()));
+        }
+        let term_chars = term.chars().count();
+        let folded_term = term.to_lowercase();
+        let chars = text.char_indices().collect::<Vec<_>>();
+        for (index, (start, _)) in chars.iter().enumerate() {
+            let end = chars
+                .get(index + term_chars)
+                .map(|(offset, _)| *offset)
+                .unwrap_or(text.len());
+            if text[*start..end].to_lowercase() == folded_term {
+                return Some((*start, end));
+            }
+        }
+        None
+    }
+
+    fn context(text: &str, range: (usize, usize)) -> String {
+        let start_chars = text[..range.0].chars().count();
+        let end_chars = text[..range.1].chars().count();
+        let chars = text.chars().collect::<Vec<_>>();
+        let from = start_chars.saturating_sub(80);
+        let to = (end_chars + 160).min(chars.len());
+        let mut result = chars[from..to].iter().collect::<String>();
+        if from > 0 {
+            result.insert(0, '…');
+        }
+        if to < chars.len() {
+            result.push('…');
+        }
+        result.trim().to_owned()
+    }
+
+    let terms = query
+        .split_whitespace()
+        .filter(|term| !term.is_empty())
+        .collect::<Vec<_>>();
+    let (document_body, category_body) = body
+        .split_once(crate::visual_content::CATEGORY_MARKER)
+        .unwrap_or((body, ""));
+    if let Some(range) = terms.iter().find_map(|term| find_term(document_body, term)) {
+        return context(document_body, range);
+    }
+    if let Some(range) = terms.iter().find_map(|term| find_term(category_body, term)) {
+        return context(category_body, range);
+    }
+    fallback
+        .replace(crate::visual_content::CATEGORY_MARKER, "\n")
+        .trim()
+        .to_owned()
+}
+
 fn search_file_space_matches_with_generation(
     database: &Database,
     semantic_runtime: Option<&crate::semantic_search::SemanticSearchRuntime>,
@@ -11203,10 +11262,8 @@ fn search_file_space_matches_with_generation(
             let mut statement = connection
                 .prepare(
                     "SELECT documents.file_id,
-                            CASE WHEN documents.extraction_version >= 2 AND instr(documents.body_text, ?3) > 0 THEN
-                              substr(substr(documents.body_text, 1, instr(documents.body_text, ?3)-1),
-                                max(1, instr(lower(substr(documents.body_text, 1, instr(documents.body_text, ?3)-1)), lower(?4))-80), 240)
-                            ELSE snippet(file_space_search_fts, 1, '', '', ' … ', ?2) END
+                            documents.body_text,
+                            snippet(file_space_search_fts, 1, '', '', ' … ', ?2)
                      FROM file_space_search_fts
                      JOIN file_space_search_documents documents
                        ON documents.rowid = file_space_search_fts.rowid
@@ -11221,18 +11278,19 @@ fn search_file_space_matches_with_generation(
                     format!("Unable to prepare File Space search excerpts: {error}")
                 })?;
             let rows = statement.query_map(
-                params![
-                    body_expression,
-                    SEARCH_RESULT_SNIPPET_TOKENS,
-                    crate::visual_content::CATEGORY_MARKER,
-                    query.split_whitespace().next().unwrap_or(query)
-                ],
-                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+                params![body_expression, SEARCH_RESULT_SNIPPET_TOKENS,],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, String>(1)?,
+                        row.get::<_, String>(2)?,
+                    ))
+                },
             );
             if let Ok(rows) = rows {
-                for (file_id, snippet) in rows.flatten() {
-                    let snippet = snippet.trim();
-                    content_snippets.insert(file_id, snippet.to_owned());
+                for (file_id, body, fallback) in rows.flatten() {
+                    let snippet = visual_search_snippet(&body, query, &fallback);
+                    content_snippets.insert(file_id, snippet);
                 }
             }
         }
@@ -12323,6 +12381,63 @@ mod tests {
         let database = crate::database::open_for_test(&root.join("lumetrace.sqlite3")).unwrap();
         configure_storage_root_record(&database, storage.to_string_lossy().as_ref()).unwrap();
         (root, storage, versions, database)
+    }
+
+    #[test]
+    fn image_category_search_snippet_uses_category_text_without_internal_marker() {
+        let body = format!(
+            "OCR text{}cake\n蛋糕\nケーキ",
+            crate::visual_content::CATEGORY_MARKER
+        );
+        let snippet = visual_search_snippet(&body, "蛋糕", "fallback");
+        assert!(snippet.contains("蛋糕"));
+        assert!(!snippet.contains("Image categories"));
+        assert_eq!(visual_search_snippet(&body, "OCR", "fallback"), "OCR text");
+    }
+
+    #[test]
+    fn image_category_search_returns_the_image_for_a_localized_object_query() {
+        let (root, _storage, _versions, database) = test_workspace("image-category-search");
+        let body = format!(
+            "{}cake\n蛋糕\nケーキ",
+            crate::visual_content::CATEGORY_MARKER
+        );
+        let connection = database.0.lock().unwrap();
+        connection
+            .execute(
+                "INSERT INTO files
+                 (id, original_name, storage_path, source_kind, updated_at, created_at)
+                 VALUES ('cake-image', 'cake.png', 'cake.png', 'user_import', 1, 1)",
+                [],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO file_space_search_documents
+                 (file_id, file_name, body_text, extraction_status, extraction_version,
+                  file_updated_at, size_bytes, indexed_at)
+                 VALUES ('cake-image', 'cake.png', ?1, 'extracted', 4, 1, 1, 1)",
+                [&body],
+            )
+            .unwrap();
+        drop(connection);
+
+        let matches = search_file_space_matches(
+            &database,
+            None,
+            &FileSpaceSearchRequest {
+                query: "蛋糕".into(),
+                scopes: vec!["content".into()],
+            },
+        )
+        .unwrap();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0].file_id, "cake-image");
+        assert!(matches[0].snippet.as_deref().is_some_and(
+            |snippet| snippet.contains("蛋糕") && !snippet.contains("Image categories")
+        ));
+        drop(database);
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn stage_purge_for_test(

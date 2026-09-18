@@ -95,6 +95,21 @@ static BOOL LTPageContainsImages(CGPDFPageRef page) {
     return inlineImage;
 }
 
+static void LTAppendLabels(NSMutableArray *target, NSArray *source) {
+    if (!target || !source) return;
+    for (NSDictionary *item in source) {
+        if (target.count >= 8) break;
+        NSString *identifier = item[@"identifier"];
+        NSNumber *confidence = item[@"confidence"];
+        if (![identifier isKindOfClass:NSString.class] || ![confidence isKindOfClass:NSNumber.class]) continue;
+        BOOL duplicate = NO;
+        for (NSDictionary *existing in target) {
+            if ([existing[@"identifier"] isEqual:identifier]) { duplicate = YES; break; }
+        }
+        if (!duplicate) [target addObject:item];
+    }
+}
+
 API_AVAILABLE(macos(10.15))
 static NSString *LTReadImage(CGImageRef image, LTRecognitionJob *job, NSMutableArray *labels, NSMutableArray *geometry, NSError **error) {
     if (job.cancelled) return nil;
@@ -180,6 +195,7 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
                 CGAffineTransform baseTransform = CGPDFPageGetDrawingTransform(pageRef, kCGPDFCropBox, CGRectMake(0,0,displayWidth,displayHeight), 0, true);
                 CGAffineTransform transform = CGAffineTransformConcat(baseTransform, CGAffineTransformMakeScale(width/displayWidth,height/displayHeight));
                 NSMutableArray *geometry = [NSMutableArray new];
+                NSMutableArray *pageLabels = [NSMutableArray new];
                 [text enumerateSubstringsInRange:NSMakeRange(0,text.length) options:NSStringEnumerationByLines usingBlock:^(NSString *line, NSRange range, NSRange enclosing, BOOL *stop) {
                     (void)enclosing;
                     if (job.cancelled || geometry.count >= 10000) { *stop=YES; return; }
@@ -210,10 +226,11 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
                     CGContextRelease(context);
                     if (!image) return @{@"error":@"Unable to render PDF page for OCR"};
                     NSMutableArray *ocrGeometry = [NSMutableArray new];
-                    NSString *ocrText = LTReadImage(image, job, nil, ocrGeometry, &error);
+                    NSString *ocrText = LTReadImage(image, job, pageLabels, ocrGeometry, &error);
                     CGImageRelease(image);
                     ocrPages++;
                     if (!ocrText) return @{@"error":error.localizedDescription ?: @"Apple Vision OCR failed or was cancelled"};
+                    LTAppendLabels(labels, pageLabels);
                     NSArray *nativeLines = [geometry copy];
                     for (NSDictionary *line in ocrGeometry) {
                         if (LTRepeatedLine(line,nativeLines)) continue;
@@ -221,7 +238,7 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
                         [geometry addObject:line];
                     }
                 }
-                [pages addObject:@{@"number":@(i+1),@"width":@(displayWidth),@"height":@(displayHeight),@"lines":geometry}];
+                [pages addObject:@{@"number":@(i+1),@"width":@(displayWidth),@"height":@(displayHeight),@"lines":geometry,@"labels":pageLabels}];
                 if (pageBody.length) [body appendFormat:@"%@[Page %lu]\n%@", body.length ? @"\n\n" : @"", (unsigned long)i + 1, pageBody];
                 if (body.length > LTMaxCharacters) break;
             }
@@ -239,7 +256,7 @@ static NSDictionary *LTRecognize(NSURL *url, BOOL isPDF, LTRecognitionJob *job) 
         if (!image) return @{@"error":@"Unable to decode image for recognition"};
         NSMutableArray *geometry = [NSMutableArray new];
         NSString *text = LTReadImage(image, job, labels, geometry, &error);
-        [pages addObject:@{@"number":@1,@"width":@(CGImageGetWidth(image)),@"height":@(CGImageGetHeight(image)),@"lines":geometry}];
+        [pages addObject:@{@"number":@1,@"width":@(CGImageGetWidth(image)),@"height":@(CGImageGetHeight(image)),@"lines":geometry,@"labels":labels}];
         CGImageRelease(image);
         if (!text) return @{@"error":error.localizedDescription ?: @"Apple Vision recognition failed or was cancelled"};
         [body appendString:text];

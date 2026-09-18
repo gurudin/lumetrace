@@ -11,7 +11,9 @@ use std::{
 };
 use zip::ZipArchive;
 
-pub(crate) const EXTRACTION_VERSION: i64 = if cfg!(target_os = "macos") { 3 } else { 1 };
+// Bump when the persisted extraction payload changes. Version 4 adds Vision
+// category labels to image/PDF metadata and must invalidate older caches.
+pub(crate) const EXTRACTION_VERSION: i64 = if cfg!(target_os = "macos") { 4 } else { 1 };
 const MAX_SOURCE_BYTES: u64 = 100 * 1024 * 1024;
 const MAX_ARCHIVE_ENTRY_BYTES: u64 = 64 * 1024 * 1024;
 const MAX_EXTRACTED_CHARACTERS: usize = 5_000_000;
@@ -152,7 +154,7 @@ pub(crate) fn extraction_version(name: &str) -> i64 {
             Some(ContentKind::Pdf | ContentKind::Image)
         )
     {
-        return 3;
+        return EXTRACTION_VERSION;
     }
     let _ = name;
     1

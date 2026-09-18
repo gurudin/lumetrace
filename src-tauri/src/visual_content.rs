@@ -4,6 +4,14 @@ use serde::{Deserialize, Serialize};
 pub(crate) const CATEGORY_MARKER: &str =
     "\n\n[Image categories — automatically inferred, not document text]\n";
 
+/// A category returned by the system image classifier. These labels are
+/// searchable metadata, not claimed object coordinates.
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub(crate) struct VisualLabel {
+    pub identifier: String,
+    pub confidence: f32,
+}
+
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualRect {
@@ -77,6 +85,9 @@ pub(crate) struct VisualPage {
     pub width: f64,
     pub height: f64,
     pub lines: Vec<VisualLine>,
+    /// Categories inferred from raster content on this PDF page.
+    #[serde(default)]
+    pub labels: Vec<VisualLabel>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]
@@ -126,5 +137,28 @@ mod tests {
         }
         .valid());
         assert_eq!(display_body(&format!("OCR{CATEGORY_MARKER}cat 猫")), "OCR");
+    }
+
+    #[test]
+    fn visual_pages_keep_labels_and_accept_older_cached_json() {
+        let older = r#"{"pages":[{"number":1,"width":100.0,"height":80.0,"lines":[]}]}"#;
+        let document: VisualDocument = serde_json::from_str(older).unwrap();
+        assert!(document.pages[0].labels.is_empty());
+
+        let document = VisualDocument {
+            pages: vec![VisualPage {
+                number: 1,
+                width: 100.0,
+                height: 80.0,
+                lines: Vec::new(),
+                labels: vec![VisualLabel {
+                    identifier: "cake".into(),
+                    confidence: 0.82,
+                }],
+            }],
+        };
+        let restored: VisualDocument =
+            serde_json::from_str(&serde_json::to_string(&document).unwrap()).unwrap();
+        assert_eq!(restored.pages[0].labels[0].identifier, "cake");
     }
 }

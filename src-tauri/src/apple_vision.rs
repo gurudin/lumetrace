@@ -19,11 +19,7 @@ pub(crate) struct Recognition {
     pub error: Option<String>,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
-pub(crate) struct Classification {
-    pub identifier: String,
-    pub confidence: f32,
-}
+pub(crate) type Classification = crate::visual_content::VisualLabel;
 
 unsafe extern "C" {
     fn lumetrace_vision_available() -> bool;
@@ -140,6 +136,27 @@ mod tests {
             confidence: f32::NAN
         }])
         .is_empty());
+    }
+
+    #[test]
+    fn cake_category_is_searchable_localized_and_deduplicated() {
+        let text = classification_text(&[
+            Classification {
+                identifier: "cake".into(),
+                confidence: 0.91,
+            },
+            Classification {
+                identifier: "cake".into(),
+                confidence: 0.72,
+            },
+            Classification {
+                identifier: "birthday_cake".into(),
+                confidence: 0.12,
+            },
+        ]);
+        assert!(text.contains("蛋糕"));
+        assert_eq!(text.lines().filter(|line| *line == "cake").count(), 1);
+        assert!(!text.contains("birthday cake"));
     }
 
     #[test]
