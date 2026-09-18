@@ -176,6 +176,70 @@ fn recognition_upgrade_requeues_only_images_and_pdf_not_unchanged_text() {
 
 #[test]
 #[cfg(target_os = "macos")]
+fn extraction_upgrade_restarts_after_previous_repair_cursor_was_done() {
+    let fixture = Fixture::new();
+    let image_path = fixture.root.join("old-image.png");
+    fs::write(&image_path, "synthetic not decoded in this migration test").unwrap();
+    let image = import_files_record(
+        &fixture.database,
+        None,
+        &[image_path.to_string_lossy().into_owned()],
+    )
+    .unwrap()
+    .files
+    .iter()
+    .find(|file| file.name == "old-image.png")
+    .unwrap()
+    .id
+    .clone();
+    synchronize_file_search_index_scope(&fixture.database, Some(&fixture.storage), None).unwrap();
+
+    // Simulate a database that completed the previous repair pass before the
+    // image classification extraction version was released.
+    fixture
+        .database
+        .0
+        .lock()
+        .unwrap()
+        .execute(
+            "INSERT INTO app_settings (key, value, updated_at) VALUES ('file_space.edit_index_repair.v3', 'done', 1)",
+            [],
+        )
+        .unwrap();
+    fixture
+        .database
+        .0
+        .lock()
+        .unwrap()
+        .execute(
+            "UPDATE file_space_search_documents
+             SET extraction_status='extracted', extraction_version=3,
+                 body_text='old OCR without categories'
+             WHERE file_id=?1",
+            [&image],
+        )
+        .unwrap();
+
+    assert!(repair_missed_edit_indexes_batch(&fixture.database).unwrap());
+    assert_eq!(fixture.state(&image).0, "pending");
+    assert_eq!(
+        fixture
+            .database
+            .0
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT extraction_version FROM file_space_search_documents WHERE file_id=?1",
+                [&image],
+                |row| row.get::<_, i64>(0),
+            )
+            .unwrap(),
+        extraction_version("old-image.png")
+    );
+}
+
+#[test]
+#[cfg(target_os = "macos")]
 #[ignore = "requires explicitly generated synthetic LUMETRACE_TEST_VISION_DIR fixtures; uses real Apple Vision"]
 fn native_vision_local_index_is_searchable_persistent_and_incremental() {
     let fixture = Fixture::new();

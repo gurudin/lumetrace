@@ -49,7 +49,10 @@ const FILE_SPACE_INITIAL_PAGE_LIMIT: usize = 160;
 const FILE_SPACE_FILE_PAGE_MAX_LIMIT: usize = 320;
 const CONTENT_EXTRACTION_DOCUMENT_PAUSE: Duration = Duration::from_millis(40);
 const EDIT_INDEX_REPAIR_BATCH_SIZE: usize = 64;
-const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v3";
+// Keep this key versioned independently from the extraction version. A repair
+// batch may already be marked done in an existing database, so changing the
+// extraction algorithm must advance the cursor key to run a new bounded pass.
+const EDIT_INDEX_REPAIR_KEY: &str = "file_space.edit_index_repair.v4";
 const SEARCH_CONTENT_MIN_WEIGHT: usize = 2;
 const SEARCH_RESULT_SNIPPET_TOKENS: i64 = 42;
 const SEARCH_PREVIEW_CONTEXT_BEFORE: usize = 140;
