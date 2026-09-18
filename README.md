@@ -116,7 +116,7 @@ Claude Code and OpenCode are available to try, but are not yet fully validated f
 
 ### Download LumeTrace for macOS
 
-LumeTrace v1.0.3 is available for Apple Silicon Macs. Download the `.dmg` from the latest GitHub Release.
+LumeTrace v1.0.4 is available for Apple Silicon Macs. Download the `.dmg` from the latest GitHub Release.
 
 **[Download for macOS](https://github.com/gurudin/lumetrace/releases/latest)**
 
