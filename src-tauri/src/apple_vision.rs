@@ -78,7 +78,10 @@ fn classification_text(labels: &[Classification]) -> String {
     let mut words = Vec::new();
     for label in labels
         .iter()
-        .filter(|v| v.confidence.is_finite() && v.confidence >= 0.3)
+        // Categories are search hints, not claims about detected coordinates.
+        // Keep lower-confidence top results so an object such as a cake is not
+        // silently discarded before the user can search for it.
+        .filter(|v| v.confidence.is_finite() && v.confidence >= 0.05)
         .take(8)
     {
         let normalized = label.identifier.replace('_', " ");
@@ -120,7 +123,7 @@ mod tests {
             },
             Classification {
                 identifier: "catfish".into(),
-                confidence: 0.1,
+                confidence: 0.01,
             },
         ];
         let text = classification_text(&labels);
@@ -151,7 +154,7 @@ mod tests {
             },
             Classification {
                 identifier: "birthday_cake".into(),
-                confidence: 0.12,
+                confidence: 0.01,
             },
         ]);
         assert!(text.contains("蛋糕"));

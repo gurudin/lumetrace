@@ -12416,7 +12416,7 @@ mod tests {
                 "INSERT INTO file_space_search_documents
                  (file_id, file_name, body_text, extraction_status, extraction_version,
                   file_updated_at, size_bytes, indexed_at)
-                 VALUES ('cake-image', 'cake.png', ?1, 'extracted', 4, 1, 1, 1)",
+                 VALUES ('cake-image', 'cake.png', ?1, 'extracted', 5, 1, 1, 1)",
                 [&body],
             )
             .unwrap();

@@ -9,6 +9,7 @@
 
 static const size_t LTMaxDimension = 3200;
 static const NSUInteger LTMaxCharacters = 5000000;
+static const VNConfidence LTMinClassificationConfidence = 0.05;
 static atomic_bool LTBusy = false;
 
 bool lumetrace_vision_available(void) {
@@ -156,7 +157,7 @@ static NSString *LTReadImage(CGImageRef image, LTRecognitionJob *job, NSMutableA
         }
     }
     for (VNClassificationObservation *item in classification.results) {
-        if (item.confidence >= 0.3 && labels.count < 8)
+        if (item.confidence >= LTMinClassificationConfidence && labels.count < 8)
             [labels addObject:@{@"identifier":item.identifier, @"confidence":@(item.confidence)}];
     }
     job.requests = @[];
