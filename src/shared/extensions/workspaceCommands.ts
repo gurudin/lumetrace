@@ -7,6 +7,8 @@ export interface WorkspaceCommandSource {
   workspaceId?: string;
   /** Edition-owned, authenticated image transport; independent of version history. */
   imagePreviewUrl?: (fileId: string, updatedAt: number, purpose?: "thumbnail" | "detail") => string | null;
+  /** Authorized, byte-range video transport for the current file. */
+  videoPreviewUrl?: (fileId: string, updatedAt: number) => string | null;
   /** Present only when the displayed preview is processed and an original can be fetched on demand. */
   imageOriginalUrl?: (fileId: string, updatedAt: number) => string | null;
   /** Resolve a detail source on open using transport metadata, without downloading image bodies. */

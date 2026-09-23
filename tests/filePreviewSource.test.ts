@@ -12,12 +12,15 @@ test('catalogues without MIME metadata classify common files by extension', () =
   assert.equal(fileMimeType('identity.p12'), 'application/x-pkcs12');
   assert.equal(fileMimeType('certificate.cer'), 'application/pkix-cert');
   assert.equal(fileMimeType('movie.mp4'), 'video/mp4');
+  for (const name of ['movie.mov', 'movie.m4v', 'movie.webm', 'movie.mkv', 'movie.avi']) {
+    assert.ok(fileMimeType(name)?.startsWith('video/'));
+  }
   assert.equal(fileMimeType('photo.png.exe'), null);
 });
 
 test('external images without history use their own transport, never local preview URLs', () => {
   const text = readFileSync(new URL('../src/pages/file-space/FileSpacePage.tsx', import.meta.url), 'utf8');
-  const fn = text.slice(text.indexOf('function filePreviewSource('), text.indexOf('\nfunction FileArtwork('));
+  const fn = text.slice(text.indexOf('function filePreviewSource('), text.indexOf('\nfunction fileVideoSource('));
   const code = ts.transpileModule(fn, { compilerOptions: { target: ts.ScriptTarget.ES2022 } }).outputText;
   const native: string[] = [];
   const resolve = new Function('fileCategory', 'isTauri', 'convertFileSrc', `${code};return filePreviewSource;`)(
@@ -53,6 +56,7 @@ test('image loading settles on load/error and resets for a new file, revision or
     fileIcon: () => 'icon', fileArtworkFormat: () => null,
     fileArchiveExtension: () => null, fileArtworkTitle: () => '',
     useWorkspaceExtension: () => null, filePreviewSource: () => source,
+    isVideoFile: () => false,
     fileCategory: () => source ? 'image' : 'document', shouldShowFileVersionBadge: () => false,
   };
   const artwork = new Function(...Object.keys(bindings), `${code};return FileArtwork;`)(...Object.values(bindings));

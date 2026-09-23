@@ -70,6 +70,23 @@ pub fn run_with_plugins(
             let database = context.app_handle().state::<database::Database>();
             file_space::file_preview_response(database.inner(), request.uri().path())
         })
+        .register_uri_scheme_protocol("lumetrace-file-video", |context, request| {
+            if context.webview_label() != "main" || request.method() != tauri::http::Method::GET {
+                return tauri::http::Response::builder()
+                    .status(tauri::http::StatusCode::FORBIDDEN)
+                    .body(Vec::new())
+                    .expect("valid denied video response");
+            }
+            let database = context.app_handle().state::<database::Database>();
+            file_space::file_video_response(
+                database.inner(),
+                request.uri().path(),
+                request
+                    .headers()
+                    .get(tauri::http::header::RANGE)
+                    .and_then(|value| value.to_str().ok()),
+            )
+        })
         .on_page_load(move |webview, payload| {
             if webview.label() != "main" || !matches!(payload.event(), PageLoadEvent::Finished) {
                 return;

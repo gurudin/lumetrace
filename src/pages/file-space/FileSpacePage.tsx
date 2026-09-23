@@ -22,6 +22,7 @@ import {
   FilePlus2,
   FileSpreadsheet,
   FileText,
+  FileVideo2,
   ExternalLink,
   Filter,
   Folder,
@@ -1037,10 +1038,17 @@ function imageDimensionsKey(fileId: string, fileUpdatedAt: number) {
 
 function fileIcon(file: FileSpaceFileRecord) {
   const category = fileCategory(file);
+  if (isVideoFile(file)) return FileVideo2;
   if (category === "image") return FileImage;
   if (category === "sheet") return FileSpreadsheet;
   if (category === "document") return FileText;
   return File;
+}
+
+const previewVideoExtensions = new Set(["mp4", "mov", "m4v", "webm", "mkv", "avi"]);
+
+function isVideoFile(file: FileSpaceFileRecord) {
+  return previewVideoExtensions.has(file.name.split(".").pop()?.toLowerCase() ?? "");
 }
 
 type FileArtworkFormat = FileDocumentArtworkFormat | "archive";
@@ -1064,6 +1072,7 @@ function fileArtworkFormat(file: FileSpaceFileRecord): FileArtworkFormat | null 
 }
 
 function defaultFilePreviewAspectRatio(file: FileSpaceFileRecord) {
+  if (isVideoFile(file)) return 16 / 9;
   const format = fileArtworkFormat(file);
   if (format === "md") return 0.82;
   if (format === "pdf") return 0.76;
@@ -1135,6 +1144,148 @@ function filePreviewSource(file: FileSpaceFileRecord, source: WorkspaceCommandSo
   return convertFileSrc(file.id, "lumetrace-file-preview");
 }
 
+function fileVideoSource(file: FileSpaceFileRecord, source: WorkspaceCommandSource | null) {
+  if (!isVideoFile(file)) return null;
+  if (source) return source.videoPreviewUrl?.(file.id, file.updatedAt) ?? null;
+  if (file.currentVersion === null || !isTauri()) return null;
+  return convertFileSrc(file.id, "lumetrace-file-video");
+}
+
+const localVideoPosters = new Map<string, string>();
+const externalVideoPosters = new WeakMap<WorkspaceCommandSource, Map<string, string>>();
+let playingCardVideo: HTMLVideoElement | null = null;
+
+function videoPosterCache(source: WorkspaceCommandSource | null) {
+  if (!source) return localVideoPosters;
+  let cache = externalVideoPosters.get(source);
+  if (!cache) {
+    cache = new Map();
+    externalVideoPosters.set(source, cache);
+  }
+  return cache;
+}
+
+function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: WorkspaceCommandSource | null }) {
+  const containerRef = useRef<HTMLSpanElement>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const videoSource = fileVideoSource(file, source);
+  const posterCache = videoPosterCache(source);
+  const key = `${file.id}:${file.updatedAt}:${videoSource ?? ""}`;
+  const [poster, setPoster] = useState(() => posterCache.get(key) ?? null);
+  const [visible, setVisible] = useState(false);
+  const [active, setActive] = useState(false);
+  const [failed, setFailed] = useState(false);
+  const [frameReady, setFrameReady] = useState(false);
+
+  useEffect(() => {
+    setPoster(posterCache.get(key) ?? null);
+    setFailed(false);
+    setActive(false);
+    setFrameReady(false);
+  }, [key, posterCache]);
+  useEffect(() => {
+    const node = containerRef.current;
+    if (!node || !videoSource) return;
+    const observer = new IntersectionObserver(([entry]) => {
+      setVisible(entry.isIntersecting);
+      if (!entry.isIntersecting) setActive(false);
+    }, { rootMargin: "80px" });
+    observer.observe(node);
+    return () => observer.disconnect();
+  }, [videoSource]);
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+    if (active && visible && !failed) {
+      if (playingCardVideo && playingCardVideo !== video) playingCardVideo.pause();
+      playingCardVideo = video;
+      void video.play().catch(() => {
+        if (playingCardVideo === video) playingCardVideo = null;
+        setActive(false);
+      });
+    } else {
+      video.pause();
+      try { video.currentTime = 0; } catch { /* The video has not loaded yet. */ }
+      if (playingCardVideo === video) playingCardVideo = null;
+    }
+    return () => {
+      video.pause();
+      if (playingCardVideo === video) playingCardVideo = null;
+    };
+  }, [active, visible, failed]);
+  useEffect(() => () => {
+    if (timerRef.current) clearTimeout(timerRef.current);
+  }, []);
+  useEffect(() => {
+    const button = containerRef.current?.closest("button");
+    if (!button) return;
+    const enter = (event: PointerEvent) => {
+      if (event.pointerType !== "mouse" || !videoSource || failed || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = setTimeout(() => setActive(true), 300);
+    };
+    const leave = () => {
+      if (timerRef.current) clearTimeout(timerRef.current);
+      timerRef.current = null;
+      setActive(false);
+    };
+    button.addEventListener("pointerenter", enter);
+    button.addEventListener("pointerleave", leave);
+    button.addEventListener("pointerdown", leave);
+    window.addEventListener("blur", leave);
+    return () => {
+      button.removeEventListener("pointerenter", enter);
+      button.removeEventListener("pointerleave", leave);
+      button.removeEventListener("pointerdown", leave);
+      window.removeEventListener("blur", leave);
+      leave();
+    };
+  }, [videoSource, failed]);
+
+  const capturePoster = () => {
+    const video = videoRef.current;
+    if (!video || posterCache.has(key) || !video.videoWidth || !video.videoHeight) return;
+    try {
+      const canvas = document.createElement("canvas");
+      const scale = Math.min(1, 480 / Math.max(video.videoWidth, video.videoHeight));
+      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
+      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
+      canvas.getContext("2d")?.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const image = canvas.toDataURL("image/webp", 0.8);
+      if (image.length < 500_000) {
+        if (posterCache.size >= 64) posterCache.delete(posterCache.keys().next().value!);
+        posterCache.set(key, image);
+        setPoster(image);
+      }
+    } catch { /* WebKit may forbid canvas capture for a custom URL. The paused video remains visible. */ }
+  };
+
+  return <span
+    ref={containerRef}
+    className={`file-space-file-art is-video${poster || frameReady ? " has-preview" : ""}${active ? " is-playing" : ""}`}
+  >
+    {poster && <img src={poster} alt="" draggable={false} />}
+    {videoSource && visible && !failed && <video
+      ref={videoRef}
+      src={videoSource}
+      crossOrigin="anonymous"
+      muted
+      playsInline
+      preload="metadata"
+      aria-hidden="true"
+      style={{ opacity: frameReady && (active || !poster) ? 1 : 0 }}
+      onLoadedMetadata={(event) => { event.currentTarget.currentTime = 0.001; }}
+      onLoadedData={() => { setFrameReady(true); capturePoster(); }}
+      onSeeked={capturePoster}
+      onPause={() => { if (playingCardVideo !== videoRef.current) setActive(false); }}
+      onError={() => { setFailed(true); setActive(false); setFrameReady(false); }}
+    />}
+    {!poster && !frameReady && <><FileVideo2 size={42} strokeWidth={1.35} /><small>{file.name.split(".").pop()?.toUpperCase()}</small></>}
+    {(poster || frameReady) && !active && <span className="file-space-video-play-mark" aria-hidden="true">▶</span>}
+  </span>;
+}
+
 function FileArtwork({
   file,
   onImageDimensions,
@@ -1168,6 +1319,7 @@ function FileArtwork({
   const displaySource = store ? retained?.url : previewSource;
   const showPreview = Boolean(previewSource) && previewState !== "failed";
   const previewLoading = showPreview && previewState === "loading";
+  if (isVideoFile(file)) return <VideoArtwork file={file} source={source} />;
   return (
     <span aria-busy={previewLoading || undefined} className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}${previewLoading ? " is-preview-loading" : ""}`}>
       {showPreview && !displaySource ? null : showPreview ? (

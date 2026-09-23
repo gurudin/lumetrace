@@ -13,7 +13,7 @@ use sha2::{Digest, Sha256};
 use std::{
     collections::{BTreeSet, HashMap, HashSet, VecDeque},
     fs::{self, OpenOptions},
-    io::{Read, Seek, Write},
+    io::{Read, Seek, SeekFrom, Write},
     panic::{catch_unwind, AssertUnwindSafe},
     path::{Path, PathBuf},
     process::{Command as ProcessCommand, Stdio},
@@ -5993,6 +5993,128 @@ pub fn file_preview_response(
             .header("X-Content-Type-Options", "nosniff")
             .body(error.into_bytes())
             .expect("valid file preview error response"),
+    }
+}
+
+const VIDEO_PREVIEW_CHUNK_BYTES: u64 = 1024 * 1024;
+
+fn video_preview_mime_type(name: &str) -> Option<&'static str> {
+    match Path::new(name)
+        .extension()?
+        .to_str()?
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "mp4" => Some("video/mp4"),
+        "mov" => Some("video/quicktime"),
+        "m4v" => Some("video/x-m4v"),
+        "webm" => Some("video/webm"),
+        "mkv" => Some("video/x-matroska"),
+        "avi" => Some("video/x-msvideo"),
+        _ => None,
+    }
+}
+
+fn video_preview_range(range: Option<&str>, total: u64) -> Option<(u64, u64)> {
+    if total == 0 {
+        return None;
+    }
+    let (start, requested_end) = match range {
+        None => (0, None),
+        Some(value) => {
+            let raw = value.strip_prefix("bytes=")?;
+            if raw.contains(',') {
+                return None;
+            }
+            let (left, right) = raw.split_once('-')?;
+            if left.is_empty() {
+                let count = right
+                    .parse::<u64>()
+                    .ok()?
+                    .min(total)
+                    .min(VIDEO_PREVIEW_CHUNK_BYTES);
+                if count == 0 {
+                    return None;
+                }
+                (total - count, None)
+            } else {
+                let start = left.parse::<u64>().ok()?;
+                let end = if right.is_empty() {
+                    None
+                } else {
+                    Some(right.parse::<u64>().ok()?)
+                };
+                (start, end)
+            }
+        }
+    };
+    if start >= total || requested_end.is_some_and(|end| end < start) {
+        return None;
+    }
+    Some((
+        start,
+        requested_end
+            .unwrap_or(total - 1)
+            .min(total - 1)
+            .min(start.saturating_add(VIDEO_PREVIEW_CHUNK_BYTES - 1)),
+    ))
+}
+
+fn load_video_preview_record(
+    database: &Database,
+    file_id: &str,
+    range: Option<&str>,
+) -> Result<(Vec<u8>, &'static str, u64, u64, u64), String> {
+    if file_id.is_empty()
+        || file_id.len() > 128
+        || !file_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
+    {
+        return Err("Invalid video identifier".into());
+    }
+    let (name, _, _) = active_file_record(database, file_id)?;
+    let mime = video_preview_mime_type(&name).ok_or("Unsupported video format")?;
+    let path = active_file_path(database, file_id)?;
+    let mut file = fs::File::open(path).map_err(|_| "Unable to open video")?;
+    let total = file
+        .metadata()
+        .map_err(|_| "Unable to inspect video")?
+        .len();
+    let (start, end) = video_preview_range(range, total).ok_or("Invalid video range")?;
+    file.seek(SeekFrom::Start(start))
+        .map_err(|_| "Unable to seek video")?;
+    let mut bytes = vec![0u8; (end - start + 1) as usize];
+    file.read_exact(&mut bytes)
+        .map_err(|_| "Unable to read video")?;
+    Ok((bytes, mime, start, end, total))
+}
+
+pub fn file_video_response(
+    database: &Database,
+    request_path: &str,
+    range: Option<&str>,
+) -> tauri::http::Response<Vec<u8>> {
+    let file_id = request_path.trim_start_matches('/');
+    match load_video_preview_record(database, file_id, range) {
+        Ok((bytes, mime, start, end, total)) => tauri::http::Response::builder()
+            .status(tauri::http::StatusCode::PARTIAL_CONTENT)
+            .header(tauri::http::header::CONTENT_TYPE, mime)
+            .header(
+                tauri::http::header::CONTENT_RANGE,
+                format!("bytes {start}-{end}/{total}"),
+            )
+            .header(tauri::http::header::ACCEPT_RANGES, "bytes")
+            .header(tauri::http::header::CACHE_CONTROL, "no-store")
+            .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+            .header("X-Content-Type-Options", "nosniff")
+            .body(bytes)
+            .expect("valid video range response"),
+        Err(_) => tauri::http::Response::builder()
+            .status(tauri::http::StatusCode::RANGE_NOT_SATISFIABLE)
+            .header(tauri::http::header::CACHE_CONTROL, "no-store")
+            .body(Vec::new())
+            .expect("valid video error response"),
     }
 }
 
@@ -12375,6 +12497,28 @@ mod edit_index_tests;
 mod tests {
     use super::*;
     use zip::ZipArchive;
+
+    #[test]
+    fn video_preview_ranges_are_bounded_and_reject_invalid_requests() {
+        assert_eq!(
+            video_preview_range(Some("bytes=0-1"), 8_000_000),
+            Some((0, 1))
+        );
+        assert_eq!(
+            video_preview_range(Some("bytes=0-"), 8_000_000),
+            Some((0, 1_048_575))
+        );
+        assert_eq!(
+            video_preview_range(Some("bytes=-2"), 8_000_000),
+            Some((7_999_998, 7_999_999))
+        );
+        assert_eq!(video_preview_range(Some("bytes=5-6,8-9"), 8_000_000), None);
+        assert_eq!(video_preview_range(Some("bytes=8-"), 8), None);
+        assert_eq!(video_preview_range(None, 0), None);
+        for extension in ["mp4", "mov", "m4v", "webm", "mkv", "avi"] {
+            assert!(video_preview_mime_type(&format!("clip.{extension}")).is_some());
+        }
+    }
 
     fn test_workspace(label: &str) -> (PathBuf, PathBuf, PathBuf, Database) {
         let root = std::env::temp_dir().join(format!("lumetrace-{label}-{}", Uuid::new_v4()));
