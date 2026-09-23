@@ -12,6 +12,12 @@ test("uses the compact MD label for both Markdown extensions", () => {
   assert.equal(fileDocumentArtworkFormat("markdown"), "md");
 });
 
+test("uses distinct certificate artwork for CSR, PKCS#12 and certificate files", () => {
+  assert.equal(fileDocumentArtworkFormat("csr"), "csr");
+  assert.equal(fileDocumentArtworkFormat("P12"), "p12");
+  assert.equal(fileDocumentArtworkFormat("Cer"), "cer");
+});
+
 test("original dimensions require positive integer metadata, not a guessed preview size", () => {
   assert.deepEqual(originalImageDimensions({ width: 4000, height: 2500 }), { width: 4000, height: 2500 });
   for (const value of [null, {}, { width: 0, height: 480 }, { width: "4000", height: 2500 }, { width: 10.5, height: 2 }]) {

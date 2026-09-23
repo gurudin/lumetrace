@@ -113,7 +113,7 @@ function fileIcon(file: FileSpaceSearchFile) {
     mime.startsWith("text/")
     || mime.includes("pdf")
     || mime.includes("word")
-    || ["md", "markdown", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(extension)
+    || ["md", "markdown", "txt", "doc", "docx", "pdf", "ppt", "pptx", "csr", "p12", "cer"].includes(extension)
   ) return FileText;
   return File;
 }

@@ -1,4 +1,4 @@
-export type FileDocumentArtworkFormat = "md" | "pdf" | "html" | "xlsx" | "csv" | "docx" | "txt";
+export type FileDocumentArtworkFormat = "md" | "pdf" | "html" | "xlsx" | "csv" | "docx" | "txt" | "csr" | "p12" | "cer";
 
 export interface FileImageDimensions {
   fileUpdatedAt: number;
@@ -16,7 +16,7 @@ export function originalImageDimensions(value: unknown): { width: number; height
 export function fileDocumentArtworkFormat(extension: string): FileDocumentArtworkFormat | null {
   const normalizedExtension = extension.toLowerCase();
   if (normalizedExtension === "md" || normalizedExtension === "markdown") return "md";
-  return (["pdf", "html", "xlsx", "csv", "docx", "txt"] as const)
+  return (["pdf", "html", "xlsx", "csv", "docx", "txt", "csr", "p12", "cer"] as const)
     .find((format) => format === normalizedExtension) ?? null;
 }
 

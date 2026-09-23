@@ -8,6 +8,9 @@ test('catalogues without MIME metadata classify common files by extension', () =
   for (const name of ['photo.png', 'PHOTO.JPG', '照片.jpeg', 'a.gif', 'a.webp']) assert.ok(fileMimeType(name)?.startsWith('image/'));
   assert.equal(fileMimeType('notes.md'), 'text/markdown');
   assert.equal(fileMimeType('notes.pdf'), 'application/pdf');
+  assert.equal(fileMimeType('request.csr'), 'application/pkcs10');
+  assert.equal(fileMimeType('identity.p12'), 'application/x-pkcs12');
+  assert.equal(fileMimeType('certificate.cer'), 'application/pkix-cert');
   assert.equal(fileMimeType('movie.mp4'), 'video/mp4');
   assert.equal(fileMimeType('photo.png.exe'), null);
 });

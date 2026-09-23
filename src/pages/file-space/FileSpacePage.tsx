@@ -847,7 +847,7 @@ function createVisualFixture(): FileSpaceSnapshot {
     { id: "fixture-plan", parentId: "fixture-product", name: "产品方案", relativePath: "Clipboard X/产品方案", manualOrder: 1, createdAt: now, updatedAt: now },
     { id: "fixture-promotion", parentId: "fixture-product", name: "推广资料", relativePath: "Clipboard X/推广资料", manualOrder: 2, createdAt: now, updatedAt: now },
   ];
-  const extensions = ["png", "pdf", "html", "xlsx", "csv", "docx", "txt", "md", "zip", "zipx", "7z", "rar", "tar"];
+  const extensions = ["png", "pdf", "html", "xlsx", "csv", "docx", "txt", "md", "csr", "p12", "cer", "zip", "zipx", "7z", "rar", "tar"];
   const mimeTypes = [
     "image/png",
     "application/pdf",
@@ -995,7 +995,7 @@ function fileCategory(file: FileSpaceFileRecord): Exclude<TypeFilter, "all"> | "
     mime.startsWith("text/") ||
     mime.includes("pdf") ||
     mime.includes("word") ||
-    ["md", "markdown", "txt", "doc", "docx", "pdf", "ppt", "pptx"].includes(extension)
+    ["md", "markdown", "txt", "doc", "docx", "pdf", "ppt", "pptx", "csr", "p12", "cer"].includes(extension)
   ) return "document";
   return "other";
 }
@@ -1077,6 +1077,38 @@ function fileArtworkTitle(file: FileSpaceFileRecord) {
   const extension = fileExtension(file);
   const basename = extension ? file.name.slice(0, -(extension.length + 1)) : file.name;
   return basename.replace(/[-_]+/g, " ").replace(/\s+/g, " ").trim();
+}
+
+type CertificateArtworkFormat = Extract<FileDocumentArtworkFormat, "csr" | "p12" | "cer">;
+
+function CertificateArtwork({ format }: { format: CertificateArtworkFormat }) {
+  const subtitle = format === "p12" ? "Personal" : format === "cer" ? "Certificate" : "Request";
+  return (
+    <svg className={`file-space-certificate-art is-${format}`} viewBox="0 0 180 124" aria-hidden="true">
+      <path className="file-space-certificate-shadow" d="M21 14h121l25 25v70H21z" />
+      <path className="file-space-certificate-frame" d="M17 10h122l25 25v70H17z" />
+      <path className="file-space-certificate-paper" d="M24 17h109l24 24v57H24z" />
+      <path className="file-space-certificate-fold" d="M133 17v24h24z" />
+      <text className="file-space-certificate-heading" x="36" y="44">Certificate</text>
+      <text className="file-space-certificate-subtitle" x="38" y="61">{subtitle}</text>
+      <path className="file-space-certificate-signature" d="M38 72c12-8 19-4 25 0 7 5 14 4 24-3m-44 10c18 3 34 2 48-2" />
+      <path className="file-space-certificate-seal" d="M126 56l5 7 8-2 1 9 8 4-5 7 4 8-9 2-3 8-8-4-7 5-5-8-9-1 3-9-6-6 7-6 1-9 9 1z" />
+      <circle className="file-space-certificate-seal-center" cx="126" cy="79" r="10" />
+      {format === "p12" ? (
+        <g className="file-space-certificate-key">
+          <circle cx="126" cy="74" r="4" />
+          <path d="M126 78v15m0-5h6m-6 1h-4" />
+        </g>
+      ) : format === "csr" ? (
+        <g className="file-space-certificate-request-mark">
+          <path d="M121 85l10-10 3 3-10 10-5 2z" />
+          <path d="M130 76l2-2 3 3-2 2" />
+        </g>
+      ) : (
+        <path className="file-space-certificate-check" d="M120 79l4 4 8-9" />
+      )}
+    </svg>
+  );
 }
 
 function fixtureImageSource(file: FileSpaceFileRecord) {
@@ -1187,6 +1219,9 @@ function FileArtwork({
                 <i key={row}><b /><b /><b /></i>
               ))}
             </span>
+          ) : null}
+          {artworkFormat === "csr" || artworkFormat === "p12" || artworkFormat === "cer" ? (
+            <CertificateArtwork format={artworkFormat} />
           ) : null}
           {artworkFormat === "archive" ? (
             <span className="file-space-archive-document" aria-hidden="true">
