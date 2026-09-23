@@ -1199,7 +1199,8 @@ function videoPosterCache(source: WorkspaceCommandSource | null) {
   return cache;
 }
 
-function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: WorkspaceCommandSource | null }) {
+function VideoArtwork({ file, source, showVersionBadge }: { file: FileSpaceFileRecord; source: WorkspaceCommandSource | null; showVersionBadge: boolean }) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLSpanElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -1331,6 +1332,12 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
     />}
     {!poster && !frameReady && <><FileVideo2 size={42} strokeWidth={1.35} /><small>{file.name.split(".").pop()?.toUpperCase()}</small></>}
     {(poster || frameReady) && !active && <span className="file-space-video-play-mark" aria-hidden="true">▶</span>}
+    {showVersionBadge && shouldShowFileVersionBadge(file.versionCount) ? (
+      <span className="file-space-file-version-count" title={t("fileSpace.content.versionCount", { count: file.versionCount })}>
+        <Clock3 size={11} aria-hidden="true" />
+        <span>{t("fileSpace.content.versionCount", { count: file.versionCount })}</span>
+      </span>
+    ) : null}
   </span>;
 }
 
@@ -1367,7 +1374,7 @@ function FileArtwork({
   const displaySource = store ? retained?.url : previewSource;
   const showPreview = Boolean(previewSource) && previewState !== "failed";
   const previewLoading = showPreview && previewState === "loading";
-  if (isVideoFile(file)) return <VideoArtwork key={`${file.id}:${file.updatedAt}:${fileVideoSource(file, source) ?? ""}`} file={file} source={source} />;
+  if (isVideoFile(file)) return <VideoArtwork key={`${file.id}:${file.updatedAt}:${fileVideoSource(file, source) ?? ""}`} file={file} source={source} showVersionBadge={showVersionBadge} />;
   return (
     <span aria-busy={previewLoading || undefined} className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}${previewLoading ? " is-preview-loading" : ""}`}>
       {showPreview && !displaySource ? null : showPreview ? (
