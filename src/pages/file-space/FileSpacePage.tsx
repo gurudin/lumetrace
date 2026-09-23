@@ -1324,7 +1324,7 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
       aria-hidden="true"
       style={{ opacity: frameReady && (active || !poster) ? 1 : 0 }}
       onLoadedMetadata={(event) => { event.currentTarget.currentTime = 0.001; }}
-      onLoadedData={() => { setFrameReady(true); releasePosterPermit.current?.(); releasePosterPermit.current = null; capturePoster(); }}
+      onLoadedData={() => { setFrameReady(true); releasePosterPermit.current?.(); releasePosterPermit.current = null; }}
       onSeeked={capturePoster}
       onPause={() => { if (playingCardVideo !== videoRef.current) setActive(false); }}
       onError={() => { releasePosterPermit.current?.(); releasePosterPermit.current = null; setFailed(true); setActive(false); setFrameReady(false); }}
