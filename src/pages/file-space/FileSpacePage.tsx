@@ -1154,6 +1154,40 @@ function fileVideoSource(file: FileSpaceFileRecord, source: WorkspaceCommandSour
 const localVideoPosters = new Map<string, string>();
 const externalVideoPosters = new WeakMap<WorkspaceCommandSource, Map<string, string>>();
 let playingCardVideo: HTMLVideoElement | null = null;
+let loadingVideoPosters = 0;
+const waitingVideoPosters: Array<{ start: (done: () => void) => void; done: () => void; cancelled: boolean }> = [];
+
+function pumpVideoPosters() {
+  while (loadingVideoPosters < 2 && waitingVideoPosters.length) {
+    const task = waitingVideoPosters.shift()!;
+    if (task.cancelled) continue;
+    loadingVideoPosters++;
+    task.start(task.done);
+  }
+}
+
+function queueVideoPoster(start: (done: () => void) => void) {
+  let released = false;
+  let started = false;
+  const task = {
+    start: (done: () => void) => { started = true; start(done); },
+    done: () => {
+      if (released) return;
+      released = true;
+      task.cancelled = true;
+      if (started) loadingVideoPosters--;
+      else {
+        const index = waitingVideoPosters.indexOf(task);
+        if (index >= 0) waitingVideoPosters.splice(index, 1);
+      }
+      pumpVideoPosters();
+    },
+    cancelled: false,
+  };
+  waitingVideoPosters.push(task);
+  pumpVideoPosters();
+  return task.done;
+}
 
 function videoPosterCache(source: WorkspaceCommandSource | null) {
   if (!source) return localVideoPosters;
@@ -1177,6 +1211,8 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
   const [active, setActive] = useState(false);
   const [failed, setFailed] = useState(false);
   const [frameReady, setFrameReady] = useState(false);
+  const [posterPermit, setPosterPermit] = useState(false);
+  const releasePosterPermit = useRef<(() => void) | null>(null);
 
   useEffect(() => {
     setPoster(posterCache.get(key) ?? null);
@@ -1194,6 +1230,18 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
     observer.observe(node);
     return () => observer.disconnect();
   }, [videoSource]);
+  useEffect(() => {
+    if (!visible || !videoSource || poster || failed) return;
+    const release = queueVideoPoster((done) => {
+      releasePosterPermit.current = done;
+      setPosterPermit(true);
+    });
+    return () => {
+      release();
+      releasePosterPermit.current = null;
+      setPosterPermit(false);
+    };
+  }, [visible, videoSource, poster, failed]);
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -1239,7 +1287,7 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
       button.removeEventListener("pointerleave", leave);
       button.removeEventListener("pointerdown", leave);
       window.removeEventListener("blur", leave);
-      leave();
+      if (timerRef.current) clearTimeout(timerRef.current);
     };
   }, [videoSource, failed]);
 
@@ -1266,7 +1314,7 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
     className={`file-space-file-art is-video${poster || frameReady ? " has-preview" : ""}${active ? " is-playing" : ""}`}
   >
     {poster && <img src={poster} alt="" draggable={false} />}
-    {videoSource && visible && !failed && <video
+    {videoSource && visible && !failed && (posterPermit || active) && <video
       ref={videoRef}
       src={videoSource}
       crossOrigin="anonymous"
@@ -1276,10 +1324,10 @@ function VideoArtwork({ file, source }: { file: FileSpaceFileRecord; source: Wor
       aria-hidden="true"
       style={{ opacity: frameReady && (active || !poster) ? 1 : 0 }}
       onLoadedMetadata={(event) => { event.currentTarget.currentTime = 0.001; }}
-      onLoadedData={() => { setFrameReady(true); capturePoster(); }}
+      onLoadedData={() => { setFrameReady(true); releasePosterPermit.current?.(); releasePosterPermit.current = null; capturePoster(); }}
       onSeeked={capturePoster}
       onPause={() => { if (playingCardVideo !== videoRef.current) setActive(false); }}
-      onError={() => { setFailed(true); setActive(false); setFrameReady(false); }}
+      onError={() => { releasePosterPermit.current?.(); releasePosterPermit.current = null; setFailed(true); setActive(false); setFrameReady(false); }}
     />}
     {!poster && !frameReady && <><FileVideo2 size={42} strokeWidth={1.35} /><small>{file.name.split(".").pop()?.toUpperCase()}</small></>}
     {(poster || frameReady) && !active && <span className="file-space-video-play-mark" aria-hidden="true">▶</span>}
@@ -1319,7 +1367,7 @@ function FileArtwork({
   const displaySource = store ? retained?.url : previewSource;
   const showPreview = Boolean(previewSource) && previewState !== "failed";
   const previewLoading = showPreview && previewState === "loading";
-  if (isVideoFile(file)) return <VideoArtwork file={file} source={source} />;
+  if (isVideoFile(file)) return <VideoArtwork key={`${file.id}:${file.updatedAt}:${fileVideoSource(file, source) ?? ""}`} file={file} source={source} />;
   return (
     <span aria-busy={previewLoading || undefined} className={`file-space-file-art is-${fileCategory(file)}${artworkFormat ? ` is-format-${artworkFormat}` : ""}${showPreview ? " has-preview" : ""}${previewLoading ? " is-preview-loading" : ""}`}>
       {showPreview && !displaySource ? null : showPreview ? (
